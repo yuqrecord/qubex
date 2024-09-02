@@ -34,12 +34,26 @@ class StateClassifierGMM:
     model: GaussianMixture
     label_map: dict[int, int]
     confusion_matrix: NDArray
-    centers: dict[int, complex]
 
     @property
     def n_clusters(self) -> int:
         """The number of clusters in the model."""
         return len(self.dataset)
+
+    @property
+    def centers(self) -> dict[int, complex]:
+        """The center of each state."""
+        centers = {}
+        centers_arr = np.asarray(self.model.means_)
+        for label in range(len(centers_arr)):
+            centers[label] = complex(centers_arr[label][0], centers_arr[label][1])
+        return centers
+
+    @property
+    def weights(self) -> dict[int, float]:
+        """The weights of each state."""
+        weights_arr = np.asarray(self.model.weights_)
+        return {label: weight for label, weight in enumerate(weights_arr)}
 
     @classmethod
     def fit(
@@ -81,11 +95,12 @@ class StateClassifierGMM:
 
         # Fit GMM model
         concat_data = np.concatenate(list(dataset.values()))
-        n_clusters = len(dataset)
+        n_components = len(dataset)
         model = GaussianMixture(
-            n_components=n_clusters,
+            n_components=n_components,
             n_init=n_init,
             random_state=random_state,
+            covariance_type="spherical",
         )
         model.fit(concat_data)
 
@@ -95,16 +110,12 @@ class StateClassifierGMM:
         # Create confusion matrix
         confusion_matrix = cls._create_confusion_matrix(model, dataset, label_map)
 
-        # Extract model parameters (means of each component)
-        centers = cls._extract_model_parameters(model)
-
         # Return state classifier model
         return cls(
             dataset=dataset,
             model=model,
             label_map=label_map,
             confusion_matrix=confusion_matrix,
-            centers=centers,
         )
 
     @staticmethod
@@ -168,29 +179,6 @@ class StateClassifierGMM:
         predicted_labels_ = model.predict(concat_data)
         predicted_labels = np.array([label_map[label] for label in predicted_labels_])
         return confusion_matrix(true_labels, predicted_labels)
-
-    @staticmethod
-    def _extract_model_parameters(
-        model: GaussianMixture,
-    ) -> dict[int, complex]:
-        """
-        Extract the center (mean) of each component.
-
-        Parameters
-        ----------
-        model : GaussianMixture
-            The fitted GMM model.
-
-        Returns
-        -------
-        dict[int, complex]
-            The centers (means) of each component as complex numbers.
-        """
-        centers = {}
-        centers_arr = model.means_
-        for label in range(len(centers_arr)):
-            centers[label] = complex(centers_arr[label][0], centers_arr[label][1])
-        return centers
 
     def predict(
         self,
