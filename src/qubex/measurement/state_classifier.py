@@ -26,15 +26,15 @@ class StateClassifier:
         A mapping from k-means cluster labels to state labels.
     confusion_matrix : NDArray
         The confusion matrix of the classifier.
-    centroids : dict[int, complex]
-        The centroid of each state.
+    centers : dict[int, complex]
+        The center of each state.
     """
 
     dataset: dict[int, NDArray[np.float32]]
     model: KMeans
     label_map: dict[int, int]
     confusion_matrix: NDArray
-    centroids: dict[int, complex]
+    centers: dict[int, complex]
 
     @property
     def n_clusters(self) -> int:
@@ -56,7 +56,7 @@ class StateClassifier:
         data : dict[int, NDArray[np.complex64]]
             A dictionary of state labels and complex data.
         n_init : int, optional
-            Number of time the k-means algorithm will be run with different centroid seeds, by default 10.
+            Number of time the k-means algorithm will be run with different center seeds, by default 10.
         random_state : int, optional
             The random state for the model, by default 42.
 
@@ -96,7 +96,7 @@ class StateClassifier:
         confusion_matrix = cls._create_confusion_matrix(model, dataset, label_map)
 
         # Extract model parameters
-        centroids = cls._extract_model_parameters(model)
+        centers = cls._extract_model_parameters(model)
 
         # Return state classifier model
         return cls(
@@ -104,7 +104,7 @@ class StateClassifier:
             model=model,
             label_map=label_map,
             confusion_matrix=confusion_matrix,
-            centroids=centroids,
+            centers=centers,
         )
 
     @staticmethod
@@ -174,7 +174,7 @@ class StateClassifier:
         model: KMeans,
     ) -> dict[int, complex]:
         """
-        Extract the centroid of each cluster.
+        Extract the center of each cluster.
 
         Parameters
         ----------
@@ -184,13 +184,13 @@ class StateClassifier:
         Returns
         -------
         dict[int, complex]
-            The centroids of each cluster as complex numbers.
+            The centers of each cluster as complex numbers.
         """
-        centroids = {}
-        centroids_arr = model.cluster_centers_
-        for label in range(len(centroids_arr)):
-            centroids[label] = complex(centroids_arr[label][0], centroids_arr[label][1])
-        return centroids
+        centers = {}
+        centers_arr = model.cluster_centers_
+        for label in range(len(centers_arr)):
+            centers[label] = complex(centers_arr[label][0], centers_arr[label][1])
+        return centers
 
     def predict(
         self,
@@ -287,11 +287,11 @@ class StateClassifier:
                     ),
                 )
             )
-        for label, centroid in self.centroids.items():
+        for label, center in self.centers.items():
             fig.add_trace(
                 go.Scatter(
-                    x=[centroid.real],
-                    y=[centroid.imag],
+                    x=[center.real],
+                    y=[center.imag],
                     mode="markers",
                     name=f"|{label}⟩",
                     showlegend=False,
