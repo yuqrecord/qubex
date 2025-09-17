@@ -601,6 +601,7 @@ class MeasurementMixin(
         amplitudes: dict[str, float] | None = None,
         frequencies: dict[str, float] | None = None,
         is_damped: bool = True,
+        fit_threshold: float = 0.5,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
@@ -630,6 +631,7 @@ class MeasurementMixin(
                 ramptime=ramptime,
                 frequencies=frequencies,
                 is_damped=is_damped,
+                fit_threshold=fit_threshold,
                 shots=shots,
                 interval=interval,
                 plot=plot,
@@ -645,6 +647,7 @@ class MeasurementMixin(
                     ramptime=ramptime,
                     frequencies=frequencies,
                     is_damped=is_damped,
+                    fit_threshold=fit_threshold,
                     shots=shots,
                     interval=interval,
                     store_params=store_params,
@@ -721,6 +724,7 @@ class MeasurementMixin(
         frequencies: dict[str, float] | None = None,
         detuning: float | None = None,
         is_damped: bool = True,
+        fit_threshold: float = 0.5,
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
@@ -790,7 +794,7 @@ class MeasurementMixin(
                 plot=plot,
                 is_damped=is_damped,
             )
-            if fit_result["status"] == "error":
+            if fit_result["status"] == "error" or fit_result["r2"] < fit_threshold:
                 rabi_params[target] = RabiParam.nan(target=target)
             else:
                 rabi_params[target] = RabiParam(

@@ -363,6 +363,7 @@ class CharacterizationMixin(
                 amplitudes=amplitudes,
                 time_range=time_range,
                 frequencies=frequencies,
+                fit_threshold=0.0,
                 shots=shots,
                 interval=interval,
                 plot=False,
@@ -410,7 +411,9 @@ class CharacterizationMixin(
                             data=data.data,
                             plot=False,
                         )
-                        rabi_rates_buffer[target].append(fit_result["frequency"])
+                        rabi_rates_buffer[target].append(
+                            fit_result.get("frequency", np.nan)
+                        )
                         data.rabi_param = shared_rabi_params[target]
                         chevron_data_buffer[target].append(data.normalized)
 

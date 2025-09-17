@@ -1527,13 +1527,6 @@ def fit_rabi(
         "fig": fig,
     }
 
-    if r2 < 0.5:
-        print("Error: R² < 0.5")
-        return {
-            "status": "error",
-            "message": "R² < 0.5",
-            **result,
-        }
     if r2 < 0.9:
         print("Warning: R² < 0.9")
         return {
@@ -1577,6 +1570,10 @@ def fit_detuned_rabi(
     """
     control_frequencies = np.asarray(control_frequencies, dtype=np.float64)
     rabi_frequencies = np.asarray(rabi_frequencies, dtype=np.float64)
+
+    mask = ~np.isnan(rabi_frequencies)
+    control_frequencies = control_frequencies[mask]
+    rabi_frequencies = rabi_frequencies[mask]
 
     def func(f_control, f_resonance, f_rabi):
         return np.sqrt(f_rabi**2 + (f_control - f_resonance) ** 2)
