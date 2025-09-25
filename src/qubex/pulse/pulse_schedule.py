@@ -120,8 +120,13 @@ class PulseSchedule:
             return 0
         if not self.is_valid():
             raise ValueError("Inconsistent sequence lengths.")
-        # return len(next(iter(self.values.values())))
-        return int(self.duration // Waveform.SAMPLING_PERIOD)
+        # NOTE:
+        #   Using floor division (//) with floating point numbers can lead to an off-by-one
+        #   error due to binary representation (e.g. 100 // 0.1 -> 999.0 instead of 1000.0).
+        #   We therefore compute the ratio and round it to the nearest integer.
+        #   This assumes that duration is always intended to be an integer multiple of
+        #   Waveform.SAMPLING_PERIOD within normal floating point tolerance.
+        return int(round(self.duration / Waveform.SAMPLING_PERIOD))
 
     @property
     def duration(self) -> float:
