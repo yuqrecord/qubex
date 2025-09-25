@@ -201,8 +201,8 @@ def func_resonator_reflection(
     kappa_ex: float,
     kappa_in: float,
     A: float,
-    tau: float,
     phi: float,
+    tau: float,
 ) -> NDArray:
     """
     Calculate a resonator reflection function with given parameters.
@@ -219,10 +219,10 @@ def func_resonator_reflection(
         Internal loss rate.
     A : float
         Amplitude of the resonator reflection function.
-    tau : float
-        Time constant of the resonator reflection function.
     phi : float
         Phase offset of the resonator reflection function.
+    tau : float
+        Time constant of the resonator reflection function.
     """
     return (
         A
@@ -241,6 +241,7 @@ def func_double_resonator_reflection(
     kappa_in1: float,
     A: float,
     phi: float,
+    tau: float,
 ) -> NDArray:
     """
     Calculate a resonator reflection function with given parameters.
@@ -265,14 +266,16 @@ def func_double_resonator_reflection(
         Amplitude of the resonator reflection function.
     phi : float
         Phase offset of the resonator reflection function.
+    tau : float
+        Time constant of the resonator reflection function.
     """
     return (
         A
-        * np.exp(1j * phi)
+        * np.exp(1j * (2 * np.pi * f * tau + phi))
         * (
             1
-            - (2 * kappa_ex0 / (kappa_ex0 + kappa_in0 + 1j * (f - f_r0)))
-            - (2 * kappa_ex1 / (kappa_ex1 + kappa_in1 + 1j * (f - f_r1)))
+            - (2 * kappa_ex0 / (kappa_ex0 + kappa_in0 + 2j * (f - f_r0)))
+            - (2 * kappa_ex1 / (kappa_ex1 + kappa_in1 + 2j * (f - f_r1)))
         )
     )
 
@@ -2513,18 +2516,29 @@ def fit_reflection_coefficient_double(
         p0 = (
             (np.max(freq_range) + np.min(freq_range)) / 2,
             (np.max(freq_range) + np.min(freq_range)) / 2,
-            0.005,
-            0.005,
+            0.05,
+            0.05,
             0.0,
             0.0,
             np.mean(np.abs(data)),
+            0.0,
             0.0,
         )
 
     if bounds is None:
         bounds = (
-            (np.min(freq_range), np.min(freq_range), 0, 0, 0, 0, 0, -np.pi),
-            (np.max(freq_range), np.max(freq_range), 1.0, 1.0, 1.0, 1.0, np.inf, np.pi),
+            (np.min(freq_range), np.min(freq_range), 0, 0, 0, 0, 0, -np.pi, -np.inf),
+            (
+                np.max(freq_range),
+                np.max(freq_range),
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                np.inf,
+                np.pi,
+                np.inf,
+            ),
         )
 
     def residuals(params, f, y):
@@ -2540,7 +2554,7 @@ def fit_reflection_coefficient_double(
 
     fitted_params = result.x
 
-    f_r0, f_r1, kappa_ex0, kappa_ex1, kappa_in0, kappa_in1, A, phi = fitted_params
+    f_r0, f_r1, kappa_ex0, kappa_ex1, kappa_in0, kappa_in1, A, phi, tau = fitted_params
 
     r2 = 1 - np.sum(residuals(fitted_params, freq_range, data) ** 2) / np.sum(
         np.abs(data - np.mean(data)) ** 2
@@ -2705,6 +2719,7 @@ def fit_reflection_coefficient_double(
         "kappa_in1": kappa_in1,
         "A": A,
         "phi": phi,
+        "tau": tau,
         "r2": r2,
         "fig": fig,
     }
