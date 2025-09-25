@@ -2540,7 +2540,7 @@ def fit_reflection_coefficient_double(
 
     fitted_params = result.x
 
-    f_r0, f_r1, kappa_ex0, kappa_in0, kappa_ex1, kappa_in1, A, phi = fitted_params
+    f_r0, f_r1, kappa_ex0, kappa_ex1, kappa_in0, kappa_in1, A, phi = fitted_params
 
     r2 = 1 - np.sum(residuals(fitted_params, freq_range, data) ** 2) / np.sum(
         np.abs(data - np.mean(data)) ** 2
