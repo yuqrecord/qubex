@@ -236,6 +236,10 @@ class MeasureResult:
     data: dict[str, MeasureData]
     config: dict
 
+    def __repr__(self) -> str:
+        qubits = ", ".join(self.data.keys())
+        return f"<MeasureResult mode={self.mode.value}, qubits=[{qubits}]>"
+
     @cached_property
     def counts(self) -> dict[str, int]:
         return self.get_counts()
@@ -695,6 +699,10 @@ class MultipleMeasureResult:
     mode: MeasureMode
     data: dict[str, list[MeasureData]]
     config: dict
+
+    def __repr__(self) -> str:
+        qubits = ", ".join(self.data.keys())
+        return f"<MultipleMeasureResult mode={self.mode.value}, qubits=[{qubits}]>"
 
     def get_basis_indices(
         self,

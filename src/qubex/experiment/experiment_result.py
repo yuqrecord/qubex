@@ -64,6 +64,10 @@ class ExperimentResult(Generic[T]):
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
 
+    def __repr__(self) -> str:
+        qubits = ", ".join(self.data.keys())
+        return f"<ExperimentResult qubits=[{qubits}]>"
+
     def plot(
         self,
         *args,
