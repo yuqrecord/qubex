@@ -116,7 +116,7 @@ class QuantumSystem:
         couplings = couplings or []
 
         # validate objects and couplings
-        object_labels = [object.label for object in objects]
+        object_labels = [obj.label for obj in objects]
         if len(object_labels) != len(set(object_labels)):
             raise ValueError("Objects must have unique labels.")
         for coupling in couplings:
@@ -129,11 +129,11 @@ class QuantumSystem:
     @cached_property
     def graph(self) -> nx.Graph:
         graph = nx.Graph()
-        for object in self.objects:
+        for obj in self.objects:
             graph.add_node(
-                object.label,
-                type=type(object).__name__,
-                props=asdict(object),
+                obj.label,
+                type=type(obj).__name__,
+                props=asdict(obj),
             )
         for coupling in self.couplings:
             graph.add_edge(
@@ -144,12 +144,20 @@ class QuantumSystem:
         return graph
 
     @cached_property
+    def nodes(self) -> list[str]:
+        return list(self.graph.nodes)
+
+    @cached_property
+    def edges(self) -> list[tuple[str, str]]:
+        return list(self.graph.edges)
+
+    @cached_property
     def object_labels(self) -> list[str]:
-        return [object.label for object in self.objects]
+        return [obj.label for obj in self.objects]
 
     @cached_property
     def object_dimensions(self) -> list[int]:
-        return [object.dimension for object in self.objects]
+        return [obj.dimension for obj in self.objects]
 
     @cached_property
     def coupling_labels(self) -> list[str]:
@@ -183,53 +191,55 @@ class QuantumSystem:
 
     @cached_property
     def zero_matrix(self) -> qt.Qobj:
-        return qt.tensor([qt.qzero(dim) for dim in self.object_dimensions])
+        return qt.tensor(*[qt.qzero(dim) for dim in self.object_dimensions])
 
     @cached_property
     def identity_matrix(self) -> qt.Qobj:
-        return qt.tensor([qt.qeye(dim) for dim in self.object_dimensions])
+        return qt.tensor(*[qt.qeye(dim) for dim in self.object_dimensions])
 
     @cached_property
     def number_matrix(self) -> qt.Qobj:
-        return qt.tensor([qt.num(dim) for dim in self.object_dimensions])
+        return qt.tensor(*[qt.num(dim) for dim in self.object_dimensions])
 
     @cached_property
     def ground_state(self) -> qt.Qobj:
-        return self.state({object.label: "0" for object in self.objects})
+        return self.state({obj.label: "0" for obj in self.objects})
 
     @cache
     def get_index(self, label: str) -> int:
-        if label not in self.graph.nodes:
+        if label not in self.nodes:
             raise ValueError(f"Object {label} does not exist.")
-        return list(self.graph.nodes).index(label)
+        return self.nodes.index(label)
 
     @cache
     def get_object(self, label: str) -> Object:
-        if label not in self.graph.nodes:
+        if label not in self.nodes:
             raise ValueError(f"Object {label} does not exist.")
-        ObjectClass = globals()[self.graph.nodes[label]["type"]]
-        return ObjectClass(**self.graph.nodes[label]["props"])
+        node = self.graph.nodes[label]
+        ObjectClass = globals()[node["type"]]
+        return ObjectClass(**node["props"])
 
     @cache
     def get_coupling(self, label: str | tuple[str, str]) -> Coupling:
         pair = label if isinstance(label, tuple) else tuple(label.split("-"))
-        if pair not in self.graph.edges:
+        if pair not in self.edges:
             raise ValueError(f"Coupling {pair} does not exist.")
-        CouplingClass = globals()[self.graph.edges[pair]["type"]]
-        return CouplingClass(**self.graph.edges[pair]["props"])
+        edge = self.graph.get_edge_data(*pair)
+        CouplingClass = globals()[edge["type"]]
+        return CouplingClass(**edge["props"])
 
     @cache
     def get_lowering_operator(self, label: str) -> qt.Qobj:
         if label not in self.graph.nodes:
             raise ValueError(f"Node {label} does not exist.")
         return qt.tensor(
-            [
+            *[
                 (
-                    qt.destroy(object.dimension)
-                    if object.label == label
-                    else qt.qeye(object.dimension)
+                    qt.destroy(obj.dimension)
+                    if obj.label == label
+                    else qt.qeye(obj.dimension)
                 )
-                for object in self.objects
+                for obj in self.objects
             ]
         )
 
@@ -239,24 +249,24 @@ class QuantumSystem:
 
     @cache
     def get_number_operator(self, label: str) -> qt.Qobj:
-        return self.get_raising_operator(label) * self.get_lowering_operator(label)
+        return self.get_raising_operator(label) @ self.get_lowering_operator(label)
 
     @cache
     def get_object_hamiltonian(self, label: str) -> qt.Qobj:
-        object = self.get_object(label)
-        omega = 2 * np.pi * object.frequency
-        alpha = 2 * np.pi * object.anharmonicity
-        a = self.get_lowering_operator(object.label)
+        obj = self.get_object(label)
+        omega = 2 * np.pi * obj.frequency
+        alpha = 2 * np.pi * obj.anharmonicity
+        a = self.get_lowering_operator(obj.label)
         ad = a.dag()
-        return omega * ad * a + 0.5 * alpha * (ad * ad * a * a)
+        return omega * (ad @ a) + 0.5 * alpha * (ad @ ad @ a @ a)
 
     @cache
     def get_rotating_object_hamiltonian(self, label: str) -> qt.Qobj:
-        object = self.get_object(label)
-        alpha = 2 * np.pi * object.anharmonicity
-        a = self.get_lowering_operator(object.label)
+        obj = self.get_object(label)
+        alpha = 2 * np.pi * obj.anharmonicity
+        a = self.get_lowering_operator(obj.label)
         ad = a.dag()
-        return 0.5 * alpha * (ad * ad * a * a)
+        return 0.5 * alpha * (ad @ ad @ a @ a)
 
     @cache
     def get_coupling_term(self, label: str | tuple[str, str]) -> qt.Qobj:
@@ -264,7 +274,7 @@ class QuantumSystem:
         g = 2 * np.pi * coupling.strength
         ad_0 = self.get_lowering_operator(coupling.pair[0]).dag()
         a_1 = self.get_lowering_operator(coupling.pair[1])
-        return g * (ad_0 * a_1)
+        return g * (ad_0 @ a_1)
 
     @cache
     def get_coupling_hamiltonian(self, label: str | tuple[str, str]) -> qt.Qobj:
@@ -278,11 +288,7 @@ class QuantumSystem:
         omega_1 = 2 * np.pi * self.get_object(pair[1]).frequency
         return omega_1 - omega_0
 
-    def get_rotating_coupling_hamiltonian(
-        self,
-        label: str,
-        time: float,
-    ) -> qt.Qobj:
+    def get_rotating_coupling_hamiltonian(self, label: str, time: float) -> qt.Qobj:
         term = self.get_coupling_term(label)
         detuning = self.get_coupling_detuning(label)
         term = term * np.exp(-1j * detuning * time)
@@ -291,8 +297,8 @@ class QuantumSystem:
 
     def get_rotating_hamiltonian(self, time: float) -> qt.Qobj:
         H = self.zero_matrix
-        for object in self.objects:
-            H += self.get_rotating_object_hamiltonian(object.label)
+        for obj in self.objects:
+            H += self.get_rotating_object_hamiltonian(obj.label)
         for coupling in self.couplings:
             H += self.get_rotating_coupling_hamiltonian(coupling.label, time)
         return H
@@ -315,7 +321,7 @@ class QuantumSystem:
     ) -> qt.Qobj:
         if states is None:
             return qt.tensor(
-                [self.create_state(dim, default) for dim in self.object_dimensions]
+                *[self.create_state(dim, default) for dim in self.object_dimensions]
             )
 
         if isinstance(states, Sequence):
@@ -323,9 +329,7 @@ class QuantumSystem:
                 raise ValueError(
                     f"Number of states ({len(states)}) must match number of objects ({len(self.objects)})."
                 )
-            states = {
-                object.label: state for object, state in zip(self.objects, states)
-            }
+            states = {obj.label: state for obj, state in zip(self.objects, states)}
 
         if isinstance(states, Mapping):
             for label in states:
@@ -333,20 +337,20 @@ class QuantumSystem:
                     raise ValueError(f"Object {label} does not exist.")
 
             object_states = []
-            for object in self.objects:
-                if object.label in states:
-                    state = states[object.label]
+            for obj in self.objects:
+                if obj.label in states:
+                    state = states[obj.label]
                     if isinstance(state, qt.Qobj):
-                        if state.shape != (object.dimension, 1):
+                        if state.shape != (obj.dimension, 1):
                             raise ValueError(
-                                f"State for object {object.label} must have shape ({object.dimension}, 1)."
+                                f"State for object {obj.label} must have shape ({obj.dimension}, 1)."
                             )
                         object_states.append(state)
                     else:
-                        object_states.append(self.create_state(object.dimension, state))
+                        object_states.append(self.create_state(obj.dimension, state))
                 else:
-                    object_states.append(self.create_state(object.dimension, default))
-            return qt.tensor(object_states)
+                    object_states.append(self.create_state(obj.dimension, default))
+            return qt.tensor(*object_states)
         else:
             raise ValueError("Invalid state input.")
 

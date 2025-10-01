@@ -514,11 +514,11 @@ class QuantumSimulator:
                 gamma = Omega * np.exp(-1j * delta * t)  # continuous
                 H_ctrl = gamma * ad + np.conj(gamma) * a
                 H += H_ctrl
-            U = (-1j * H * dt).expm() * U_list[-1]
+            U = (-1j * H * dt).expm() @ U_list[-1]
             U_list.append(U)
 
         rho0 = qt.ket2dm(initial_state)
-        states = np.array([U * rho0 * U.dag() for U in U_list])
+        states = np.array([U @ rho0 @ U.dag() for U in U_list])
         unitaries = np.array(U_list)
 
         if n_samples is not None:
@@ -599,7 +599,7 @@ class QuantumSimulator:
         for coupling in self.system.couplings:
             ad_0 = self.system.get_raising_operator(coupling.pair[0])
             a_1 = self.system.get_lowering_operator(coupling.pair[1])
-            op = ad_0 * a_1
+            op = ad_0 @ a_1
             g = 2 * np.pi * coupling.strength
             Delta = self.system.get_coupling_detuning(coupling.label)
             coeffs = g * np.exp(-1j * Delta * times)  # continuous
