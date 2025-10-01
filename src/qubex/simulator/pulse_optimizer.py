@@ -141,7 +141,7 @@ class PulseOptimizer:
 
     @cached_property
     def target_state(self) -> Array:
-        return jnp.asarray(self.target_unitary * self.initial_state)
+        return jnp.asarray(self.target_unitary @ self.initial_state)
 
     @cached_property
     def dimension(self) -> int:
@@ -277,7 +277,7 @@ class PulseOptimizer:
         infidelity = float(loss)
         unitary = qt.Qobj(np.asarray(self.evolve(params)), dims=self.dimensions)
 
-        state = unitary * self.initial_state
+        state = unitary @ self.initial_state
 
         result = OptimizationResult(
             params=params,
