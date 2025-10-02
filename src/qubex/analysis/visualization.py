@@ -143,7 +143,7 @@ def plot_cdf(
     data: ArrayLike,
     *,
     n_bins: int = 30,
-    significant_digits: int = 3,
+    range: tuple[float, float] | None = None,
     title: str = "Cumulative distribution",
     xlabel: str = "Value",
     ylabel: str = "Cumulative probability",
@@ -153,14 +153,21 @@ def plot_cdf(
     return_figure: bool = False,
     save_image: bool = False,
 ):
-    data = np.asarray(data)
+    data = np.asarray(data).astype(float)
+    data = data[~np.isnan(data)]
+
+    if range is None:
+        range = (np.min(data), np.max(data))
+
     counts, bin_edges = np.histogram(
         data,
         bins=n_bins,
-        range=(0, 1),
+        range=range,
     )
     cdf = np.cumsum(counts) / np.sum(counts)
     cdf = np.append(cdf, 1)
+
+    mean_val = np.mean(data)
 
     fig = go.Figure()
 
@@ -175,20 +182,19 @@ def plot_cdf(
         line_shape="hv",
     )
 
-    mean_val = np.mean(data)
     fig.add_vline(
         x=mean_val,
         line_width=2,
         line_dash="dash",
-        annotation_text=f"mean: {mean_val:.{significant_digits}g}",
-        annotation_position="top",
+        line_color="lightgrey",
+        layer="below",
     )
 
     fig.update_layout(
         title=title,
         xaxis_title=xlabel,
         yaxis_title=ylabel,
-        yaxis=dict(range=[0, 1.1]),
+        yaxis=dict(range=[0, 1.05]),
         width=width,
         height=height,
         template=template,

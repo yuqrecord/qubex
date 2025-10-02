@@ -212,7 +212,7 @@ class LatticeGraph:
         """
         return {
             (id0, id1): data
-            for id0, id1, data in self.qubit_undirected_graph.edges(data=True)
+            for id0, id1, data in self.qubit_undirected_graph.edges(data=True)  # type: ignore
         }
 
     @cached_property
@@ -1059,9 +1059,9 @@ class LatticeGraph:
         self,
         *,
         title: str = "Latice Data",
-        values: list | None = None,
-        texts: list[str] | None = None,
-        hovertexts: list[str] | None = None,
+        values: Collection | None = None,
+        texts: Collection[str] | None = None,
+        hovertexts: Collection[str] | None = None,
         colorscale: str = "Viridis",
         image_name: str = "lattice_data",
         images_dir: str = "./images",
