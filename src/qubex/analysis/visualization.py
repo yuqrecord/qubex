@@ -140,7 +140,7 @@ def plot(
 
 
 def plot_cdf(
-    data: ArrayLike,
+    data: ArrayLike | Mapping,
     *,
     xlim: tuple[float, float] | None = None,
     title: str = "Cumulative distribution",
@@ -152,40 +152,58 @@ def plot_cdf(
     return_figure: bool = False,
     save_image: bool = False,
 ):
-    data = np.asarray(data).astype(float)
-    data = data[~np.isnan(data)]
-    data.sort()
+    dataset = {}
+    data_min = float("inf")
+    data_max = float("-inf")
 
-    N = len(data)
-    mean_val = np.mean(data)
-
-    if xlim is None:
-        dx = (max(data) - min(data)) / 100
-        xlim = (min(data) - dx, max(data) + dx)
-
-    x = [xlim[0]] + data.tolist() + [xlim[1]]
-    y = [0] + [(i + 1) / N for i in range(N)] + [1]
+    if not isinstance(data, Mapping):
+        values = np.asarray(data).astype(float)
+        values = values[~np.isnan(values)]
+        values.sort()
+        dataset["data"] = values
+        data_min = np.min(values)
+        data_max = np.max(values)
+    else:
+        for key, values in data.items():
+            values = np.asarray(values).astype(float)
+            values = values[~np.isnan(values)]
+            values.sort()
+            dataset[key] = values
+            data_min = min(data_min, np.min(values))
+            data_max = max(data_max, np.max(values))
 
     fig = go.Figure()
 
-    fig.add_scatter(
-        x=x,
-        y=y,
-        mode="lines",
-        line=dict(
-            color=COLORS[0],
-            width=3,
-        ),
-        line_shape="hv",
-    )
+    for key, values in dataset.items():
+        N = len(values)
+        mean_val = np.mean(values)
 
-    fig.add_vline(
-        x=mean_val,
-        line_width=2,
-        line_dash="dash",
-        line_color="lightgrey",
-        layer="below",
-    )
+        if xlim is None:
+            dx = (data_max - data_min) / 100
+            xlim = (data_min - dx, data_max + dx)
+
+        x = [xlim[0]] + values.tolist() + [xlim[1]]
+        y = [0] + [(i + 1) / N for i in range(N)] + [1]
+
+        fig.add_scatter(
+            x=x,
+            y=y,
+            name=key,
+            mode="lines",
+            line=dict(
+                color=COLORS[0],
+                width=3,
+            ),
+            line_shape="hv",
+        )
+
+        fig.add_vline(
+            x=mean_val,
+            line_width=2,
+            line_dash="dash",
+            line_color="lightgrey",
+            layer="below",
+        )
 
     fig.update_layout(
         title=title,
