@@ -88,7 +88,8 @@ class Control:
             x=self.times,
             y=self.values,
             kind=self.interpolation,
-            fill_value="extrapolate",  # type: ignore
+            bounds_error=False,
+            fill_value=(self.values[0], self.values[-1]),  # type: ignore
         )
 
     def get_samples(
