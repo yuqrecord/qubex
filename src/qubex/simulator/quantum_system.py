@@ -354,6 +354,12 @@ class QuantumSystem:
         else:
             raise ValueError("Invalid state input.")
 
+    def substate(self, label: str, alias: int | str) -> qt.Qobj:
+        if label not in self.graph.nodes:
+            raise ValueError(f"Object {label} does not exist.")
+        obj = self.get_object(label)
+        return self.create_state(obj.dimension, alias)
+
     @staticmethod
     def create_state(dim: int, alias: int | str) -> qt.Qobj:
         if isinstance(alias, int):

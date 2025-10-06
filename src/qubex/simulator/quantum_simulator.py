@@ -178,6 +178,14 @@ class SimulationResult:
     def control_frequencies(self) -> dict[str, float]:
         return {control.target: control.frequency for control in self.controls}
 
+    @property
+    def initial_state(self) -> qt.Qobj:
+        return self.states[0]
+
+    @property
+    def final_state(self) -> qt.Qobj:
+        return self.states[-1]
+
     def get_substates(
         self,
         label: str,
@@ -219,6 +227,50 @@ class SimulationResult:
             )
 
         return substates
+
+    def get_initial_substate(
+        self,
+        label: str,
+        frame: Literal["qubit", "drive"] | None = None,
+    ) -> qt.Qobj:
+        """
+        Extract the initial substate of a qubit from the states.
+
+        Parameters
+        ----------
+        label : str
+            The label of the qubit.
+        frame : Literal["qubit", "drive"] | None, optional
+            The frame of the substates, by default "qubit"
+
+        Returns
+        -------
+        qt.Qobj
+            The initial substate of the qubit.
+        """
+        return self.get_substates(label, frame=frame)[0]
+
+    def get_final_substate(
+        self,
+        label: str,
+        frame: Literal["qubit", "drive"] | None = None,
+    ) -> qt.Qobj:
+        """
+        Extract the final substate of a qubit from the states.
+
+        Parameters
+        ----------
+        label : str
+            The label of the qubit.
+        frame : Literal["qubit", "drive"] | None, optional
+            The frame of the substates, by default "qubit"
+
+        Returns
+        -------
+        qt.Qobj
+            The final substate of the qubit.
+        """
+        return self.get_substates(label, frame=frame)[-1]
 
     def get_times(
         self,
