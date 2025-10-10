@@ -67,11 +67,13 @@ class Transmon(Object):
         label: str,
         dimension: int,
         frequency: float,
-        anharmonicity: float,
+        anharmonicity: float | None = None,
         relaxation_rate: float = 0.0,
         dephasing_rate: float = 0.0,
         **kwargs,
     ):
+        if anharmonicity is None:
+            anharmonicity = -0.05 * frequency  # typical transmon anharmonicity
         super().__init__(
             label=label,
             dimension=dimension,
