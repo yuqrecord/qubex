@@ -132,6 +132,9 @@ class SequencerMod(Sequencer):
                 dsp_demodulation=self.dsp_demodulation,
                 software_demodulation=self.software_demodulation,
                 enable_sum=self.enable_sum,
+                enable_classification=self.enable_classification,
+                line_param0=self.line_param0,
+                line_param1=self.line_param1,
             )
         )
         # phase_offset_list_by_target = {
