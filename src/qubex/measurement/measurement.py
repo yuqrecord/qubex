@@ -942,6 +942,7 @@ class Measurement:
             resource_map=resource_map,  # type: ignore
             interval=backend_interval,
             sysdb=self.device_controller.qubecalib.sysdb,
+            driver=self.device_controller.quel1system,
         )
 
     def _create_sampled_sequences_from_schedule(
@@ -1270,6 +1271,7 @@ class Measurement:
             resource_map=resource_map,  # type: ignore
             interval=backend_interval,
             sysdb=self.device_controller.qubecalib.sysdb,
+            driver=self.device_controller.quel1system,
         )
 
     def _create_measure_result(
