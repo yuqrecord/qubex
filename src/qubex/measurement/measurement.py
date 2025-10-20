@@ -257,6 +257,22 @@ class Measurement:
         """
         return self.experiment_system.get_awg_frequency(target)
 
+    def get_diff_frequency(self, target: str) -> float:
+        """
+        Get the difference frequency for the target.
+
+        Parameters
+        ----------
+        target : str
+            The target label.
+
+        Returns
+        -------
+        float
+            The difference frequency in Hz.
+        """
+        return self.experiment_system.get_diff_frequency(target)
+
     def update_classifiers(self, classifiers: TargetMap[StateClassifier]):
         """Update the state classifiers."""
         for target, classifier in classifiers.items():
@@ -810,9 +826,10 @@ class Measurement:
                 post_margin=readout_post_margin,
             )
             padded_waveform[readout_slice] = readout_pulse.values
-            omega = 2 * np.pi * self.get_awg_frequency(readout_target)
+            # use diff_frequency instead of awg_frequency since the envelope will be adjusted by conjugation later
+            omega = 2 * np.pi * self.get_diff_frequency(readout_target)
             offset = capture_start[qubit] * SAMPLING_PERIOD
-            padded_waveform *= np.exp(-1j * omega * offset)
+            padded_waveform *= np.exp(1j * omega * offset)
             readout_waveforms[readout_target] = padded_waveform
 
         # zero padding (pump)
@@ -1110,11 +1127,12 @@ class Measurement:
             if not ranges:
                 continue
             seq = sampled_sequences[target]
-            omega = 2 * np.pi * self.get_awg_frequency(target)
+            # use diff_frequency instead of awg_frequency since the envelope will be adjusted by conjugation later
+            omega = 2 * np.pi * self.get_diff_frequency(target)
             delay = capture_delay_sample[target]
             for rng in ranges:
                 offset = (rng.start + delay) * SAMPLING_PERIOD
-                seq[rng] *= np.exp(-1j * omega * offset)
+                seq[rng] *= np.exp(1j * omega * offset)
 
         # create GenSampledSequence
         gen_sequences: dict[str, pls.GenSampledSequence] = {}
