@@ -132,6 +132,11 @@ class Waveform(ABC):
     def inverted(self) -> Waveform:
         """Returns a copy of the waveform with the time inverted."""
 
+    def reset_cached_duration(self):
+        """Resets the cached duration of the waveform."""
+        if "cached_duration" in self.__dict__:
+            del self.__dict__["cached_duration"]
+
     def _number_of_samples(
         self,
         duration: float,
