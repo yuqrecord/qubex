@@ -108,8 +108,7 @@ class Pulse(Waveform):
             values = np.pad(self._values, (N - self.length, 0), mode="constant")
         else:
             raise ValueError("pad_side must be either 'right' or 'left'.")
-        new_pulse = deepcopy(self)
-        new_pulse._values = values
+        new_pulse = Pulse(values)  # DON'T deepcopy - cached_duration should be reset
         return new_pulse
 
     def scaled(self, scale: float) -> Pulse:
@@ -140,8 +139,8 @@ class Pulse(Waveform):
         """Returns a copy of the pulse repeated n times."""
         if n == 1:
             return self
-        new_pulse = deepcopy(self)
-        new_pulse._values = np.tile(self._values, n)
+        values = np.tile(self._values, n)
+        new_pulse = Pulse(values)  # DON'T deepcopy - cached_duration should be reset
         return new_pulse
 
     @deprecated(
