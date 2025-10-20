@@ -79,7 +79,7 @@ class Pulse(Waveform):
         return (
             self._values
             * self._scale
-            * np.exp(1j * (2 * np.pi * self._detuning * self.times + self._phase))
+            * np.exp(-1j * (2 * np.pi * self._detuning * self.times - self._phase))
         )
 
     def copy(self, reset_cached_duration: bool = False) -> Pulse:
