@@ -60,6 +60,7 @@ Do you want to continue?
     all_box_ids = list(set(list(box_ids) + [ref_port]))
     qc = get_qubecalib()
     qc.sysdb.load_box_yaml(str(box_file_path))
+    qc.sysdb.load_skew_yaml(str(skew_file_path))
     setting = SkewSetting.from_yaml(str(skew_file_path))
     system = qc.sysdb.create_quel1system(*all_box_ids)
     system.resync(*all_box_ids)

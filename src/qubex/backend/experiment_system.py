@@ -339,6 +339,11 @@ class ExperimentSystem:
             )
         return round(f_awg, 10)
 
+    def get_diff_frequency(self, label: str) -> float:
+        target = self.get_target(label)
+        f_diff = target.frequency - self.get_nco_frequency(label)
+        return round(f_diff, 10)
+
     def get_mux_by_readout_port(self, port: GenPort | CapPort) -> Mux | None:
         if isinstance(port, CapPort):
             for mux, cap_port in self.wiring_info.read_in:

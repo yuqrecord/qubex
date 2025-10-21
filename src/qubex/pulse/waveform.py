@@ -33,9 +33,15 @@ class Waveform(ABC):
         detuning: float | None = None,
         phase: float | None = None,
     ):
-        self._scale = scale or 1.0
-        self._detuning = detuning or 0.0
-        self._phase = phase or 0.0
+        if scale is None:
+            scale = 1.0
+        if detuning is None:
+            detuning = 0.0
+        if phase is None:
+            phase = 0.0
+        self._scale = scale
+        self._detuning = detuning
+        self._phase = phase
 
     @property
     def name(self) -> str:
@@ -131,6 +137,11 @@ class Waveform(ABC):
     @abstractmethod
     def inverted(self) -> Waveform:
         """Returns a copy of the waveform with the time inverted."""
+
+    def reset_cached_duration(self):
+        """Resets the cached duration of the waveform."""
+        if "cached_duration" in self.__dict__:
+            del self.__dict__["cached_duration"]
 
     def _number_of_samples(
         self,
