@@ -374,7 +374,6 @@ class Waveform(ABC):
         xlabel: str = "Frequency (MHz)",
         ylabel: str = "Amplitude (arb. units)",
         zero_padding_factor: int = 100,
-        frequency_sign: Literal["positive", "negative"] = "positive",
     ):
         """
         Plots the FFT of the waveform.
@@ -398,7 +397,7 @@ class Waveform(ABC):
             xlabel=xlabel,
             ylabel=ylabel,
             zero_padding_factor=zero_padding_factor,
-            frequency_sign=frequency_sign,
+            frequency_sign="positive",
         )
 
     def plot_spectrum(
