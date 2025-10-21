@@ -8,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from typing_extensions import deprecated
 
 
 class Waveform(ABC):
@@ -362,15 +363,54 @@ class Waveform(ABC):
             }
         )
 
+    @deprecated(
+        "plot_fft is deprecated and will be removed in a future version. "
+        "Use plot_spectrum instead. Note that `frequency_sign` is opposite to that of `plot_spectrum`.",
+    )
     def plot_fft(
         self,
         *,
         title: str | None = None,
         xlabel: str = "Frequency (MHz)",
         ylabel: str = "Amplitude (arb. units)",
+        zero_padding_factor: int = 100,
     ):
         """
         Plots the FFT of the waveform.
+
+        Parameters
+        ----------
+        title : str, optional
+            Title of the plot.
+        xlabel : str, optional
+            Label of the x-axis.
+        ylabel : str, optional
+            Label of the y-axis.
+
+        Note
+        ----
+        This method is deprecated. Use `plot_spectrum` instead.
+        Note that `frequency_sign` is opposite to that of `plot_spectrum`.
+        """
+        self.plot_spectrum(
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            zero_padding_factor=zero_padding_factor,
+            frequency_sign="positive",
+        )
+
+    def plot_spectrum(
+        self,
+        *,
+        title: str | None = None,
+        xlabel: str = "Frequency (MHz)",
+        ylabel: str = "Amplitude (arb. units)",
+        zero_padding_factor: int = 100,
+        frequency_sign: Literal["positive", "negative"] = "negative",
+    ):
+        """
+        Plots the spectrum of the waveform.
 
         Parameters
         ----------
@@ -389,14 +429,18 @@ class Waveform(ABC):
             title = "Frequency spectrum"
 
         pulse = self.padded(
-            total_duration=self.duration * 100,
+            total_duration=self.duration * zero_padding_factor,
             pad_side="right",
         )
 
         N = pulse.length
         values = pulse.values
         fft_values = np.fft.fft(values)
-        freqs = np.fft.fftfreq(N, d=self.SAMPLING_PERIOD)
+        if frequency_sign == "positive":
+            d = self.SAMPLING_PERIOD
+        else:
+            d = -self.SAMPLING_PERIOD
+        freqs = np.fft.fftfreq(N, d=d)
         idx = np.argsort(freqs)
         freqs = freqs[idx]
         fft_values = np.abs(fft_values[idx])  # type: ignore
