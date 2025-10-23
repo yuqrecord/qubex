@@ -93,8 +93,8 @@ def test_detuned():
     assert detuned.values == pytest.approx(
         [
             0.1,
-            0.1 * np.exp(1j * 0.001 * 2 * np.pi * dt),
-            0.1 * np.exp(2j * 0.001 * 2 * np.pi * dt),
+            0.1 * np.exp(-1j * 0.001 * 2 * np.pi * dt),
+            0.1 * np.exp(-2j * 0.001 * 2 * np.pi * dt),
         ]
     )
 

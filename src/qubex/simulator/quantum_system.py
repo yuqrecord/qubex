@@ -33,7 +33,7 @@ class Qubit(Object):
             label=label,
             dimension=2,
             frequency=frequency,
-            anharmonicity=0.0,
+            anharmonicity=np.inf,
             relaxation_rate=relaxation_rate,
             dephasing_rate=dephasing_rate,
         )
@@ -67,11 +67,13 @@ class Transmon(Object):
         label: str,
         dimension: int,
         frequency: float,
-        anharmonicity: float,
+        anharmonicity: float | None = None,
         relaxation_rate: float = 0.0,
         dephasing_rate: float = 0.0,
         **kwargs,
     ):
+        if anharmonicity is None:
+            anharmonicity = -0.05 * frequency  # typical transmon anharmonicity
         super().__init__(
             label=label,
             dimension=dimension,
@@ -144,11 +146,19 @@ class QuantumSystem:
         return graph
 
     @cached_property
-    def nodes(self) -> list[str]:
+    def node_set(self) -> set[str]:
+        return set(self.graph.nodes)
+
+    @cached_property
+    def edge_set(self) -> set[tuple[str, str]]:
+        return set(self.graph.edges)
+
+    @cached_property
+    def node_list(self) -> list[str]:
         return list(self.graph.nodes)
 
     @cached_property
-    def edges(self) -> list[tuple[str, str]]:
+    def edge_list(self) -> list[tuple[str, str]]:
         return list(self.graph.edges)
 
     @cached_property
@@ -207,13 +217,13 @@ class QuantumSystem:
 
     @cache
     def get_index(self, label: str) -> int:
-        if label not in self.nodes:
+        if label not in self.node_set:
             raise ValueError(f"Object {label} does not exist.")
-        return self.nodes.index(label)
+        return self.node_list.index(label)
 
     @cache
     def get_object(self, label: str) -> Object:
-        if label not in self.nodes:
+        if label not in self.node_set:
             raise ValueError(f"Object {label} does not exist.")
         node = self.graph.nodes[label]
         ObjectClass = globals()[node["type"]]
@@ -221,16 +231,19 @@ class QuantumSystem:
 
     @cache
     def get_coupling(self, label: str | tuple[str, str]) -> Coupling:
-        pair = label if isinstance(label, tuple) else tuple(label.split("-"))
-        if pair not in self.edges:
-            raise ValueError(f"Coupling {pair} does not exist.")
+        pair = self.to_tuple_pair(label)
+        if pair not in self.edge_set:
+            if (pair[1], pair[0]) in self.edge_set:
+                pair = (pair[1], pair[0])
+            else:
+                raise ValueError(f"Coupling {pair} does not exist.")
         edge = self.graph.get_edge_data(*pair)
         CouplingClass = globals()[edge["type"]]
         return CouplingClass(**edge["props"])
 
     @cache
     def get_lowering_operator(self, label: str) -> qt.Qobj:
-        if label not in self.graph.nodes:
+        if label not in self.node_set:
             raise ValueError(f"Node {label} does not exist.")
         return qt.tensor(
             *[
@@ -283,7 +296,7 @@ class QuantumSystem:
 
     @cache
     def get_coupling_detuning(self, label: str | tuple[str, str]) -> float:
-        pair = label if isinstance(label, tuple) else tuple(label.split("-"))
+        pair = self.to_tuple_pair(label)
         omega_0 = 2 * np.pi * self.get_object(pair[0]).frequency
         omega_1 = 2 * np.pi * self.get_object(pair[1]).frequency
         return omega_1 - omega_0
@@ -333,7 +346,7 @@ class QuantumSystem:
 
         if isinstance(states, Mapping):
             for label in states:
-                if label not in self.graph.nodes:
+                if label not in self.node_set:
                     raise ValueError(f"Object {label} does not exist.")
 
             object_states = []
@@ -355,8 +368,6 @@ class QuantumSystem:
             raise ValueError("Invalid state input.")
 
     def substate(self, label: str, alias: int | str) -> qt.Qobj:
-        if label not in self.graph.nodes:
-            raise ValueError(f"Object {label} does not exist.")
         obj = self.get_object(label)
         return self.create_state(obj.dimension, alias)
 
@@ -386,3 +397,56 @@ class QuantumSystem:
         else:
             raise ValueError(f"Invalid state alias: {alias}")
         return state
+
+    @staticmethod
+    def to_tuple_pair(label: str | tuple[str, str]) -> tuple[str, str]:
+        if isinstance(label, tuple):
+            return label
+        else:
+            pair = tuple(label.split("-"))
+            if len(pair) != 2:
+                raise ValueError(f"Invalid coupling label: {label}")
+            return pair
+
+    def get_coupled_objects(self, label: str) -> list[Object]:
+        if label not in self.node_set:
+            raise ValueError(f"Object {label} does not exist.")
+        neighbors = list(self.graph.neighbors(label))
+        return [self.get_object(neighbor) for neighbor in neighbors]
+
+    def get_effective_frequency(self, label: str) -> float:
+        obj = self.get_object(label)
+        shift = self.get_frequency_shift(label)
+        return obj.frequency + shift
+
+    def get_frequency_shift(self, label: str) -> float:
+        shift = 0.0
+        for neighbor in self.graph.neighbors(label):
+            shift += self.get_lamb_shift((label, neighbor))
+            shift += self.get_static_zz((label, neighbor))
+        return shift
+
+    def get_lamb_shift(self, label: str | tuple[str, str]) -> float:
+        pair = self.to_tuple_pair(label)
+        coupling = self.get_coupling(pair)
+        obj_0 = self.get_object(pair[0])
+        obj_1 = self.get_object(pair[1])
+
+        g = coupling.strength
+        delta = obj_0.frequency - obj_1.frequency
+        return (g**2) / delta
+
+    def get_static_zz(self, label: str | tuple[str, str]) -> float:
+        pair = self.to_tuple_pair(label)
+        obj_0 = self.get_object(pair[0])
+        obj_1 = self.get_object(pair[1])
+
+        if obj_0.dimension < 3 or obj_1.dimension < 3:
+            return 0.0
+
+        g = self.get_coupling(pair).strength
+        delta = obj_0.frequency - obj_1.frequency
+        alpha_0 = obj_0.anharmonicity
+        alpha_1 = obj_1.anharmonicity
+        xi = g**2 * (alpha_0 + alpha_1) / ((delta + alpha_0) * (delta - alpha_1))
+        return xi
