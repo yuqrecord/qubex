@@ -8,6 +8,7 @@ from typing_extensions import TypeAlias
 
 from ..pulse import Pulse
 from .drag import Drag
+from .vert_ramp import VertRamp
 
 RampType: TypeAlias = Literal["Gaussian", "RaisedCosine", "Sintegral", "Bump"]
 
@@ -109,21 +110,34 @@ class FlatTop(Pulse):
 
         beta = beta or 0.0
 
-        v_rise = Drag.func(
-            t=t,
-            duration=T,
-            amplitude=amplitude,
-            beta=beta,
-            type=type,
-        )
-        v_flat = amplitude * np.ones_like(t)
-        v_fall = Drag.func(
-            t=t - flattime,
-            duration=T,
-            amplitude=amplitude,
-            beta=beta,
-            type=type,
-        )
+        if type == "VertRamp":
+            v_rise = VertRamp.func(
+                t=t,
+                duration=tau,
+                amplitude=amplitude,
+            )
+            v_flat = amplitude * np.ones_like(t)
+            v_fall = VertRamp.func(
+                t=-(t - duration),
+                duration=tau,
+                amplitude=amplitude,
+            )
+        else:
+            v_rise = Drag.func(
+                t=t,
+                duration=T,
+                amplitude=amplitude,
+                beta=beta,
+                type=type,
+            )
+            v_flat = amplitude * np.ones_like(t)
+            v_fall = Drag.func(
+                t=t - flattime,
+                duration=T,
+                amplitude=amplitude,
+                beta=beta,
+                type=type,
+            )
 
         return np.where(
             (t >= 0) & (t <= duration),
