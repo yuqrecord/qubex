@@ -999,7 +999,7 @@ class CalibrationMixin(
 
     def _ramptime(self, control_qubit: str, target_qubit: str) -> float:
         f_ge_control = self.qubits[control_qubit].frequency
-        f_ef_target = self.qubits[target_qubit].ef_frequency
+        f_ef_target = self.qubits[target_qubit].control_frequency_ef
 
         if f_ge_control < f_ef_target:
             return DEFAULT_CR_RAMPTIME

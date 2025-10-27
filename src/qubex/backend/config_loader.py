@@ -32,28 +32,28 @@ class Param(Enum):
     Each value encodes: (name, legacy_name, legacy_file)
     """
 
-    QUBIT_FREQUENCY = ("qubit_frequency", None, "props")
+    QUBIT_FREQUENCY = ("qubit_frequency", "qubit_frequency", "props")
     QUBIT_ANHARMONICITY = ("qubit_anharmonicity", "anharmonicity", "props")
-    RESONATOR_FREQUENCY = ("resonator_frequency", None, "props")
+    RESONATOR_FREQUENCY = ("resonator_frequency", "resonator_frequency", "props")
 
-    CONTROL_FREQUENCY = ("control_frequency", "qubit_frequency", "props")
-    READOUT_FREQUENCY = ("readout_frequency", "resonator_frequency", "props")
+    CONTROL_FREQUENCY = ("control_frequency", None, "props")
+    READOUT_FREQUENCY = ("readout_frequency", None, "props")
 
-    CONTROL_AMPLITUDE = ("control_amplitude", None, "params")
-    READOUT_AMPLITUDE = ("readout_amplitude", None, "params")
+    CONTROL_AMPLITUDE = ("control_amplitude", "control_amplitude", "params")
+    READOUT_AMPLITUDE = ("readout_amplitude", "readout_amplitude", "params")
 
-    CONTROL_VATT = ("control_vatt", None, "params")
-    READOUT_VATT = ("readout_vatt", None, "params")
-    PUMP_VATT = ("pump_vatt", None, "params")
+    CONTROL_VATT = ("control_vatt", "control_vatt", "params")
+    READOUT_VATT = ("readout_vatt", "readout_vatt", "params")
+    PUMP_VATT = ("pump_vatt", "pump_vatt", "params")
 
-    CONTROL_FSC = ("control_fsc", None, "params")
-    READOUT_FSC = ("readout_fsc", None, "params")
-    PUMP_FSC = ("pump_fsc", None, "params")
+    CONTROL_FSC = ("control_fsc", "control_fsc", "params")
+    READOUT_FSC = ("readout_fsc", "readout_fsc", "params")
+    PUMP_FSC = ("pump_fsc", "pump_fsc", "params")
 
-    CAPTURE_DELAY = ("capture_delay", None, "params")
-    CAPTURE_DELAY_WORD = ("capture_delay_word", None, "params")
+    CAPTURE_DELAY = ("capture_delay", "capture_delay", "params")
+    CAPTURE_DELAY_WORD = ("capture_delay_word", "capture_delay_word", "params")
 
-    JPA_PARAMS = ("jpa_params", None, "params")
+    JPA_PARAMS = ("jpa_params", "jpa_params", "params")
 
 
 class ConfigLoader:
@@ -433,20 +433,16 @@ class ConfigLoader:
         qubit_frequency_dict = self._load_param_data(Param.QUBIT_FREQUENCY)
         qubit_anharmonicity_dict = self._load_param_data(Param.QUBIT_ANHARMONICITY)
         resonator_frequency_dict = self._load_param_data(Param.RESONATOR_FREQUENCY)
+        control_frequency_dict = self._load_param_data(Param.CONTROL_FREQUENCY)
+        readout_frequency_dict = self._load_param_data(Param.READOUT_FREQUENCY)
+
         for qubit in chip.qubits:
-            qubit.frequency = qubit_frequency_dict.get(
-                qubit.label, float("nan")
-            ) or float("nan")
-            anharmonicity = qubit_anharmonicity_dict.get(qubit.label)
-            if anharmonicity is None:
-                factor = -1 / 19  # E_J / E_C = 50
-                qubit.anharmonicity = qubit.frequency * factor
-            else:
-                qubit.anharmonicity = anharmonicity
+            qubit._bare_frequency = qubit_frequency_dict.get(qubit.label)
+            qubit._anharmonicity = qubit_anharmonicity_dict.get(qubit.label)
+            qubit._control_frequency_ge = control_frequency_dict.get(qubit.label)
         for resonator in chip.resonators:
-            resonator.frequency = resonator_frequency_dict.get(
-                resonator.qubit, float("nan")
-            ) or float("nan")
+            resonator._frequency_g = resonator_frequency_dict.get(resonator.qubit)
+            resonator._readout_frequency = readout_frequency_dict.get(resonator.qubit)
         return QuantumSystem(chip=chip)
 
     def _load_control_system(self) -> ControlSystem | None:
