@@ -1916,7 +1916,7 @@ class Experiment(
             pi_pulse = x180[control_qubit]
 
         if cr_amplitude is None:
-            cr_amplitude = cr_param["cr_amplitude"]*coeff_value
+            cr_amplitude = cr_param["cr_amplitude"] * coeff_value
         if cr_duration is None:
             cr_duration = cr_param["duration"]
         if cr_ramptime is None:
@@ -1926,7 +1926,7 @@ class Experiment(
         if cr_beta is None:
             cr_beta = cr_param["cr_beta"]
         if cancel_amplitude is None:
-            cancel_amplitude = cr_param["cancel_amplitude"]*coeff_value
+            cancel_amplitude = cr_param["cancel_amplitude"] * coeff_value
         if cancel_phase is None:
             cancel_phase = cr_param["cancel_phase"]
         if cancel_beta is None:

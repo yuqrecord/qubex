@@ -65,12 +65,14 @@ class ConfigLoader:
     ConfigLoader loads configuration and parameter YAML files for a specific
     quantum chip and constructs the corresponding ExperimentSystem. It prefers
     structured per-file parameter files under ``params/<name>.yaml`` with the
-    shape ``{"meta": ..., "data": ...}``, and falls back to the legacy
-    monolithic ``params.yaml`` when a per-file param name is absent. When
-    ``meta.unit`` is provided, numeric values in ``data`` are converted to the
-    internal base units (GHz for frequency-like quantities, ns for time-like
-    quantities). ``meta.unit`` must be a string and is applied uniformly to the
-    values in ``data``.
+    shape ``{"meta": ..., "data": ...}``. When a per-file file exists, its
+    ``data`` is MERGED over the legacy maps in ``params.yaml``/``props.yaml``
+    (per-file entries override legacy values; missing keys fall back to legacy).
+    If the per-file is completely absent, the legacy maps are used as-is. When
+    ``meta.unit`` is provided, numeric values in per-file ``data`` are converted
+    to the internal base units (GHz for frequency-like quantities, ns for
+    time-like quantities). ``meta.unit`` must be a string and is applied
+    uniformly to the values in per-file ``data`` only.
 
     The loader passes through ``jpa_params`` as-is; it does not perform key
     normalization. Downstream consumers should handle optional keys.
@@ -97,7 +99,7 @@ class ConfigLoader:
     Notes
     -----
     - Per-file parameter YAML must be structured as ``{"meta": ..., "data": ...}``.
-        - ``meta.unit`` is a string (applied to all numeric values in ``data``).
+        - ``meta.unit`` is a string (applied to all numeric values in per-file ``data``).
             Supported units are case-insensitive and include Hz/kHz/MHz/GHz (converted
             to GHz) and s/ms/us/µs/ns (converted to ns).
     - ``get_experiment_system(chip_id)`` accepts an optional argument for backward
@@ -322,6 +324,13 @@ class ConfigLoader:
     def _load_param_data(self, param: Param, use_default: bool = True) -> dict:
         """
         Load a Param with per-file preference and legacy fallback.
+
+        Behavior
+        --------
+        - If a per-file YAML exists, load and unit-convert its ``data`` section, then
+          merge over the legacy map (from props.yaml or params.yaml), so missing keys
+          are filled by legacy values. Per-file keys override legacy.
+        - If a per-file YAML is absent, return the legacy map as-is (or empty).
         """
         name, legacy_name, legacy_file = param.value
         file_path = Path(self._params_dir) / f"{name}.yaml"
@@ -349,23 +358,40 @@ class ConfigLoader:
 
             converted_data = self._convert_units_in_data(data, unit)
 
-            if legacy_data and legacy_data != converted_data:
+            if not converted_data:
+                # Per-file exists but empty; return legacy as-is
                 logger.info(
-                    "Param name `%s` for chip `%s` differs between %s and %s; using per-file (units converted).",
+                    "Param `%s` for chip `%s`: per-file %s has no data; using legacy (%s).",
                     name,
                     self._chip_id,
-                    PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
                     file_path.name,
+                    PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
+                )
+                return legacy_data
+
+            # Merge legacy -> per-file (per-file wins)
+            merged = {**legacy_data, **converted_data}
+
+            # Logging: indicate source(s) and unit conversion if applicable.
+            if legacy_data:
+                logger.info(
+                    "Param `%s` for chip `%s`: merged per-file (%s) over legacy (%s)%s.",
+                    name,
+                    self._chip_id,
+                    file_path.name,
+                    PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
+                    f" with unit={unit!r}" if unit else "",
                 )
             else:
                 logger.info(
-                    "Param name `%s` for chip `%s` loaded from %s%s.",
+                    "Param `%s` for chip `%s`: loaded per-file from %s%s.",
                     name,
                     self._chip_id,
                     file_path.name,
                     f" with unit={unit!r}" if unit else "",
                 )
-            return converted_data
+
+            return merged
         else:
             return legacy_data
 

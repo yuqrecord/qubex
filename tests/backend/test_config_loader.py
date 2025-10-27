@@ -196,3 +196,54 @@ def test_get_experiment_system_deprecation_warning(tmp_path: Path):
     with pytest.warns(DeprecationWarning):
         sys = loader.get_experiment_system(chip_id="IGNORED")
     assert sys is not None
+
+
+def test_merge_per_file_over_legacy(tmp_path: Path):
+    # Arrange: start from minimal files, then add per-file readout_amplitude only for Q1
+    # and set legacy props.yaml to provide qubit_frequency for Q2.
+    config_dir, params_dir, chip_id = _make_minimal_files(tmp_path)
+
+    # Per-file readout_amplitude provides only Q1
+    _write_yaml(
+        params_dir / "readout_amplitude.yaml",
+        {
+            "meta": {},
+            "data": {"Q1": 0.04},
+        },
+    )
+
+    # Legacy props.yaml supplies qubit_frequency for Q2 (internal units GHz)
+    _write_yaml(
+        params_dir / "props.yaml",
+        {
+            chip_id: {
+                "qubit_frequency": {"Q2": 5.5},
+            }
+        },
+    )
+
+    # Act
+    loader = ConfigLoader(
+        chip_id=chip_id,
+        config_dir=config_dir,
+        params_dir=params_dir,
+    )
+    system = loader.get_experiment_system()
+    cp = system.control_params
+
+    # Assert: readout_amplitude is merged: Q0 from legacy, Q1 from per-file, others default
+    assert math.isclose(cp.get_readout_amplitude("Q0"), 0.02, rel_tol=0, abs_tol=1e-12)
+    assert math.isclose(cp.get_readout_amplitude("Q1"), 0.04, rel_tol=0, abs_tol=1e-12)
+    assert math.isclose(cp.get_readout_amplitude("Q2"), 0.01, rel_tol=0, abs_tol=1e-12)
+
+    # Assert: qubit_frequency merged: per-file for Q0/Q1 (with unit conversion and default),
+    # legacy provides Q2 (GHz, no conversion), Q3 remains NaN
+    qs = system.quantum_system
+    q0 = qs.get_qubit("Q0")
+    q1 = qs.get_qubit("Q1")
+    q2 = qs.get_qubit("Q2")
+    q3 = qs.get_qubit("Q3")
+    assert math.isclose(q0.frequency, 5.0, rel_tol=0, abs_tol=1e-9)
+    assert math.isclose(q1.frequency, 6.0, rel_tol=0, abs_tol=1e-9)
+    assert math.isclose(q2.frequency, 5.5, rel_tol=0, abs_tol=1e-9)
+    assert math.isnan(q3.frequency)
