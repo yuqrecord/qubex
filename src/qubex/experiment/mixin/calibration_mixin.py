@@ -2001,6 +2001,7 @@ class CalibrationMixin(
         shots: int = CALIBRATION_SHOTS,
         interval: int = DEFAULT_INTERVAL,
         plot: bool = True,
+        coarse: bool = False,
     ) -> dict:
         if targets is None:
             targets = self.qubit_labels
@@ -2041,21 +2042,22 @@ class CalibrationMixin(
                 )
                 data["calibrate_hpi_pulse"][target] = result.data[target]
 
-                result = self.calibrate_drag_hpi_pulse(
-                    target,
-                    shots=shots,
-                    interval=interval,
-                    plot=plot,
-                )
-                data["calibrate_drag_hpi_pulse"][target] = result
+                if not coarse:
+                    result = self.calibrate_drag_hpi_pulse(
+                        target,
+                        shots=shots,
+                        interval=interval,
+                        plot=plot,
+                    )
+                    data["calibrate_drag_hpi_pulse"][target] = result
 
-                result = self.calibrate_drag_pi_pulse(
-                    target,
-                    shots=shots,
-                    interval=interval,
-                    plot=plot,
-                )
-                data["calibrate_drag_pi_pulse"][target] = result
+                    result = self.calibrate_drag_pi_pulse(
+                        target,
+                        shots=shots,
+                        interval=interval,
+                        plot=plot,
+                    )
+                    data["calibrate_drag_pi_pulse"][target] = result
 
                 result = self.build_classifier(
                     target,

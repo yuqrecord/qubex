@@ -13,8 +13,8 @@ from typing_extensions import deprecated
 
 from ..style import COLORS
 from .blank import Blank
-from .pulse import Waveform
 from .pulse_array import PhaseShift, PulseArray
+from .waveform import Waveform
 
 
 @dataclass

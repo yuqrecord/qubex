@@ -3009,6 +3009,7 @@ class CharacterizationMixin(
         resonator_drive_amplitude: float | None = None,
         resonator_drive_duration: float | None = None,
         plot: bool = True,
+        verbose: bool = False,
         save_image: bool = True,
     ) -> dict:
         if qubit_detuning_range is None:
@@ -3022,8 +3023,6 @@ class CharacterizationMixin(
 
         qubit_label = Target.qubit_label(target)
         read_label = Target.read_label(target)
-        qubit_ssb = self.targets[qubit_label].sideband
-        resonator_ssb = self.targets[read_label].sideband
         f_qubit = self.targets[qubit_label].frequency
         f_resonator = self.targets[read_label].frequency
         qubit_frequency_range = qubit_detuning_range + f_qubit
@@ -3035,10 +3034,6 @@ class CharacterizationMixin(
         for resonator_detuning in tqdm(resonator_detuning_range):
             result1d = []
             for qubit_detuning in qubit_detuning_range:
-                if qubit_ssb == "L":
-                    qubit_detuning *= -1
-                if resonator_ssb == "L":
-                    resonator_detuning *= -1
                 result = self.execute(
                     self.ckp_sequence(
                         target=target,
@@ -3055,16 +3050,17 @@ class CharacterizationMixin(
                 data = result.data[target][-1]
                 result1d.append(data.kerneled)
 
+            result1d = self.rabi_params[target].normalize(np.array(result1d))
+
             f0 = fitting.fit_lorentzian(
                 x=qubit_frequency_range,
-                y=np.array(result1d),
-                plot=False,
+                y=result1d,
+                plot=True if verbose else False,
             ).get("f0", np.nan)
             qubit_resonance_frequencies.append(f0)
             result2d.append(result1d)
 
-        result2d = np.array(result2d)
-        data = self.rabi_params[target].normalize(result2d)
+        data = np.array(result2d)
         if qubit_initial_state == "1":
             data *= -1
 
@@ -3136,6 +3132,7 @@ class CharacterizationMixin(
         resonator_drive_amplitude: float | None = None,
         resonator_drive_duration: float | None = None,
         plot: bool = True,
+        verbose: bool = False,
         save_image: bool = True,
     ):
         if resonator_drive_amplitude is None:
@@ -3170,6 +3167,7 @@ class CharacterizationMixin(
             resonator_drive_amplitude=resonator_drive_amplitude,
             resonator_drive_duration=resonator_drive_duration,
             plot=plot,
+            verbose=verbose,
             save_image=save_image,
         )
         result_1 = self.ckp_measurement(
@@ -3182,6 +3180,7 @@ class CharacterizationMixin(
             resonator_drive_amplitude=resonator_drive_amplitude,
             resonator_drive_duration=resonator_drive_duration,
             plot=plot,
+            verbose=verbose,
             save_image=save_image,
         )
 
