@@ -408,6 +408,7 @@ class Waveform(ABC):
         ylabel: str = "Amplitude (arb. units)",
         zero_padding_factor: int = 100,
         frequency_sign: Literal["positive", "negative"] = "negative",
+        xlim: tuple[float, float] | None = None,
     ):
         """
         Plots the spectrum of the waveform.
@@ -427,6 +428,9 @@ class Waveform(ABC):
 
         if title is None:
             title = "Frequency spectrum"
+
+        if xlim is not None:
+            xlim = (xlim[0] * 1e3, xlim[1] * 1e3)
 
         pulse = self.padded(
             total_duration=self.duration * zero_padding_factor,
@@ -457,6 +461,7 @@ class Waveform(ABC):
             title=title,
             xaxis_title=xlabel,
             yaxis_title=ylabel,
+            xaxis_range=xlim if xlim is not None else None,
         )
         fig.show(
             config={
