@@ -372,16 +372,40 @@ class ConfigLoader:
             # Merge legacy -> per-file (per-file wins)
             merged = {**legacy_data, **converted_data}
 
-            # Logging: indicate source(s) and unit conversion if applicable.
+            # Detect overrides (keys present in both with different values)
+            overridden_keys = [
+                k
+                for k, v in converted_data.items()
+                if k in legacy_data and legacy_data.get(k) != v
+            ]
+
+            # Logging: indicate source(s), warning on overrides, info otherwise.
             if legacy_data:
-                logger.info(
-                    "Param `%s` for chip `%s`: merged per-file (%s) over legacy (%s)%s.",
-                    name,
-                    self._chip_id,
-                    file_path.name,
-                    PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
-                    f" with unit={unit!r}" if unit else "",
-                )
+                if overridden_keys:
+                    preview = ", ".join(sorted(overridden_keys)[:5])
+                    more = (
+                        ""
+                        if len(overridden_keys) <= 5
+                        else f" (+{len(overridden_keys) - 5} more)"
+                    )
+                    logger.warning(
+                        "Param `%s` for chip `%s`: per-file (%s) overrides legacy (%s) for keys: %s%s.",
+                        name,
+                        self._chip_id,
+                        file_path.name,
+                        PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
+                        preview,
+                        more,
+                    )
+                else:
+                    logger.info(
+                        "Param `%s` for chip `%s`: merged per-file (%s) over legacy (%s)%s.",
+                        name,
+                        self._chip_id,
+                        file_path.name,
+                        PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
+                        f" with unit={unit!r}" if unit else "",
+                    )
             else:
                 logger.info(
                     "Param `%s` for chip `%s`: loaded per-file from %s%s.",

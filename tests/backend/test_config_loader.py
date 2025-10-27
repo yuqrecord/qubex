@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 
@@ -247,3 +248,28 @@ def test_merge_per_file_over_legacy(tmp_path: Path):
     assert math.isclose(q1.frequency, 6.0, rel_tol=0, abs_tol=1e-9)
     assert math.isclose(q2.frequency, 5.5, rel_tol=0, abs_tol=1e-9)
     assert math.isnan(q3.frequency)
+
+
+def test_override_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    config_dir, params_dir, chip_id = _make_minimal_files(tmp_path)
+
+    # Per-file readout_amplitude overrides legacy value for Q0 (legacy is 0.02)
+    _write_yaml(
+        params_dir / "readout_amplitude.yaml",
+        {
+            "meta": {},
+            "data": {"Q0": 0.03},
+        },
+    )
+
+    caplog.set_level(logging.WARNING, logger="qubex.backend.config_loader")
+
+    _ = ConfigLoader(
+        chip_id=chip_id,
+        config_dir=config_dir,
+        params_dir=params_dir,
+    )
+
+    # Assert a warning was logged indicating override
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any(("overrides legacy" in m and "readout_amplitude" in m) for m in messages)
