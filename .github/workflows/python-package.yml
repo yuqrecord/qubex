@@ -39,12 +39,8 @@ jobs:
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Install dependencies
-        env:
-          UV_SYSTEM_PYTHON: "1"
         run: |
-          uv pip install pip==24.0
-          uv pip install ruff pytest pytest-xdist
-          uv pip install ".[backend]"
+          uv sync --all-extras --dev
 
       - name: Lint with ruff
         run: |
