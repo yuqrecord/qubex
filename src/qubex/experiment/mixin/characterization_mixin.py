@@ -3363,3 +3363,60 @@ class CharacterizationMixin(
                 "result_1": result_1,
             }
         )
+
+    def characterize_1q(
+        self,
+        targets: Collection[str] | str | None = None,
+        *,
+        shots: int = CALIBRATION_SHOTS,
+        interval: int = DEFAULT_INTERVAL,
+        plot: bool = True,
+        save_image: bool = True,
+    ) -> Result:
+        if targets is None:
+            targets = self.qubit_labels
+        elif isinstance(targets, str):
+            targets = [targets]
+        else:
+            targets = list(targets)
+
+        data = {
+            "t1_experiment": {},
+            "t2_experiment": {},
+            "ramsey_experiment": {},
+        }
+
+        for target in targets:
+            try:
+                result = self.t1_experiment(
+                    target,
+                    shots=shots,
+                    interval=interval,
+                    plot=plot,
+                    save_image=save_image,
+                )
+                data["t1_experiment"][target] = result.data[target]
+
+                result = self.t2_experiment(
+                    target,
+                    shots=shots,
+                    interval=interval,
+                    plot=plot,
+                    save_image=save_image,
+                )
+                data["t2_experiment"][target] = result.data[target]
+
+                result = self.ramsey_experiment(
+                    target,
+                    shots=shots,
+                    interval=interval,
+                    plot=plot,
+                    save_image=save_image,
+                )
+                data["ramsey_experiment"][target] = result.data[target]
+
+            except Exception as e:
+                print(f"Characterization failed for {target}: {e}")
+                continue
+
+        return Result(data=data)
