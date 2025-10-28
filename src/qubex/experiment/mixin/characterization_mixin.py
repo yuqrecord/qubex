@@ -1128,12 +1128,15 @@ class CharacterizationMixin(
         self,
         targets: Collection[str] | str | None = None,
         *,
-        time_range: ArrayLike = np.arange(0, 10001, 100),
+        time_range: ArrayLike | None = None,
         detuning: float = 0.001,
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
     ) -> Result:
+        if time_range is None:
+            time_range = np.arange(0, 10001, 100)
+
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -1191,13 +1194,17 @@ class CharacterizationMixin(
         target_qubit: str,
         spectator_qubit: str,
         *,
-        time_range: ArrayLike = np.arange(0, 2001, 100),
+        time_range: ArrayLike | None = None,
         x90: Waveform | TargetMap[Waveform] | None = None,
         x180: Waveform | TargetMap[Waveform] | None = None,
+        second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
     ) -> Result:
+        if time_range is None:
+            time_range = np.arange(0, 10001, 500)
+
         if x90 is None:
             x90 = {
                 target_qubit: self.get_hpi_pulse(target_qubit),
@@ -1226,7 +1233,10 @@ class CharacterizationMixin(
                 ps.add(target_qubit, x180[target_qubit])
                 ps.add(spectator_qubit, x180[spectator_qubit])
                 ps.add(target_qubit, Blank(tau))
-                ps.add(target_qubit, x90[target_qubit].scaled(-1))
+                if second_rotation_axis == "X":
+                    ps.add(target_qubit, x90[target_qubit].shifted(np.pi))
+                else:
+                    ps.add(target_qubit, x90[target_qubit].shifted(-np.pi / 2))
             return ps
 
         time_range = np.asarray(time_range)
@@ -1244,16 +1254,16 @@ class CharacterizationMixin(
         )
 
         fit_result = fitting.fit_cosine(
-            time_range * 2,
+            time_range * 2e-3,
             (1 - result.data[target_qubit].normalized) * 0.5,
             is_damped=True,
             plot=plot,
-            title=f"JAZZ : {target_qubit}-{spectator_qubit}",
-            xlabel="Wait time (ns)",
+            title=f"JAZZ experiment: {target_qubit}-{spectator_qubit}",
+            xlabel="Wait time (μs)",
             ylabel=f"Normalized value : {target_qubit}",
         )
 
-        xi = fit_result["f"]
+        xi = fit_result["f"] * 1e-3
         zeta = 2 * xi
 
         print(f"ξ: {xi * 1e6:.2f} kHz")
@@ -1272,9 +1282,10 @@ class CharacterizationMixin(
         target_qubit: str,
         spectator_qubit: str,
         *,
-        time_range: ArrayLike = np.arange(0, 20001, 500),
+        time_range: ArrayLike | None = None,
         x90: Waveform | TargetMap[Waveform] | None = None,
         x180: Waveform | TargetMap[Waveform] | None = None,
+        second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
@@ -1288,6 +1299,7 @@ class CharacterizationMixin(
             time_range=time_range,
             x90=x90,
             x180=x180,
+            second_rotation_axis=second_rotation_axis,
             shots=shots,
             interval=interval,
             plot=plot,
