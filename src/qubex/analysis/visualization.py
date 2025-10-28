@@ -27,12 +27,17 @@ def save_figure_image(
     *,
     images_dir: Path | str = DEFAULT_IMAGES_DIR,
     format: Literal["png", "svg", "jpeg", "webp"] = "png",
-    width: int = 600,
-    height: int = 300,
+    width: int | None = None,
+    height: int | None = None,
     scale: int = 3,
 ):
     if not os.path.exists(images_dir):
         os.makedirs(images_dir)
+
+    if width is None:
+        width = 600
+    if height is None:
+        height = 300
 
     counter = 1
     current_date = datetime.datetime.now().strftime("%Y%m%d")

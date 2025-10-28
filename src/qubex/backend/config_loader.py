@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
+import warnings
 from collections import defaultdict
+from enum import Enum
 from logging import getLogger
 from pathlib import Path
 from typing import Final, Literal
@@ -18,11 +21,98 @@ DEFAULT_CONFIG_DIR: Final = "/home/shared/qubex-config"
 CHIP_FILE: Final = "chip.yaml"
 BOX_FILE: Final = "box.yaml"
 WIRING_FILE: Final = "wiring.yaml"
-PROPS_FILE: Final = "props.yaml"
-PARAMS_FILE: Final = "params.yaml"
+PROPS_FILE: Final = "props.yaml"  # legacy
+PARAMS_FILE: Final = "params.yaml"  # legacy
+
+
+class Param(Enum):
+    """
+    Canonical parameter names.
+
+    Each value encodes: (name, legacy_name, legacy_file)
+    """
+
+    QUBIT_FREQUENCY = ("qubit_frequency", "qubit_frequency", "props")
+    QUBIT_ANHARMONICITY = ("qubit_anharmonicity", "anharmonicity", "props")
+    RESONATOR_FREQUENCY = ("resonator_frequency", "resonator_frequency", "props")
+
+    CONTROL_FREQUENCY = ("control_frequency", None, "props")
+    READOUT_FREQUENCY = ("readout_frequency", None, "props")
+
+    CONTROL_AMPLITUDE = ("control_amplitude", "control_amplitude", "params")
+    READOUT_AMPLITUDE = ("readout_amplitude", "readout_amplitude", "params")
+
+    CONTROL_VATT = ("control_vatt", "control_vatt", "params")
+    READOUT_VATT = ("readout_vatt", "readout_vatt", "params")
+    PUMP_VATT = ("pump_vatt", "pump_vatt", "params")
+
+    CONTROL_FSC = ("control_fsc", "control_fsc", "params")
+    READOUT_FSC = ("readout_fsc", "readout_fsc", "params")
+    PUMP_FSC = ("pump_fsc", "pump_fsc", "params")
+
+    CAPTURE_DELAY = ("capture_delay", "capture_delay", "params")
+    CAPTURE_DELAY_WORD = ("capture_delay_word", "capture_delay_word", "params")
+
+    JPA_PARAMS = ("jpa_params", "jpa_params", "params")
 
 
 class ConfigLoader:
+    """
+    Single-chip configuration loader that builds an ExperimentSystem.
+
+    Summary
+    -------
+    ConfigLoader loads configuration and parameter YAML files for a specific
+    quantum chip and constructs the corresponding ExperimentSystem. It prefers
+    structured per-file parameter files under ``params/<name>.yaml`` with the
+    shape ``{"meta": ..., "data": ...}``. When a per-file file exists, its
+    ``data`` is MERGED over the legacy maps in ``params.yaml``/``props.yaml``
+    (per-file entries override legacy values; missing keys fall back to legacy).
+    If the per-file is completely absent, the legacy maps are used as-is. When
+    ``meta.unit`` is provided, numeric values in per-file ``data`` are converted
+    to the internal base units (GHz for frequency-like quantities, ns for
+    time-like quantities). ``meta.unit`` must be a string and is applied
+    uniformly to the values in per-file ``data`` only.
+
+    The loader passes through ``jpa_params`` as-is; it does not perform key
+    normalization. Downstream consumers should handle optional keys.
+
+    Parameters
+    ----------
+    chip_id : str
+        The quantum chip identifier (e.g., "64Q"). All configuration is loaded
+        for this specific chip.
+    config_dir : Path | str | None, optional
+        Directory containing configuration files (``chip.yaml``, ``box.yaml``,
+        ``wiring.yaml``). Defaults to ``DEFAULT_CONFIG_DIR/<chip_id>/config``.
+    params_dir : Path | str | None, optional
+        Directory containing parameter files (``params.yaml`` and per-section
+        files under ``params/``). Defaults to
+        ``DEFAULT_CONFIG_DIR/<chip_id>/params``.
+    chip_file, box_file, wiring_file, props_file, params_file : str, optional
+        Filenames for the respective YAMLs. Usually left as defaults.
+    targets_to_exclude : list[str] | None, optional
+        Qubit/resonator labels to exclude when assembling the ExperimentSystem.
+    configuration_mode : {"ge-ef-cr", "ge-cr-cr"} | None, optional
+        Control configuration style. Defaults to "ge-cr-cr" if not provided.
+
+    Notes
+    -----
+    - Per-file parameter YAML must be structured as ``{"meta": ..., "data": ...}``.
+        - ``meta.unit`` is a string (applied to all numeric values in per-file ``data``).
+            Supported units are case-insensitive and include Hz/kHz/MHz/GHz (converted
+            to GHz) and s/ms/us/µs/ns (converted to ns).
+    - ``get_experiment_system(chip_id)`` accepts an optional argument for backward
+      compatibility, but the argument is deprecated and ignored; call
+      ``get_experiment_system()`` with no arguments.
+
+    Examples
+    --------
+    >>> from qubex.backend.config_loader import ConfigLoader
+    >>> cfg = ConfigLoader(chip_id="64Q")
+    >>> system = cfg.get_experiment_system()
+    """
+
     def __init__(
         self,
         *,
@@ -37,34 +127,6 @@ class ConfigLoader:
         targets_to_exclude: list[str] | None = None,
         configuration_mode: Literal["ge-ef-cr", "ge-cr-cr"] | None = None,
     ):
-        """
-        Initializes the ConfigLoader object.
-
-        Parameters
-        ----------
-        chip_id : str, optional
-            The quantum chip ID (e.g., "64Q"). If provided, the configuration will be loaded for this specific chip.
-        config_dir : Path | str, optional
-            The directory where the configuration files are stored.
-        params_dir : Path | str, optional
-            The directory where the parameter files are stored.
-        chip_file : str, optional
-            The name of the chip configuration file, by default "chip.yaml".
-        box_file : str, optional
-            The name of the box configuration file, by default "box.yaml".
-        wiring_file : str, optional
-            The name of the wiring configuration file, by default "wiring.yaml".
-        props_file : str, optional
-            The name of the properties configuration file, by default "props.yaml".
-        params_file : str, optional
-            The name of the parameters configuration file, by default "params.yaml".
-        targets_to_exclude : list[str], optional
-            The list of target labels to exclude, by default None.
-
-        Examples
-        --------
-        >>> config = ConfigLoader()
-        """
         if config_dir is None:
             config_dir = Path(DEFAULT_CONFIG_DIR) / chip_id / "config"
         if params_dir is None:
@@ -74,16 +136,18 @@ class ConfigLoader:
         self._chip_id = chip_id
         self._config_dir = config_dir
         self._params_dir = params_dir
+
         self._chip_dict = self._load_config_file(chip_file)
         self._box_dict = self._load_config_file(box_file)
         self._wiring_dict = self._load_config_file(wiring_file)
-        self._props_dict = self._load_params_file(props_file)
-        self._params_dict = self._load_params_file(params_file)
-        self._quantum_system_dict = self._load_quantum_system()
-        self._control_system_dict = self._load_control_system()
-        self._wiring_info_dict = self._load_wiring_info()
-        self._control_params_dict = self._load_control_params()
-        self._experiment_system_dict = self._load_experiment_system(
+        self._props_dict = self._load_legacy_params_file(props_file)  # legacy
+        self._params_dict = self._load_legacy_params_file(params_file)  # legacy
+
+        self._quantum_system = self._load_quantum_system()
+        self._control_system = self._load_control_system()
+        self._wiring_info = self._load_wiring_info()
+        self._control_params = self._load_control_params()
+        self._experiment_system = self._load_experiment_system(
             targets_to_exclude=targets_to_exclude,
             configuration_mode=configuration_mode,
         )
@@ -98,26 +162,43 @@ class ConfigLoader:
         """Returns the absolute path to the parameters directory."""
         return Path(self._params_dir).resolve()
 
-    def get_experiment_system(self, chip_id: str) -> ExperimentSystem:
+    def get_experiment_system(self, chip_id: str | None = None) -> ExperimentSystem:
         """
-        Returns the ExperimentSystem object for the given chip ID.
+        Return the ExperimentSystem for the configured chip.
 
         Parameters
         ----------
-        chip_id : str
-            The quantum chip ID (e.g., "64Q").
+        chip_id : str, optional
+            Deprecated and ignored. Use ``get_experiment_system()`` without
+            arguments. A ``DeprecationWarning`` is emitted when provided.
 
         Returns
         -------
         ExperimentSystem
-            The ExperimentSystem object for the given chip ID.
+            The ExperimentSystem for this loader's chip.
+
+        Notes
+        -----
+        The ``chip_id`` parameter is kept for backward compatibility and will be
+        removed in a future minor release.
 
         Examples
         --------
-        >>> config = ConfigLoader()
-        >>> config.get_experiment_system("64Q")
+        >>> cfg = ConfigLoader(chip_id="64Q")
+        >>> cfg.get_experiment_system()
         """
-        return self._experiment_system_dict[chip_id]
+        if chip_id is not None:
+            warnings.warn(
+                "get_experiment_system(chip_id) is deprecated; the argument is ignored. "
+                "Use get_experiment_system() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if self._experiment_system is None:
+            raise RuntimeError(
+                "ExperimentSystem is not available for chip: %s" % self._chip_id
+            )
+        return self._experiment_system
 
     def _load_config_file(self, file_name) -> dict:
         path = Path(self._config_dir) / file_name
@@ -132,183 +213,352 @@ class ConfigLoader:
             raise e
         return result
 
-    def _load_params_file(self, file_name) -> dict:
+    def _load_legacy_params_file(self, file_name) -> dict:
         path = Path(self._params_dir) / file_name
         try:
             with open(path, "r") as file:
                 result = yaml.safe_load(file)
-        except FileNotFoundError as e:
-            print(f"Parameter file not found: {path}\n\n{e}")
-            raise e
+        except FileNotFoundError:
+            # Tolerate missing legacy params files (e.g., props.yaml, params.yaml)
+            # so that per-file structured params can be used without requiring
+            # the monolithic files. Return an empty mapping (no warning).
+            logger.debug("Legacy parameter file not found; treating as empty: %s", path)
+            return {}
         except yaml.YAMLError as e:
             print(f"Error loading parameter file: {path}\n\n{e}")
             raise e
         return result
 
-    def _load_quantum_system(self) -> dict[str, QuantumSystem]:
-        quantum_system_dict = {}
-        for chip_id, chip_info in self._chip_dict.items():
-            if self._chip_id is not None and chip_id != self._chip_id:
-                continue
-            chip = Chip.new(
-                id=chip_id,
-                name=chip_info["name"],
-                n_qubits=chip_info["n_qubits"],
-            )
-            props = self._props_dict.get(chip_id)
-            if props is None:
-                logger.warning(f"Chip `{chip_id}` is missing in `{PROPS_FILE}`. ")
-                continue
-            qubit_frequency_dict = props.get("qubit_frequency", {})
-            qubit_anharmonicity_dict = props.get("anharmonicity", {})
-            resonator_frequency_dict = props.get("resonator_frequency", {})
-            for qubit in chip.qubits:
-                qubit.frequency = qubit_frequency_dict.get(
-                    qubit.label, float("nan")
-                ) or float("nan")
-                anharmonicity = qubit_anharmonicity_dict.get(qubit.label)
-                if anharmonicity is None:
-                    factor = -1 / 19  # E_J / E_C = 50
-                    qubit.anharmonicity = qubit.frequency * factor
-                else:
-                    qubit.anharmonicity = anharmonicity
-            for resonator in chip.resonators:
-                resonator.frequency = resonator_frequency_dict.get(
-                    resonator.qubit, float("nan")
-                ) or float("nan")
-            quantum_system = QuantumSystem(chip=chip)
-            quantum_system_dict[chip_id] = quantum_system
-        return quantum_system_dict
+    def _load_structured_params_yaml(self, path: Path) -> dict[str, dict]:
+        """
+        Load a YAML file that may have a structured shape {"meta": ..., "data": ...}.
 
-    def _load_control_system(self) -> dict[str, ControlSystem]:
-        control_system_dict = {}
-        for chip_id in self._chip_dict:
-            if self._chip_id is not None and chip_id != self._chip_id:
-                continue
-            box_ports = defaultdict(list)
-            wirings = self._wiring_dict.get(chip_id)
-            if wirings is None:
-                logger.warning(f"Chip `{chip_id}` is missing in `{WIRING_FILE}`. ")
-                continue
-            for wiring in wirings:
-                box, port = wiring["read_out"].split("-")
-                box_ports[box].append(int(port))
-                box, port = wiring["read_in"].split("-")
-                box_ports[box].append(int(port))
-                for ctrl in wiring["ctrl"]:
-                    box, port = ctrl.split("-")
-                    box_ports[box].append(int(port))
-            boxes = [
-                Box.new(
-                    id=id,
-                    name=box["name"],
-                    type=box["type"],
-                    address=box["address"],
-                    adapter=box["adapter"],
-                    port_numbers=box_ports[id],
+        Returns
+        -------
+        dict[str, dict]
+            A mapping with keys "meta" and "data". Both are dicts (empty if absent).
+
+        Notes
+        -----
+        The on-disk format is preserved ("meta"/"data" keys). Downstream consumers
+        should typically use the returned["data"]. The "meta" is returned for
+        tooling/annotation but not merged into data.
+        """
+        try:
+            with open(path, "r") as f:
+                payload = yaml.safe_load(f)
+        except FileNotFoundError:
+            raise
+        except yaml.YAMLError as e:
+            print(f"Error loading parameter file: {path}\n\n{e}")
+            raise e
+
+        if payload is None:
+            return {"data": {}, "meta": {}}
+        if isinstance(payload, dict) and ("data" in payload or "meta" in payload):
+            data = payload.get("data") or {}
+            meta = payload.get("meta") or {}
+            if not isinstance(data, dict):
+                raise TypeError(f"'data' must be a mapping in {path}")
+            if not isinstance(meta, dict):
+                raise TypeError(f"'meta' must be a mapping in {path}")
+            return {"data": data, "meta": meta}
+        raise TypeError(
+            f"Per-file params must be structured with 'meta'/'data' mappings: {path}"
+        )
+
+    def _unit_scale_to_internal(self, unit: str) -> float:
+        """
+        Return a scale factor to convert values from the given unit to the internal base
+        units (GHz for frequency-like, ns for time-like). If unit is already base or
+        unrecognized/dimensionless, returns 1.0.
+
+        Supported units (case-insensitive):
+        - Frequency: Hz, kHz, MHz, GHz → internal GHz
+        - Time: s, ms, us/µs, ns → internal ns
+        """
+        if not unit:
+            return 1.0
+        u = unit.strip().lower()
+        # Frequency family → to GHz
+        if u in {"hz", "khz", "mhz", "ghz"}:
+            return {
+                "hz": 1e-9,
+                "khz": 1e-6,
+                "mhz": 1e-3,
+                "ghz": 1.0,
+            }[u]
+        # Time family → to ns
+        if u in {"s", "ms", "us", "µs", "ns"}:
+            return {
+                "s": 1e9,
+                "ms": 1e6,
+                "us": 1e3,
+                "µs": 1e3,
+                "ns": 1.0,
+            }[u]
+        return 1.0
+
+    def _convert_units_in_data(self, data: dict, unit: str | None) -> dict:
+        """
+        Convert numeric values in `data` according to `unit`.
+
+        Returns a new dict; does not mutate the input.
+        """
+
+        def apply(value, key: str | None = None):
+            if isinstance(unit, str):
+                scale = self._unit_scale_to_internal(unit)
+            else:
+                scale = 1.0
+
+            if isinstance(value, (int, float)) and scale != 1.0:
+                return float(value) * scale
+            else:
+                return value
+
+        if not isinstance(data, dict):
+            return data
+        return {k: apply(v, k) for k, v in data.items()}
+
+    def _load_param_data(self, param: Param, use_default: bool = True) -> dict:
+        """
+        Load a Param with per-file preference and legacy fallback.
+
+        Behavior
+        --------
+        - If a per-file YAML exists, load and unit-convert its ``data`` section, then
+          merge over the legacy map (from props.yaml or params.yaml), so missing keys
+          are filled by legacy values. Per-file keys override legacy.
+        - If a per-file YAML is absent, return the legacy map as-is (or empty).
+        """
+        name, legacy_name, legacy_file = param.value
+        file_path = Path(self._params_dir) / f"{name}.yaml"
+
+        legacy_root = self._params_dict if legacy_file == "params" else self._props_dict
+        legacy_map = legacy_root.get(self._chip_id, {}) or {}
+        legacy_key = legacy_name or name
+        legacy_data = legacy_map.get(legacy_key, {}) or {}
+
+        if file_path.exists():
+            payload = self._load_structured_params_yaml(file_path)
+            data = payload.get("data", {}) or {}
+            meta = payload.get("meta", {}) or {}
+            unit = meta.get("unit")
+            default = meta.get("default")
+            if use_default and default is not None:
+                data = {
+                    k: (
+                        default
+                        if (v is None or (isinstance(v, float) and math.isnan(v)))
+                        else v
+                    )
+                    for k, v in data.items()
+                }
+
+            converted_data = self._convert_units_in_data(data, unit)
+
+            if not converted_data:
+                # Per-file exists but empty; return legacy as-is
+                logger.info(
+                    "Param `%s` for chip `%s`: per-file %s has no data; using legacy (%s).",
+                    name,
+                    self._chip_id,
+                    file_path.name,
+                    PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
                 )
-                for id, box in self._box_dict.items()
-                if id in box_ports
+                return legacy_data
+
+            # Merge legacy -> per-file (per-file wins)
+            merged = {**legacy_data, **converted_data}
+
+            # Detect overrides (keys present in both with different values)
+            overridden_keys = [
+                k
+                for k, v in converted_data.items()
+                if k in legacy_data and legacy_data.get(k) != v
             ]
-            control_system_dict[chip_id] = ControlSystem(
-                boxes=boxes,
-                clock_master_address=self._chip_dict[chip_id].get("clock_master"),
+
+            # Logging: indicate source(s), warning on overrides, info otherwise.
+            if legacy_data:
+                if overridden_keys:
+                    preview = ", ".join(sorted(overridden_keys)[:5])
+                    more = (
+                        ""
+                        if len(overridden_keys) <= 5
+                        else f" (+{len(overridden_keys) - 5} more)"
+                    )
+                    logger.warning(
+                        "Param `%s` for chip `%s`: per-file (%s) overrides legacy (%s) for keys: %s%s.",
+                        name,
+                        self._chip_id,
+                        file_path.name,
+                        PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
+                        preview,
+                        more,
+                    )
+                else:
+                    logger.info(
+                        "Param `%s` for chip `%s`: merged per-file (%s) over legacy (%s)%s.",
+                        name,
+                        self._chip_id,
+                        file_path.name,
+                        PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
+                        f" with unit={unit!r}" if unit else "",
+                    )
+            else:
+                logger.info(
+                    "Param `%s` for chip `%s`: loaded per-file from %s%s.",
+                    name,
+                    self._chip_id,
+                    file_path.name,
+                    f" with unit={unit!r}" if unit else "",
+                )
+
+            return merged
+        else:
+            return legacy_data
+
+    def _load_quantum_system(self) -> QuantumSystem | None:
+        chip_id = self._chip_id
+        chip_info = self._chip_dict.get(chip_id)
+        if chip_info is None:
+            logger.warning(f"Chip `{chip_id}` is missing in `{CHIP_FILE}`. ")
+            return None
+        chip = Chip.new(
+            id=chip_id,
+            name=chip_info["name"],
+            n_qubits=chip_info["n_qubits"],
+        )
+        qubit_frequency_dict = self._load_param_data(Param.QUBIT_FREQUENCY)
+        qubit_anharmonicity_dict = self._load_param_data(Param.QUBIT_ANHARMONICITY)
+        resonator_frequency_dict = self._load_param_data(Param.RESONATOR_FREQUENCY)
+        control_frequency_dict = self._load_param_data(Param.CONTROL_FREQUENCY)
+        readout_frequency_dict = self._load_param_data(Param.READOUT_FREQUENCY)
+
+        for qubit in chip.qubits:
+            qubit._bare_frequency = qubit_frequency_dict.get(qubit.label)
+            qubit._anharmonicity = qubit_anharmonicity_dict.get(qubit.label)
+            qubit._control_frequency_ge = control_frequency_dict.get(qubit.label)
+        for resonator in chip.resonators:
+            resonator._frequency_g = resonator_frequency_dict.get(resonator.qubit)
+            resonator._readout_frequency = readout_frequency_dict.get(resonator.qubit)
+        return QuantumSystem(chip=chip)
+
+    def _load_control_system(self) -> ControlSystem | None:
+        chip_id = self._chip_id
+        box_ports = defaultdict(list)
+        wirings = self._wiring_dict.get(chip_id)
+        if wirings is None:
+            logger.warning(f"Chip `{chip_id}` is missing in `{WIRING_FILE}`. ")
+            return None
+        for wiring in wirings:
+            box, port = wiring["read_out"].split("-")
+            box_ports[box].append(int(port))
+            box, port = wiring["read_in"].split("-")
+            box_ports[box].append(int(port))
+            for ctrl in wiring["ctrl"]:
+                box, port = ctrl.split("-")
+                box_ports[box].append(int(port))
+        boxes = [
+            Box.new(
+                id=id,
+                name=box["name"],
+                type=box["type"],
+                address=box["address"],
+                adapter=box["adapter"],
+                port_numbers=box_ports[id],
             )
-        return control_system_dict
+            for id, box in self._box_dict.items()
+            if id in box_ports
+        ]
+        return ControlSystem(
+            boxes=boxes,
+            clock_master_address=self._chip_dict[chip_id].get("clock_master"),
+        )
 
-    def _load_wiring_info(self) -> dict[str, WiringInfo]:
-        wiring_info_dict = {}
-        for chip_id in self._chip_dict:
-            if self._chip_id is not None and chip_id != self._chip_id:
-                continue
-            try:
-                wirings = self._wiring_dict[chip_id]
-                quantum_system = self._quantum_system_dict[chip_id]
-                control_system = self._control_system_dict[chip_id]
-            except KeyError:
-                continue
+    def _load_wiring_info(self) -> WiringInfo | None:
+        chip_id = self._chip_id
+        try:
+            wirings = self._wiring_dict[chip_id]
+            quantum_system = self._quantum_system
+            control_system = self._control_system
+        except KeyError:
+            return None
+        if quantum_system is None or control_system is None:
+            return None
 
-            def get_port(specifier: str | None):
-                if specifier is None:
-                    return None
-                box_id = specifier.split("-")[0]
-                port_num = int(specifier.split("-")[1])
-                port = control_system.get_port(box_id, port_num)
-                return port
+        def get_port(specifier: str | None):
+            if specifier is None:
+                return None
+            box_id = specifier.split("-")[0]
+            port_num = int(specifier.split("-")[1])
+            port = control_system.get_port(box_id, port_num)
+            return port
 
-            ctrl = []
-            read_out = []
-            read_in = []
-            pump = []
-            for wiring in wirings:
-                mux_num = int(wiring["mux"])
-                mux = quantum_system.get_mux(mux_num)
-                qubits = quantum_system.get_qubits_in_mux(mux_num)
-                for identifier, qubit in zip(wiring["ctrl"], qubits):
-                    ctrl_port: GenPort = get_port(identifier)  # type: ignore
-                    ctrl.append((qubit, ctrl_port))
-                read_out_port: GenPort = get_port(wiring["read_out"])  # type: ignore
-                read_out.append((mux, read_out_port))
-                read_in_port: CapPort = get_port(wiring["read_in"])  # type: ignore
-                read_in.append((mux, read_in_port))
-                pump_port: GenPort = get_port(wiring.get("pump"))  # type: ignore
-                if pump_port is not None:
-                    pump.append((mux, pump_port))
+        ctrl = []
+        read_out = []
+        read_in = []
+        pump = []
+        for wiring in wirings:
+            mux_num = int(wiring["mux"])
+            mux = quantum_system.get_mux(mux_num)
+            qubits = quantum_system.get_qubits_in_mux(mux_num)
+            for identifier, qubit in zip(wiring["ctrl"], qubits):
+                ctrl_port: GenPort = get_port(identifier)  # type: ignore
+                ctrl.append((qubit, ctrl_port))
+            read_out_port: GenPort = get_port(wiring["read_out"])  # type: ignore
+            read_out.append((mux, read_out_port))
+            read_in_port: CapPort = get_port(wiring["read_in"])  # type: ignore
+            read_in.append((mux, read_in_port))
+            pump_port: GenPort = get_port(wiring.get("pump"))  # type: ignore
+            if pump_port is not None:
+                pump.append((mux, pump_port))
 
-            wiring_info = WiringInfo(
-                ctrl=ctrl,
-                read_out=read_out,
-                read_in=read_in,
-                pump=pump,
-            )
-            wiring_info_dict[chip_id] = wiring_info
-        return wiring_info_dict
+        wiring_info = WiringInfo(
+            ctrl=ctrl,
+            read_out=read_out,
+            read_in=read_in,
+            pump=pump,
+        )
+        return wiring_info
 
-    def _load_control_params(self) -> dict[str, ControlParams]:
-        control_params_dict = {}
-        for chip_id in self._chip_dict:
-            if self._chip_id is not None and chip_id != self._chip_id:
-                continue
-            params = self._params_dict.get(chip_id)
-            if params is None:
-                logger.warning(f"Chip `{chip_id}` is missing in `{PARAMS_FILE}`. ")
-                continue
-            control_params = ControlParams(
-                control_amplitude=params.get("control_amplitude", {}),
-                readout_amplitude=params.get("readout_amplitude", {}),
-                control_vatt=params.get("control_vatt", {}),
-                readout_vatt=params.get("readout_vatt", {}),
-                pump_vatt=params.get("pump_vatt", {}),
-                control_fsc=params.get("control_fsc", {}),
-                readout_fsc=params.get("readout_fsc", {}),
-                pump_fsc=params.get("pump_fsc", {}),
-                capture_delay=params.get("capture_delay", {}),
-                capture_delay_word=params.get("capture_delay_word", {}),
-                jpa_params=params.get("jpa_params", {}),
-            )
-            control_params_dict[chip_id] = control_params
-        return control_params_dict
+    def _load_control_params(self) -> ControlParams | None:
+        # Build control params primarily from per-file param names when present;
+        # fall back to monolithic params.yaml where needed. Do not require the
+        # legacy monolithic file to exist.
+        control_params = ControlParams(
+            control_amplitude=self._load_param_data(Param.CONTROL_AMPLITUDE),
+            readout_amplitude=self._load_param_data(Param.READOUT_AMPLITUDE),
+            control_vatt=self._load_param_data(Param.CONTROL_VATT),
+            readout_vatt=self._load_param_data(Param.READOUT_VATT),
+            pump_vatt=self._load_param_data(Param.PUMP_VATT),
+            control_fsc=self._load_param_data(Param.CONTROL_FSC),
+            readout_fsc=self._load_param_data(Param.READOUT_FSC),
+            pump_fsc=self._load_param_data(Param.PUMP_FSC),
+            capture_delay=self._load_param_data(Param.CAPTURE_DELAY),
+            capture_delay_word=self._load_param_data(Param.CAPTURE_DELAY_WORD),
+            jpa_params=self._load_param_data(Param.JPA_PARAMS),
+        )
+        return control_params
 
     def _load_experiment_system(
         self,
         targets_to_exclude: list[str] | None = None,
         configuration_mode: Literal["ge-ef-cr", "ge-cr-cr"] = "ge-cr-cr",
-    ) -> dict[str, ExperimentSystem]:
-        experiment_system_dict = {}
-        for chip_id in self._chip_dict:
-            if self._chip_id is not None and chip_id != self._chip_id:
-                continue
-            quantum_system = self._quantum_system_dict[chip_id]
-            control_system = self._control_system_dict[chip_id]
-            wiring_info = self._wiring_info_dict[chip_id]
-            control_params = self._control_params_dict[chip_id]
-            experiment_system = ExperimentSystem(
-                quantum_system=quantum_system,
-                control_system=control_system,
-                wiring_info=wiring_info,
-                control_params=control_params,
-                targets_to_exclude=targets_to_exclude,
-                configuration_mode=configuration_mode,
-            )
-            experiment_system_dict[chip_id] = experiment_system
-        return experiment_system_dict
+    ) -> ExperimentSystem | None:
+        if (
+            self._quantum_system is None
+            or self._control_system is None
+            or self._wiring_info is None
+            or self._control_params is None
+        ):
+            return None
+        return ExperimentSystem(
+            quantum_system=self._quantum_system,
+            control_system=self._control_system,
+            wiring_info=self._wiring_info,
+            control_params=self._control_params,
+            targets_to_exclude=targets_to_exclude,
+            configuration_mode=configuration_mode,
+        )

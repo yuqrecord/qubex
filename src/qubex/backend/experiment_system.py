@@ -38,7 +38,7 @@ DEFAULT_DC_VOLTAGE: Final = 0.0
 
 
 LO_STEP = 500_000_000
-NCO_STEP = 23_437_500
+NCO_STEP = 7_812_500  # use 23_437_500 if dual modulus mode is not supported
 CNCO_CENTER_CTRL = 2_250_000_000
 CNCO_CETNER_READ = 1_500_000_000
 CNCO_CETNER_READ_R8 = 2_250_000_000
@@ -740,7 +740,11 @@ class ExperimentSystem:
         dict[str, int]
             The dictionary containing the lo, cnco, and fnco values.
         """
-        resonators = [resonator for resonator in mux.resonators if resonator.is_valid]
+        resonators = [
+            resonator
+            for resonator in mux.resonators
+            if resonator.is_valid and resonator.label not in self._targets_to_exclude
+        ]
         freqs = [resonator.frequency * 1e9 for resonator in resonators]
         f_target = (max(freqs) + min(freqs)) / 2
         lo, cnco, _ = MixingUtil.calc_lo_cnco(
@@ -792,7 +796,7 @@ class ExperimentSystem:
             The dictionary containing the lo, cnco, and fnco values.
         """
         if n_channels == 1:
-            f_target = qubit.ge_frequency * 1e9
+            f_target = qubit.frequency * 1e9
             lo, cnco, _ = MixingUtil.calc_lo_cnco(
                 f=f_target,
                 ssb=ssb,
@@ -819,13 +823,13 @@ class ExperimentSystem:
             raise ValueError("Invalid number of channels.")
 
         if mode == "ge-ef-cr":
-            f_ge = qubit.ge_frequency * 1e9
-            f_ef = qubit.ef_frequency * 1e9
+            f_ge = qubit.frequency * 1e9
+            f_ef = qubit.control_frequency_ef * 1e9
             spectators = self.get_spectator_qubits(qubit.label)
             f_CRs = [
-                spectator.ge_frequency * 1e9
+                spectator.frequency * 1e9
                 for spectator in spectators
-                if spectator.ge_frequency > 0
+                if spectator.frequency > 0
                 and spectator.label not in self._targets_to_exclude
                 and f"{qubit.label}-{spectator.label}" not in self._targets_to_exclude
             ]
@@ -880,17 +884,17 @@ class ExperimentSystem:
                 },
             }
         elif mode == "ge-cr-cr":
-            f_ge = qubit.ge_frequency * 1e9
-            f_ef = qubit.ef_frequency * 1e9
+            f_ge = qubit.frequency * 1e9
+            f_ef = qubit.control_frequency_ef * 1e9
 
             spectators = self.get_spectator_qubits(qubit.label)
             cr_targets = [
                 {
                     "label": f"{qubit.label}-{spectator.label}",
-                    "frequency": spectator.ge_frequency * 1e9,
+                    "frequency": spectator.frequency * 1e9,
                 }
                 for spectator in spectators
-                if spectator.ge_frequency > 0
+                if spectator.frequency > 0
                 and spectator.label not in self._targets_to_exclude
                 and f"{qubit.label}-{spectator.label}" not in self._targets_to_exclude
             ]

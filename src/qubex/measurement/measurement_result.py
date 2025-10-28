@@ -237,8 +237,8 @@ class MeasureResult:
     config: dict
 
     def __repr__(self) -> str:
-        qubits = ", ".join(self.data.keys())
-        return f"<MeasureResult mode={self.mode.value}, qubits=[{qubits}]>"
+        data_repr = "{" + ", ".join(f"{k}:..." for k in self.data.keys()) + "}"
+        return f"<MeasureResult mode={self.mode.value}, data={data_repr}>"
 
     @cached_property
     def counts(self) -> dict[str, int]:

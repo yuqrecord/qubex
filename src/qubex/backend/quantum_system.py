@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Final
+from typing import Final, Optional
 
 from pydantic.dataclasses import dataclass
 
@@ -44,8 +44,6 @@ class Chip(Model):
                 label=label,
                 chip_id=id,
                 resonator=graph.resonators[index],
-                frequency=float("nan"),
-                anharmonicity=float("nan"),
             )
             for index, label in enumerate(graph.qubits)
         )
@@ -55,7 +53,6 @@ class Chip(Model):
                 label=label,
                 chip_id=id,
                 qubit=graph.qubits[index],
-                frequency=float("nan"),
             )
             for index, label in enumerate(graph.resonators)
         )
@@ -85,16 +82,47 @@ class Qubit(Model):
     label: str
     chip_id: str
     resonator: str
-    frequency: float
-    anharmonicity: float
+    _bare_frequency: Optional[float] = None
+    _anharmonicity: Optional[float] = None
+    _control_frequency_ge: Optional[float] = None
+    _control_frequency_ef: Optional[float] = None
 
     @property
-    def ge_frequency(self) -> float:
-        return self.frequency
+    def frequency(self) -> float:
+        if self._control_frequency_ge is not None:
+            return self._control_frequency_ge
+        elif self._bare_frequency is not None:
+            return self._bare_frequency
+        else:
+            return math.nan
 
     @property
-    def ef_frequency(self) -> float:
-        return round(self.frequency + self.anharmonicity, 6)
+    def bare_frequency(self) -> float:
+        if self._bare_frequency is not None:
+            return self._bare_frequency
+        else:
+            return math.nan
+
+    @property
+    def anharmonicity(self) -> float:
+        if self._anharmonicity is not None:
+            return self._anharmonicity
+        else:
+            return -(1 / 19) * self.frequency  # E_J / E_C = 50
+
+    @property
+    def control_frequency_ge(self) -> float:
+        if self._control_frequency_ge is not None:
+            return self._control_frequency_ge
+        else:
+            return math.nan
+
+    @property
+    def control_frequency_ef(self) -> float:
+        if self._control_frequency_ef is not None:
+            return self._control_frequency_ef
+        else:
+            return self.frequency + self.anharmonicity
 
     @property
     def alpha(self) -> float:
@@ -111,7 +139,47 @@ class Resonator(Model):
     label: str
     chip_id: str
     qubit: str
-    frequency: float
+    _frequency_g: Optional[float] = None
+    _frequency_e: Optional[float] = None
+    _readout_frequency: Optional[float] = None
+
+    @property
+    def frequency(self) -> float:
+        if self._readout_frequency is not None:
+            return self._readout_frequency
+        elif self._frequency_g is not None:
+            return self._frequency_g
+        else:
+            return math.nan
+
+    @property
+    def frequency_g(self) -> float:
+        if self._frequency_g is not None:
+            return self._frequency_g
+        else:
+            return math.nan
+
+    @property
+    def frequency_e(self) -> float:
+        if self._frequency_e is not None:
+            return self._frequency_e
+        else:
+            return math.nan
+
+    @property
+    def readout_frequency(self) -> float:
+        if self._readout_frequency is not None:
+            return self._readout_frequency
+        else:
+            return math.nan
+
+    @property
+    def dispersive_shift(self) -> float:
+        return (self.frequency_e - self.frequency_g) / 2
+
+    @property
+    def chi(self) -> float:
+        return 2 * math.pi * self.dispersive_shift
 
     @property
     def is_valid(self) -> bool:
@@ -238,9 +306,9 @@ class QuantumSystem:
     ) -> None:
         obj = self.get_qubit(qubit)
         if frequency is not None:
-            obj.frequency = frequency
+            obj._bare_frequency = frequency
         if anharmonicity is not None:
-            obj.anharmonicity = anharmonicity
+            obj._anharmonicity = anharmonicity
 
     def set_resonator_params(
         self,
@@ -250,4 +318,4 @@ class QuantumSystem:
     ) -> None:
         obj = self.get_resonator(resonator)
         if frequency is not None:
-            obj.frequency = frequency
+            obj._frequency_g = frequency

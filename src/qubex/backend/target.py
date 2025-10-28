@@ -152,7 +152,7 @@ class Target(Model):
         return cls(
             label=Target.ge_label(qubit.label),
             object=qubit,
-            frequency=qubit.ge_frequency,
+            frequency=qubit.frequency,
             channel=channel,
             type=TargetType.CTRL_GE,
         )
@@ -167,7 +167,7 @@ class Target(Model):
         return cls(
             label=Target.ef_label(qubit.label),
             object=qubit,
-            frequency=qubit.ef_frequency,
+            frequency=qubit.control_frequency_ef,
             channel=channel,
             type=TargetType.CTRL_EF,
         )
@@ -183,7 +183,7 @@ class Target(Model):
         if target_qubit is not None:
             return cls(
                 label=Target.cr_label(control_qubit.label, target_qubit.label),
-                frequency=target_qubit.ge_frequency,
+                frequency=target_qubit.frequency,
                 object=control_qubit,
                 channel=channel,
                 type=TargetType.CTRL_CR,
