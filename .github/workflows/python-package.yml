@@ -20,27 +20,21 @@ jobs:
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
-
-      - name: Install uv and set the Python version
-        uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgirepository1.0-dev libcairo2-dev
-          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get install -y libgirepository1.0-dev libcairo2-dev
 
       - name: Install dependencies
         run: |
-          uv sync --all-extras --dev
+          python -m pip install pip==24.0
+          python -m pip install ruff pytest pytest-xdist
+          python -m pip install .[backend]
 
       - name: Lint with ruff
         run: |
