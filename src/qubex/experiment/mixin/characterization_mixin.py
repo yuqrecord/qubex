@@ -226,6 +226,7 @@ class CharacterizationMixin(
                 "signal": signal,
                 "noise": noise,
                 "snr": snr,
+                "fig": fig,
             }
         )
 
