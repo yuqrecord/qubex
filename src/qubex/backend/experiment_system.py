@@ -740,7 +740,11 @@ class ExperimentSystem:
         dict[str, int]
             The dictionary containing the lo, cnco, and fnco values.
         """
-        resonators = [resonator for resonator in mux.resonators if resonator.is_valid]
+        resonators = [
+            resonator
+            for resonator in mux.resonators
+            if resonator.is_valid and resonator.label not in self._targets_to_exclude
+        ]
         freqs = [resonator.frequency * 1e9 for resonator in resonators]
         f_target = (max(freqs) + min(freqs)) / 2
         lo, cnco, _ = MixingUtil.calc_lo_cnco(
