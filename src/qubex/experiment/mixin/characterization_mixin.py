@@ -169,6 +169,7 @@ class CharacterizationMixin(
         signal = {target: np.array(signal_buf[target]) for target in targets}
         noise = {target: np.array(noise_buf[target]) for target in targets}
         snr = {target: np.array(snr_buf[target]) for target in targets}
+        figs = {}
 
         if plot:
             for target in targets:
@@ -220,13 +221,14 @@ class CharacterizationMixin(
                     width=600,
                     height=400,
                 )
+                figs[target] = fig
 
         return Result(
             data={
                 "signal": signal,
                 "noise": noise,
                 "snr": snr,
-                "fig": fig,
+                "fig": figs,
             }
         )
 
