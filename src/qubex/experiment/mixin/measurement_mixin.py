@@ -102,6 +102,9 @@ class MeasurementMixin(
         add_last_measurement: bool = False,
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool | None = None,
+        enable_dsp_classification: bool | None = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
         reset_awg_and_capunits: bool = True,
         plot: bool = False,
     ) -> MultipleMeasureResult:
@@ -135,6 +138,9 @@ class MeasurementMixin(
                 add_last_measurement=add_last_measurement,
                 add_pump_pulses=add_pump_pulses,
                 enable_dsp_sum=enable_dsp_sum,
+                enable_dsp_classification=enable_dsp_classification,
+                line_param0=line_param0,
+                line_param1=line_param1,
                 plot=plot,
             )
 
@@ -160,6 +166,9 @@ class MeasurementMixin(
         readout_ramp_type: RampType | None = None,
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool | None = None,
+        enable_dsp_classification: bool | None = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
         reset_awg_and_capunits: bool = True,
         plot: bool = False,
     ) -> MeasureResult:
@@ -234,6 +243,9 @@ class MeasurementMixin(
                 readout_ramp_type=readout_ramp_type,
                 add_pump_pulses=add_pump_pulses,
                 enable_dsp_sum=enable_dsp_sum,
+                enable_dsp_classification=enable_dsp_classification,
+                line_param0=line_param0,
+                line_param1=line_param1,
             )
         if plot:
             result.plot()
