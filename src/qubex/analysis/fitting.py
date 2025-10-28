@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections import UserDict
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
 import numpy as np
@@ -22,6 +24,30 @@ COLORS = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+class FitStatus(Enum):
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class FitResult(UserDict):
+    status: FitStatus = FitStatus.SUCCESS
+
+    def __init__(
+        self,
+        status: FitStatus,
+        message: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(data)
+        self.status = status
+        self.message = message
+        self.data["status"] = self.status.value
+
+    def __repr__(self) -> str:
+        return f"<FitResult status={self.status.value} message={self.message} data={{...}}>"
 
 
 def _plotly_config(filename: str) -> dict:
@@ -565,7 +591,9 @@ def fit_cosine(
     i = np.argmax(np.abs(F))
 
     # Estimate the initial parameters
-    amplitude_est = 2 * np.abs(F[i]) / N
+    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
+    amplitude_est_2 = 2 * np.abs(F[i]) / N
+    amplitude_est = max(amplitude_est_1, amplitude_est_2)
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(y) + np.min(y)) / 2
@@ -746,7 +774,10 @@ def fit_delayed_cosine(
     f = np.fft.fftfreq(N, dt)[1 : N // 2]
     F = np.fft.fft(y)[1 : N // 2]
     i = np.argmax(np.abs(F))
-    amplitude_est = 2 * np.abs(F[i]) / N
+
+    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
+    amplitude_est_2 = 2 * np.abs(F[i]) / N
+    amplitude_est = max(amplitude_est_1, amplitude_est_2)
     omega_est = 2 * np.pi * f[i]
     offset_est = (np.max(y) + np.min(y)) / 2
 
@@ -1406,7 +1437,9 @@ def fit_rabi(
     i = np.argmax(np.abs(F))
 
     # Estimate the initial parameters
-    amplitude_est = 2 * np.abs(F[i]) / N
+    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
+    amplitude_est_2 = 2 * np.abs(F[i]) / N
+    amplitude_est = max(amplitude_est_1, amplitude_est_2)
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(y) + np.min(y)) / 2
@@ -1669,7 +1702,7 @@ def fit_ramsey(
     ylabel: str = "Signal (arb. units)",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit Ramsey fringe using a damped cosine function and plot the results.
 
@@ -1714,7 +1747,10 @@ def fit_ramsey(
     F = np.fft.fft(data)[1 : N // 2]
     i = np.argmax(np.abs(F))
 
-    amplitude_est = 2 * np.abs(F[i]) / N
+    # Estimate the initial parameters
+    amplitude_est_1 = 0.5 * (np.max(data) - np.min(data))
+    amplitude_est_2 = 2 * np.abs(F[i]) / N
+    amplitude_est = max(amplitude_est_1, amplitude_est_2)
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(data) + np.min(data)) / 2
@@ -1732,10 +1768,10 @@ def fit_ramsey(
         popt, pcov = curve_fit(func_damped_cos, times, data, p0=p0, bounds=bounds)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {
-            "status": "error",
-            "message": "Failed to fit the data.",
-        }
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     A, omega, phi, C, tau = popt
     A_err, omega_err, phi_err, C_err, tau_err = np.sqrt(np.diag(pcov))
@@ -1796,30 +1832,28 @@ def fit_ramsey(
         print(f"  R² = {r2:.6g}")
         print("")
 
-    result = {
-        "A": A,
-        "omega": omega,
-        "phi": phi,
-        "C": C,
-        "tau": tau,
-        "A_err": A_err,
-        "omega_err": omega_err,
-        "phi_err": phi_err,
-        "C_err": C_err,
-        "tau_err": tau_err,
-        "f": f,
-        "f_err": f_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
-
-    return {
-        "status": "success",
-        "message": "Fitting successful.",
-        **result,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "A": A,
+            "omega": omega,
+            "phi": phi,
+            "C": C,
+            "tau": tau,
+            "A_err": A_err,
+            "omega_err": omega_err,
+            "phi_err": phi_err,
+            "C_err": C_err,
+            "tau_err": tau_err,
+            "f": f,
+            "f_err": f_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_rb(
@@ -2162,7 +2196,9 @@ def fit_ampl_calib_data(
     F = np.fft.fft(y)[1 : N // 2]
     i = np.argmax(np.abs(F))
 
-    amplitude_est = 2 * np.abs(F[i]) / N
+    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
+    amplitude_est_2 = 2 * np.abs(F[i]) / N
+    amplitude_est = max(amplitude_est_1, amplitude_est_2)
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(y) + np.min(y)) / 2
