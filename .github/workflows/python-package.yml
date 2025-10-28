@@ -27,6 +27,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
+          cache-dependency-path: pyproject.toml
 
       - name: Install system dependencies
         run: |
@@ -40,7 +41,7 @@ jobs:
         run: |
           uv pip install pip==24.0
           uv pip install ruff pytest pytest-xdist
-          uv pip install .[backend]
+          uv pip install ".[backend]"
 
       - name: Lint with ruff
         run: |
