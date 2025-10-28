@@ -320,7 +320,7 @@ def fit_linear(
     yaxis_type: Literal["linear", "log"] = "linear",
     xmin: float | None = None,
     ymin: float | None = None,
-) -> dict:
+) -> FitResult:
     """
     Fit data to a linear function y = a * x.
 
@@ -333,8 +333,8 @@ def fit_linear(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -413,16 +413,20 @@ def fit_linear(
         print(f"  R² = {r2:.3f}")
         print("")
 
-    return {
-        "a": a,
-        "a_err": a_err,
-        "b": b if intercept else None,
-        "b_err": b_err if intercept else None,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "a": a,
+            "a_err": a_err,
+            "b": b if intercept else None,
+            "b_err": b_err if intercept else None,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_polynomial(
@@ -437,7 +441,7 @@ def fit_polynomial(
     ylabel: str = "y",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit data to a polynomial function and plot the results.
 
@@ -466,8 +470,8 @@ def fit_polynomial(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -527,13 +531,17 @@ def fit_polynomial(
         filename = f"fit_polynomial_{target}" if target else "fit_polynomial"
         fig.show(config=_plotly_config(filename))
 
-    return {
-        "popt": popt,
-        "fun": fun,
-        "root": root,
-        "roots": roots_in_range,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "popt": popt,
+            "fun": fun,
+            "root": root,
+            "roots": roots_in_range,
+            "fig": fig,
+        },
+    )
 
 
 def fit_cosine(
@@ -547,7 +555,7 @@ def fit_cosine(
     xlabel: str = "x",
     ylabel: str = "y",
     plot: bool = True,
-) -> dict:
+) -> FitResult:
     """
     Fit data to a cosine function and plot the results.
 
@@ -574,8 +582,8 @@ def fit_cosine(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -694,22 +702,26 @@ def fit_cosine(
         print(f"  R² = {r2:.6g}")
         print("")
 
-    return {
-        "A": A,
-        "f": f,
-        "phi": phi,
-        "C": C,
-        "tau": tau,
-        "A_err": A_err,
-        "f_err": f_err,
-        "phi_err": phi_err,
-        "C_err": C_err,
-        "tau_err": tau_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "A": A,
+            "f": f,
+            "phi": phi,
+            "C": C,
+            "tau": tau,
+            "A_err": A_err,
+            "f_err": f_err,
+            "phi_err": phi_err,
+            "C_err": C_err,
+            "tau_err": tau_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_delayed_cosine(
@@ -726,7 +738,7 @@ def fit_delayed_cosine(
     ylabel: str = "y",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit data to a delayed cosine function and plot the results.
 
@@ -759,8 +771,8 @@ def fit_delayed_cosine(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -803,7 +815,10 @@ def fit_delayed_cosine(
         popt, pcov = curve_fit(func_delayed_cos, x, y, p0=p0, bounds=bounds)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {}
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     t0, A, omega, C = popt
     t0_err, A_err, omega_err, C_err = np.sqrt(np.diag(pcov))
@@ -872,20 +887,24 @@ def fit_delayed_cosine(
         print(f"  R² = {r2:.6g}")
         print("")
 
-    return {
-        "t0": t0,
-        "f": f,
-        "C": C,
-        "A": A,
-        "t0_err": t0_err,
-        "f_err": f_err,
-        "C_err": C_err,
-        "A_err": A_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "t0": t0,
+            "f": f,
+            "C": C,
+            "A": A,
+            "t0_err": t0_err,
+            "f_err": f_err,
+            "C_err": C_err,
+            "A_err": A_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_exp_decay(
@@ -901,7 +920,7 @@ def fit_exp_decay(
     ylabel: str = "Signal (arb. units)",
     xaxis_type: Literal["linear", "log"] = "log",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit decay data to an exponential decay function and plot the results.
 
@@ -932,8 +951,8 @@ def fit_exp_decay(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -960,10 +979,10 @@ def fit_exp_decay(
         popt, pcov = curve_fit(func_exp_decay, x, y, p0=p0, bounds=bounds)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {
-            "status": "error",
-            "message": "Failed to fit the data.",
-        }
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     A, tau, C = popt
     A_err, tau_err, C_err = np.sqrt(np.diag(pcov))
@@ -1020,24 +1039,22 @@ def fit_exp_decay(
         print(f"  R² = {r2:.6g}")
         print("")
 
-    result = {
-        "A": A,
-        "tau": tau,
-        "C": C,
-        "A_err": A_err,
-        "tau_err": tau_err,
-        "C_err": C_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
-
-    return {
-        "status": "success",
-        "message": "Fitting successful.",
-        **result,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "A": A,
+            "tau": tau,
+            "C": C,
+            "A_err": A_err,
+            "tau_err": tau_err,
+            "C_err": C_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_lorentzian(
@@ -1053,7 +1070,7 @@ def fit_lorentzian(
     ylabel: str = "Signal (arb. units)",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit Lorentzian data to a Lorentzian function and plot the results.
 
@@ -1082,8 +1099,8 @@ def fit_lorentzian(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -1112,7 +1129,10 @@ def fit_lorentzian(
         popt, pcov = curve_fit(func_lorentzian, x, y, p0=p0, bounds=bounds)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {}
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     A, f0, gamma, C = popt
     A_err, f0_err, gamma_err, C_err = np.sqrt(np.diag(pcov))
@@ -1178,20 +1198,24 @@ def fit_lorentzian(
         print(f"  γ = {gamma:.6g} ± {gamma_err:.1g}")
         print(f"  C = {C:.6g} ± {C_err:.1g}")
 
-    return {
-        "A": A,
-        "f0": f0,
-        "gamma": gamma,
-        "C": C,
-        "A_err": A_err,
-        "f0_err": f0_err,
-        "gamma_err": gamma_err,
-        "C_err": C_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "A": A,
+            "f0": f0,
+            "gamma": gamma,
+            "C": C,
+            "A_err": A_err,
+            "f0_err": f0_err,
+            "gamma_err": gamma_err,
+            "C_err": C_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_sqrt_lorentzian(
@@ -1207,7 +1231,7 @@ def fit_sqrt_lorentzian(
     ylabel: str = "Signal (arb. units)",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit square root Lorentzian data to a square root Lorentzian function and plot the results.
 
@@ -1238,8 +1262,8 @@ def fit_sqrt_lorentzian(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
@@ -1274,7 +1298,10 @@ def fit_sqrt_lorentzian(
         )
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {}
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     A, f0, Omega, C = popt
     A_err, f0_err, Omega_err, C_err = np.sqrt(np.diag(pcov))
@@ -1340,20 +1367,24 @@ def fit_sqrt_lorentzian(
         print(f"  Ω = {Omega:.6g} ± {Omega_err:.1g}")
         print(f"  C = {C:.6g} ± {C_err:.1g}")
 
-    return {
-        "A": A,
-        "f0": f0,
-        "Omega": Omega,
-        "C": C,
-        "A_err": A_err,
-        "f0_err": f0_err,
-        "Omega_err": Omega_err,
-        "C_err": C_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "A": A,
+            "f0": f0,
+            "Omega": Omega,
+            "C": C,
+            "A_err": A_err,
+            "f0_err": f0_err,
+            "Omega_err": Omega_err,
+            "C_err": C_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_rabi(
@@ -1367,7 +1398,7 @@ def fit_rabi(
     is_damped: bool = False,
     ylabel: str | None = None,
     yaxis_range: tuple[float, float] | None = None,
-) -> dict:
+) -> FitResult:
     """
     Fit Rabi oscillation data to a cosine function and plot the results.
 
@@ -1394,8 +1425,8 @@ def fit_rabi(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     if tau_est is None:
         tau_est = 10_000.0
@@ -1463,10 +1494,10 @@ def fit_rabi(
             popt, pcov = curve_fit(func_cos, x, y, p0=p0, bounds=bounds)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {
-            "status": "error",
-            "message": "Failed to fit the data.",
-        }
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     if is_damped:
         amplitude, omega, phase, offset, tau = popt
@@ -1538,7 +1569,7 @@ def fit_rabi(
         print(f"Target: {target}")
         print(f"Rabi frequency: {frequency * 1e3:.6g} ± {frequency_err * 1e3:.1g} MHz")
 
-    result = {
+    data_payload = {
         "amplitude": amplitude,
         "frequency": frequency,
         "phase": phase,
@@ -1565,17 +1596,17 @@ def fit_rabi(
 
     if r2 < 0.9:
         print("Warning: R² < 0.9")
-        return {
-            "status": "warning",
-            "message": "R² < 0.9",
-            **result,
-        }
+        return FitResult(
+            status=FitStatus.WARNING,
+            message="R² < 0.9",
+            data=data_payload,
+        )
     else:
-        return {
-            "status": "success",
-            "message": "Fitting successful",
-            **result,
-        }
+        return FitResult(
+            status=FitStatus.SUCCESS,
+            message="Fitting successful",
+            data=data_payload,
+        )
 
 
 def fit_detuned_rabi(
@@ -1584,7 +1615,7 @@ def fit_detuned_rabi(
     control_frequencies: NDArray,
     rabi_frequencies: NDArray,
     plot: bool = True,
-) -> dict:
+) -> FitResult:
     """
     Fit detuned Rabi oscillation data to a cosine function and plot the results.
 
@@ -1601,8 +1632,8 @@ def fit_detuned_rabi(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     control_frequencies = np.asarray(control_frequencies, dtype=np.float64)
     rabi_frequencies = np.asarray(rabi_frequencies, dtype=np.float64)
@@ -1618,7 +1649,10 @@ def fit_detuned_rabi(
         popt, pcov = curve_fit(func, control_frequencies, rabi_frequencies)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {}
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     f_resonance, f_rabi = popt
     f_resonance_err, f_rabi_err = np.sqrt(np.diag(pcov))
@@ -1676,16 +1710,20 @@ def fit_detuned_rabi(
         print("Resonance frequency")
         print(f"  {target}: {f_resonance:.6f}")
 
-    return {
-        "f_resonance": f_resonance,
-        "f_resonance_err": f_resonance_err,
-        "f_rabi": f_rabi,
-        "f_rabi_err": f_rabi_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "f_resonance": f_resonance,
+            "f_resonance_err": f_resonance_err,
+            "f_rabi": f_rabi,
+            "f_rabi_err": f_rabi_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_ramsey(
@@ -1735,8 +1773,8 @@ def fit_ramsey(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     times = np.asarray(times, dtype=np.float64)
     data = np.asarray(data, dtype=np.float64)
@@ -1871,7 +1909,7 @@ def fit_rb(
     ylabel: str = "Normalized signal",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit randomized benchmarking data to an exponential decay function and plot the results.
 
@@ -1906,8 +1944,8 @@ def fit_rb(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     if p0 is None:
         p0 = (0.5, 1.0, 0.5)
@@ -1925,7 +1963,10 @@ def fit_rb(
         popt, pcov = curve_fit(func_rb, x, y, p0=p0, bounds=bounds)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {}
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+        )
 
     A, p, C = popt
     A_err, p_err, C_err = np.sqrt(np.diag(pcov))
@@ -1988,22 +2029,26 @@ def fit_rb(
         print(f"Average gate fidelity: {avg_gate_fidelity:.6g}")
         print("")
 
-    return {
-        "A": A,
-        "A_err": A_err,
-        "p": p,
-        "p_err": p_err,
-        "C": C,
-        "C_err": C_err,
-        "depolarizing_rate": depolarizing_rate,
-        "avg_gate_error": avg_gate_error,
-        "avg_gate_fidelity": avg_gate_fidelity,
-        "avg_gate_fidelity_err": avg_gate_fidelity_err,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "A": A,
+            "A_err": A_err,
+            "p": p,
+            "p_err": p_err,
+            "C": C,
+            "C_err": C_err,
+            "depolarizing_rate": depolarizing_rate,
+            "avg_gate_error": avg_gate_error,
+            "avg_gate_fidelity": avg_gate_fidelity,
+            "avg_gate_fidelity_err": avg_gate_fidelity_err,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def plot_irb(
@@ -2028,7 +2073,7 @@ def plot_irb(
     ylabel: str = "Normalized signal",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> go.Figure:
+) -> FitResult:
     """
     Plot interleaved randomized benchmarking data.
 
@@ -2139,7 +2184,11 @@ def plot_irb(
     )
     if plot:
         fig.show(config=_plotly_config(f"irb_{target}"))
-    return fig
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Plot generated.",
+        data={"fig": fig},
+    )
 
 
 def fit_ampl_calib_data(
@@ -2155,7 +2204,7 @@ def fit_ampl_calib_data(
     ylabel: str = "Signal (arb. units)",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> dict:
+) -> FitResult:
     """
     Fit amplitude calibration data to a cosine function and plot the results.
 
@@ -2176,8 +2225,8 @@ def fit_ampl_calib_data(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     amplitude_range = np.asarray(amplitude_range, dtype=np.float64)
     data = np.asarray(data, dtype=np.float64)
@@ -2210,10 +2259,14 @@ def fit_ampl_calib_data(
         popt, pcov = curve_fit(cos_func, x, y, p0=p0)
     except RuntimeError:
         print(f"Failed to fit the data for {target}.")
-        return {
-            "amplitude": np.nan,
-            "r2": np.nan,
-        }
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
+            data={
+                "amplitude": np.nan,
+                "r2": np.nan,
+            },
+        )
 
     result = minimize(
         cos_func,
@@ -2272,13 +2325,17 @@ def fit_ampl_calib_data(
     if plot:
         fig.show(config=_plotly_config(f"ampl_calib_{target}"))
 
-    return {
-        "amplitude": min_x,
-        "r2": r2,
-        "popt": popt,
-        "pcov": pcov,
-        "fig": fig,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "amplitude": min_x,
+            "r2": r2,
+            "popt": popt,
+            "pcov": pcov,
+            "fig": fig,
+        },
+    )
 
 
 def fit_reflection_coefficient(
@@ -2290,7 +2347,7 @@ def fit_reflection_coefficient(
     bounds=None,
     plot: bool = True,
     title: str = "Reflection coefficient",
-) -> dict:
+) -> FitResult:
     """
     Fit reflection coefficient data and obtain the resonance frequency and loss rates.
 
@@ -2311,8 +2368,8 @@ def fit_reflection_coefficient(
 
     Returns
     -------
-    dict
-        Fitted parameters and the figure.
+    FitResult
+        Result with fitted parameters and the figure.
     """
     freq_range = np.asarray(freq_range, dtype=np.float64)
     data = np.asarray(data, dtype=np.complex64)
@@ -2338,12 +2395,15 @@ def fit_reflection_coefficient(
         y_model = func_resonator_reflection(f, f_r, kappa_ex, kappa_in, A, phi, tau)
         return np.hstack([np.real(y_model - y), np.imag(y_model - y)])
 
-    result = least_squares(
-        residuals,
-        p0,
-        bounds=bounds,
-        args=(freq_range, data),
-    )
+    try:
+        result = least_squares(
+            residuals,
+            p0,
+            bounds=bounds,
+            args=(freq_range, data),
+        )
+    except Exception as e:
+        return FitResult(status=FitStatus.ERROR, message=f"Fitting failed: {e}")
 
     fitted_params = result.x
 
@@ -2500,16 +2560,24 @@ def fit_reflection_coefficient(
     if plot:
         fig.show()
 
-    return {
-        "f_r": f_r,
-        "kappa_ex": kappa_ex,
-        "kappa_in": kappa_in,
-        "A": A,
-        "phi": phi,
-        "tau": tau,
-        "r2": r2,
-        "fig": fig,
-    }
+    return FitResult(
+        status=(FitStatus.SUCCESS if result.success else FitStatus.WARNING),
+        message=(
+            "Fitting successful."
+            if result.success
+            else "Least squares did not fully converge."
+        ),
+        data={
+            "f_r": f_r,
+            "kappa_ex": kappa_ex,
+            "kappa_in": kappa_in,
+            "A": A,
+            "phi": phi,
+            "tau": tau,
+            "r2": r2,
+            "fig": fig,
+        },
+    )
 
 
 def fit_reflection_coefficient_double(
@@ -2521,7 +2589,7 @@ def fit_reflection_coefficient_double(
     bounds=None,
     plot: bool = True,
     title: str = "Reflection coefficient",
-) -> dict:
+) -> FitResult:
     """
     Fit reflection coefficient data and obtain the resonance frequency and loss rates.
 
@@ -2581,12 +2649,15 @@ def fit_reflection_coefficient_double(
         y_model = func_double_resonator_reflection(f, *params)
         return np.hstack([np.real(y_model - y), np.imag(y_model - y)])
 
-    result = least_squares(
-        residuals,
-        p0,
-        bounds=bounds,
-        args=(freq_range, data),
-    )
+    try:
+        result = least_squares(
+            residuals,
+            p0,
+            bounds=bounds,
+            args=(freq_range, data),
+        )
+    except Exception as e:
+        return FitResult(status=FitStatus.ERROR, message=f"Fitting failed: {e}")
 
     fitted_params = result.x
 
@@ -2746,19 +2817,27 @@ def fit_reflection_coefficient_double(
     print(f"Internal loss rate #1:\n  {kappa_in1 * 1e3:.6g} MHz")
     print("--------------------\n")
 
-    return {
-        "f_r0": f_r0,
-        "f_r1": f_r1,
-        "kappa_ex0": kappa_ex0,
-        "kappa_ex1": kappa_ex1,
-        "kappa_in0": kappa_in0,
-        "kappa_in1": kappa_in1,
-        "A": A,
-        "phi": phi,
-        "tau": tau,
-        "r2": r2,
-        "fig": fig,
-    }
+    return FitResult(
+        status=(FitStatus.SUCCESS if result.success else FitStatus.WARNING),
+        message=(
+            "Fitting successful."
+            if result.success
+            else "Least squares did not fully converge."
+        ),
+        data={
+            "f_r0": f_r0,
+            "f_r1": f_r1,
+            "kappa_ex0": kappa_ex0,
+            "kappa_ex1": kappa_ex1,
+            "kappa_in0": kappa_in0,
+            "kappa_in1": kappa_in1,
+            "A": A,
+            "phi": phi,
+            "tau": tau,
+            "r2": r2,
+            "fig": fig,
+        },
+    )
 
 
 def fit_rotation(
@@ -2771,7 +2850,7 @@ def fit_rotation(
     title: str = "State evolution",
     xlabel: str = "Time (ns)",
     ylabel: str = "Expectation value",
-) -> dict:
+) -> FitResult:
     """
     Fit 3D rotation data to obtain the rotation coefficients and detuning frequency.
 
@@ -2798,11 +2877,8 @@ def fit_rotation(
 
     Returns
     -------
-    dict
-        Omega : tuple[float, float, float]
-            Rotation coefficients.
-        fig : go.Figure
-            Plot of the data and the fit.
+    FitResult
+        Result with rotation coefficients and figures.
     """
     if data.ndim != 2 or data.shape[1] != 3:
         raise ValueError("Data must be a 2D array with 3 columns.")
@@ -3074,11 +3150,15 @@ def fit_rotation(
     if plot3d:
         fig3d.show()
 
-    return {
-        "Omega": np.array([Omega_x, Omega_y, Omega_z]),
-        "tau": tau,
-        "r0": r0,
-        "r2": r2,
-        "fig": fig,
-        "fig3d": fig3d,
-    }
+    return FitResult(
+        status=FitStatus.SUCCESS,
+        message="Fitting successful.",
+        data={
+            "Omega": np.array([Omega_x, Omega_y, Omega_z]),
+            "tau": tau,
+            "r0": r0,
+            "r2": r2,
+            "fig": fig,
+            "fig3d": fig3d,
+        },
+    )
