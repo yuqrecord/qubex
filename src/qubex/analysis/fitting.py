@@ -2073,7 +2073,7 @@ def plot_irb(
     ylabel: str = "Normalized signal",
     xaxis_type: Literal["linear", "log"] = "linear",
     yaxis_type: Literal["linear", "log"] = "linear",
-) -> FitResult:
+) -> go.Figure:
     """
     Plot interleaved randomized benchmarking data.
 
@@ -2184,11 +2184,7 @@ def plot_irb(
     )
     if plot:
         fig.show(config=_plotly_config(f"irb_{target}"))
-    return FitResult(
-        status=FitStatus.SUCCESS,
-        message="Plot generated.",
-        data={"fig": fig},
-    )
+    return fig
 
 
 def fit_ampl_calib_data(
