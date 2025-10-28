@@ -1663,7 +1663,9 @@ def fit_detuned_rabi(
     x_fine = np.linspace(np.min(x), np.max(x), 1000)
     y_fine = func(x_fine, *popt) * 1e3
 
-    r2 = 1 - np.sum((y - func(x, *popt)) ** 2) / np.sum((y - np.mean(y)) ** 2)
+    r2 = 1 - np.sum(
+        (rabi_frequencies - func(control_frequencies, *popt)) ** 2
+    ) / np.sum((rabi_frequencies - np.mean(rabi_frequencies)) ** 2)
 
     fig = go.Figure()
     fig.add_trace(
