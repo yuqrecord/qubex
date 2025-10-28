@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from numpy.typing import ArrayLike, NDArray
 from plotly.subplots import make_subplots
 
-from ...analysis import fitting, util
+from ...analysis import FitResult, fitting, util
 from ...analysis import visualization as viz
 from ...backend import SAMPLING_PERIOD, Target
 from ...measurement.measurement import DEFAULT_INTERVAL, DEFAULT_SHOTS
@@ -35,6 +35,7 @@ from ..experiment_constants import (
 )
 from ..experiment_result import AmplCalibData, ExperimentResult
 from ..protocol import BaseProtocol, CalibrationProtocol, MeasurementProtocol
+from ..result import Result
 
 
 class CalibrationMixin(
@@ -424,7 +425,7 @@ class CalibrationMixin(
         plot: bool = True,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-    ) -> dict[str, dict]:
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -435,7 +436,7 @@ class CalibrationMixin(
         rabi_params = self.rabi_params
         self.validate_rabi_params(rabi_params)
 
-        def calibrate(target: str) -> dict:
+        def calibrate(target: str) -> FitResult:
             # hpi
             if pulse_type == "hpi":
                 hpi_param = self.calib_note.get_drag_hpi_param(target)
@@ -556,11 +557,11 @@ class CalibrationMixin(
 
             return fit_result
 
-        result: dict[str, dict] = {}
+        result: dict[str, FitResult] = {}
         for target in targets:
             result[target] = calibrate(target)
 
-        return result
+        return Result(data=result)
 
     def calibrate_drag_beta(
         self,
@@ -2002,7 +2003,7 @@ class CalibrationMixin(
         interval: int = DEFAULT_INTERVAL,
         plot: bool = True,
         coarse: bool = False,
-    ) -> dict:
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -2072,7 +2073,7 @@ class CalibrationMixin(
                 print(f"Error calibrating 1Q gates for {targets}: {e}")
                 continue
 
-        return data
+        return Result(data=data)
 
     def calibrate_2q(
         self,
@@ -2082,7 +2083,7 @@ class CalibrationMixin(
         shots: int = CALIBRATION_SHOTS,
         interval: int = DEFAULT_INTERVAL,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         if targets is None:
             targets = self.cr_labels
         elif isinstance(targets, str):
@@ -2145,4 +2146,4 @@ class CalibrationMixin(
                 print(f"Error calibrating {cr_label}: {e}")
                 continue
 
-        return data
+        return Result(data=data)
