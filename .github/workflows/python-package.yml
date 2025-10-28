@@ -20,6 +20,9 @@ jobs:
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
+
+      - name: Install uv and set the Python version
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -27,7 +30,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-path: pyproject.toml
+          cache-dependency-glob: pyproject.toml
 
       - name: Install system dependencies
         run: |
