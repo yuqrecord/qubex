@@ -798,6 +798,9 @@ class DeviceController:
         dsp_demodulation: bool = True,
         software_demodulation: bool = False,
         enable_sum: bool = False,
+        enable_classification: bool = False,
+        line_param0: tuple[float, float, float] = None,
+        line_param1: tuple[float, float, float] = None,
     ) -> RawResult:
         """
         Execute a single sequence and return the measurement result.
@@ -827,6 +830,9 @@ class DeviceController:
             dsp_demodulation=dsp_demodulation,
             software_demodulation=software_demodulation,
             enable_sum=enable_sum,
+            enable_classification=enable_classification,
+            line_param0=line_param0,
+            line_param1=line_param1,
         )
         status, data, config = sequencer.execute(self.boxpool)
         return RawResult(
