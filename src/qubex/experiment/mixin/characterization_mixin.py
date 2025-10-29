@@ -691,6 +691,10 @@ class CharacterizationMixin(
         else:
             targets = list(targets)
 
+        targets = [
+            target for target in targets if Target.ef_label(target) in self.targets
+        ]
+
         if detuning_range is None:
             detuning_range = np.linspace(-0.05, 0.05, 21)
         else:
@@ -1105,6 +1109,8 @@ class CharacterizationMixin(
                         target=target,
                         times=sweep_data.sweep_range,
                         data=sweep_data.normalized,
+                        amplitude_est=1.0,
+                        offset_est=0.0,
                         plot=plot,
                     )
                     if fit_result["status"] == "success":
@@ -1277,6 +1283,8 @@ class CharacterizationMixin(
             time_range * 2e-3,
             result.data[target_qubit].normalized,
             is_damped=True,
+            amplitude_est=1.0,
+            offset_est=0.0,
             plot=plot,
             title=f"JAZZ experiment: {target_qubit}-{spectator_qubit}",
             xlabel="Wait time (μs)",

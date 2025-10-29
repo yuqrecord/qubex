@@ -548,6 +548,10 @@ def fit_cosine(
     x: ArrayLike,
     y: ArrayLike,
     *,
+    amplitude_est: float | None = None,
+    omega_est: float | None = None,
+    phase_est: float | None = None,
+    offset_est: float | None = None,
     tau_est: float | None = None,
     is_damped: bool = False,
     target: str | None = None,
@@ -598,15 +602,17 @@ def fit_cosine(
     F = np.fft.fft(y)[1 : N // 2]
     i = np.argmax(np.abs(F))
 
-    # Estimate the initial parameters
-    if is_damped:
-        amplitude_est = (np.max(y) - np.min(y)) / 2
-    else:
-        amplitude_est = 2 * np.abs(F[i]) / N
-    omega_est = 2 * np.pi * f[i]
-    phase_est = np.angle(F[i])
-    offset_est = (np.max(y) + np.min(y)) / 2
-
+    if amplitude_est is None:
+        if is_damped:
+            amplitude_est = float((max(y) - min(y)) / 2)
+        else:
+            amplitude_est = float(2 * abs(F[i]) / N)
+    if omega_est is None:
+        omega_est = 2 * np.pi * f[i]
+    if phase_est is None:
+        phase_est = np.angle(F[i])
+    if offset_est is None:
+        offset_est = (max(y) + min(y)) / 2
     if tau_est is None:
         tau_est = 10_000.0
 
@@ -617,19 +623,21 @@ def fit_cosine(
     p0: tuple[Any, ...]
     bounds: tuple[tuple[Any, ...], tuple[Any, ...]]
 
+    bound_max: float = amplitude_est * 2
+
     try:
         if is_damped:
             p0 = (amplitude_est, omega_est, phase_est, offset_est, tau_est)
             bounds = (
-                (0, 0, -np.pi, -np.inf, 0),
-                (np.inf, np.inf, np.pi, np.inf, np.inf),
+                (0, 0, -np.pi, -bound_max, 0),
+                (bound_max, np.inf, np.pi, bound_max, np.inf),
             )
             popt, pcov = curve_fit(func_damped_cos, x, y, p0=p0, bounds=bounds)
         else:
             p0 = (amplitude_est, omega_est, phase_est, offset_est)
             bounds = (
-                (0, 0, -np.pi, -np.inf),
-                (np.inf, np.inf, np.pi, np.inf),
+                (0, 0, -np.pi, -bound_max),
+                (bound_max, np.inf, np.pi, bound_max),
             )
             popt, pcov = curve_fit(func_cos, x, y, p0=p0, bounds=bounds)
     except RuntimeError:
@@ -1740,7 +1748,11 @@ def fit_ramsey(
     target: str,
     times: NDArray,
     data: NDArray,
-    tau_est: float = 10_000,
+    amplitude_est: float | None = None,
+    omega_est: float | None = None,
+    phase_est: float | None = None,
+    offset_est: float | None = None,
+    tau_est: float | None = None,
     p0=None,
     bounds=None,
     plot: bool = True,
@@ -1794,19 +1806,26 @@ def fit_ramsey(
     F = np.fft.fft(data)[1 : N // 2]
     i = np.argmax(np.abs(F))
 
-    # Estimate the initial parameters
-    amplitude_est = (np.max(data) - np.min(data)) / 2
-    omega_est = 2 * np.pi * f[i]
-    phase_est = np.angle(F[i])
-    offset_est = (np.max(data) + np.min(data)) / 2
+    if amplitude_est is None:
+        amplitude_est = float((max(data) - min(data)) / 2)
+    if omega_est is None:
+        omega_est = 2 * np.pi * f[i]
+    if phase_est is None:
+        phase_est = np.angle(F[i])
+    if offset_est is None:
+        offset_est = max(data) + min(data) / 2
+    if tau_est is None:
+        tau_est = 10_000
 
     if p0 is None:
         p0 = (amplitude_est, omega_est, phase_est, offset_est, tau_est)
 
     if bounds is None:
+        bound_max = amplitude_est * 2
+
         bounds = (
-            (0, 0, -np.pi, -np.inf, 0),
-            (np.inf, np.inf, np.pi, np.inf, np.inf),
+            (0, 0, -np.pi, -bound_max, 0),
+            (bound_max, np.inf, np.pi, bound_max, np.inf),
         )
 
     try:
