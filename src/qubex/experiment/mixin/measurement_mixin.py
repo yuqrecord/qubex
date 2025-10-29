@@ -437,7 +437,7 @@ class MeasurementMixin(
             raise ValueError("Invalid sequence.")
 
         signals = defaultdict(list)
-        plotter = IQPlotter(self.state_centers)
+        plotter = IQPlotter({qubit: self.state_centers[qubit] for qubit in qubits})
 
         # initialize awgs and capture units
         self.reset_awg_and_capunits(qubits=qubits)
