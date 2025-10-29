@@ -428,6 +428,14 @@ class Experiment(
         return self.get_cr_pairs()
 
     @property
+    def edge_pairs(self) -> list[tuple[str, str]]:
+        return self.get_edge_pairs()
+
+    @property
+    def edge_labels(self) -> list[str]:
+        return self.get_edge_labels()
+
+    @property
     def boxes(self) -> dict[str, Box]:
         boxes = self.experiment_system.get_boxes_for_qubits(self.qubit_labels)
         return {box.id: box for box in boxes}
@@ -762,18 +770,21 @@ class Experiment(
         """
         cr_pairs = []
         for label in self.cr_targets:
-            pair = Target.cr_qubit_pair(label)
-            control_qubit = self.quantum_system.get_qubit(pair[0])
-            target_qubit = self.quantum_system.get_qubit(pair[1])
-            if target_qubit.label not in self.available_targets:
+            try:
+                pair = Target.cr_qubit_pair(label)
+                control_qubit = self.quantum_system.get_qubit(pair[0])
+                target_qubit = self.quantum_system.get_qubit(pair[1])
+                if target_qubit.label not in self.available_targets:
+                    continue
+                # if control_qubit.frequency < target_qubit.frequency:
+                if control_qubit.index % 4 in [0, 3]:
+                    if low_to_high:
+                        cr_pairs.append(pair)
+                else:
+                    if high_to_low:
+                        cr_pairs.append(pair)
+            except Exception:
                 continue
-            # if control_qubit.frequency < target_qubit.frequency:
-            if control_qubit.index % 4 in [0, 3]:
-                if low_to_high:
-                    cr_pairs.append(pair)
-            else:
-                if high_to_low:
-                    cr_pairs.append(pair)
         return cr_pairs
 
     def get_cr_labels(
@@ -788,6 +799,28 @@ class Experiment(
             Target.cr_label(*pair)
             for pair in self.get_cr_pairs(low_to_high, high_to_low)
         ]
+
+    def get_edge_pairs(
+        self,
+    ) -> list[tuple[str, str]]:
+        """
+        Get the qubit edge pairs.
+        """
+        edge_pairs = []
+        for qubit in self.qubit_labels:
+            spectators = self.get_spectators(qubit, in_same_mux=True)
+            for spectator in spectators:
+                pair = (qubit, spectator.label)
+                edge_pairs.append(pair)
+        return edge_pairs
+
+    def get_edge_labels(
+        self,
+    ) -> list[str]:
+        """
+        Get the qubit edge labels.
+        """
+        return [f"{pair[0]}-{pair[1]}" for pair in self.get_edge_pairs()]
 
     @staticmethod
     def cr_pair(cr_label: str) -> tuple[str, str]:

@@ -1223,7 +1223,7 @@ class CharacterizationMixin(
         plot: bool = True,
     ) -> Result:
         if time_range is None:
-            time_range = np.arange(0, 10001, 100)
+            time_range = np.arange(0, 20001, 400)
 
         if x90 is None:
             x90 = {
@@ -3453,5 +3453,94 @@ class CharacterizationMixin(
             except Exception as e:
                 print(f"Characterization failed for {target}: {e}")
                 continue
+
+        if plot:
+            print()
+            print("T1 (µs):")
+            for target in targets:
+                try:
+                    t1 = data["t1_experiment"][target].t1
+                    print(f"  {target}: {t1 * 1e-3:.6f}")
+                except Exception:
+                    print(f"  {target}: null")
+            print()
+            print("T2 echo (µs):")
+            for target in targets:
+                try:
+                    t2_echo = data["t2_experiment"][target].t2
+                    print(f"  {target}: {t2_echo * 1e-3:.6f}")
+                except Exception:
+                    print(f"  {target}: null")
+            print()
+            print("T2* (µs):")
+            for target in targets:
+                try:
+                    t2_star = data["ramsey_experiment"][target].t2
+                    print(f"  {target}: {t2_star * 1e-3:.6f}")
+                except Exception:
+                    print(f"  {target}: null")
+            print()
+            print("Qubit frequency (GHz):")
+            for target in targets:
+                try:
+                    bare_freq = data["ramsey_experiment"][target].bare_freq
+                    print(f"  {target}: {bare_freq:.6f}")
+                except Exception:
+                    print(f"  {target}: null")
+
+        return Result(data=data)
+
+    def characterize_2q(
+        self,
+        targets: Collection[str] | str | None = None,
+        *,
+        shots: int = CALIBRATION_SHOTS,
+        interval: int = DEFAULT_INTERVAL,
+        plot: bool = True,
+        save_image: bool = True,
+    ) -> Result:
+        if targets is None:
+            targets = self.edge_labels
+        elif isinstance(targets, str):
+            targets = [targets]
+        else:
+            targets = list(targets)
+
+        data = {
+            "obtain_coupling_strength": {},
+        }
+
+        for target in targets:
+            try:
+                pair = target.split("-")
+                result = self.obtain_coupling_strength(
+                    *pair,
+                    shots=shots,
+                    interval=interval,
+                    plot=plot,
+                )
+                data["obtain_coupling_strength"][target] = result.data
+
+            except Exception as e:
+                print(f"Characterization failed for {target}: {e}")
+                continue
+
+        if plot:
+            print()
+            print("Qubit-qubit coupling strength g (MHz):")
+            for target in targets:
+                try:
+                    g = data["obtain_coupling_strength"][target]["g"]
+                    print(f"  {target}: {g * 1e3:.6f}")
+                except Exception:
+                    print(f"  {target}: null")
+            print()
+            print("ZZ coefficient ξ (kHz):")
+            for target in targets:
+                try:
+                    xi = data["obtain_coupling_strength"][target]["xi"]
+                    print(f"  {target}: {xi * 1e6:.6f}")
+                except Exception:
+                    print(f"  {target}: null")
 
         return Result(data=data)

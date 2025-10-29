@@ -130,6 +130,16 @@ class BaseProtocol(Protocol):
         ...
 
     @property
+    def edge_labels(self) -> list[str]:
+        """Get the list of qubit edge labels."""
+        ...
+
+    @property
+    def edge_pairs(self) -> list[tuple[str, str]]:
+        """Get the list of qubit edge pairs."""
+        ...
+
+    @property
     def boxes(self) -> dict[str, Box]:
         """Get the available box dict."""
         ...
