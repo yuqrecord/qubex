@@ -37,6 +37,7 @@ class Param(Enum):
     RESONATOR_FREQUENCY = ("resonator_frequency", "resonator_frequency", "props")
 
     CONTROL_FREQUENCY = ("control_frequency", None, "props")
+    CONTROL_FREQUENCY_EF = ("control_frequency_ef", None, "props")
     READOUT_FREQUENCY = ("readout_frequency", None, "props")
 
     CONTROL_AMPLITUDE = ("control_amplitude", "control_amplitude", "params")
@@ -434,12 +435,14 @@ class ConfigLoader:
         qubit_anharmonicity_dict = self._load_param_data(Param.QUBIT_ANHARMONICITY)
         resonator_frequency_dict = self._load_param_data(Param.RESONATOR_FREQUENCY)
         control_frequency_dict = self._load_param_data(Param.CONTROL_FREQUENCY)
+        control_frequency_ef_dict = self._load_param_data(Param.CONTROL_FREQUENCY_EF)
         readout_frequency_dict = self._load_param_data(Param.READOUT_FREQUENCY)
 
         for qubit in chip.qubits:
             qubit._bare_frequency = qubit_frequency_dict.get(qubit.label)
             qubit._anharmonicity = qubit_anharmonicity_dict.get(qubit.label)
             qubit._control_frequency_ge = control_frequency_dict.get(qubit.label)
+            qubit._control_frequency_ef = control_frequency_ef_dict.get(qubit.label)
         for resonator in chip.resonators:
             resonator._frequency_g = resonator_frequency_dict.get(resonator.qubit)
             resonator._readout_frequency = readout_frequency_dict.get(resonator.qubit)

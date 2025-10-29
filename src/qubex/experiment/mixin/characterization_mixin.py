@@ -501,8 +501,8 @@ class CharacterizationMixin(
         self,
         targets: Collection[str] | str | None = None,
         *,
-        detuning_range: ArrayLike = np.linspace(-0.01, 0.01, 21),
-        time_range: ArrayLike = np.arange(0, 101, 4),
+        detuning_range: ArrayLike | None = None,
+        time_range: ArrayLike | None = None,
         rabi_level: Literal["ge", "ef"] = "ge",
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
@@ -515,8 +515,16 @@ class CharacterizationMixin(
         else:
             targets = list(targets)
 
-        detuning_range = np.array(detuning_range, dtype=np.float64)
-        time_range = np.array(time_range, dtype=np.float64)
+        if detuning_range is None:
+            detuning_range = np.linspace(-0.01, 0.01, 21)
+        else:
+            detuning_range = np.asarray(detuning_range, dtype=np.float64)
+
+        if time_range is None:
+            time_range = np.arange(0, 101, 4)
+        else:
+            time_range = np.asarray(time_range, dtype=np.float64)
+
         amplitudes = {
             target: self.params.get_control_amplitude(target) for target in targets
         }
@@ -669,11 +677,12 @@ class CharacterizationMixin(
         self,
         targets: Collection[str] | str | None = None,
         *,
-        detuning_range: ArrayLike = np.linspace(-0.01, 0.01, 21),
-        time_range: ArrayLike = np.arange(0, 101, 4),
+        detuning_range: ArrayLike | None = None,
+        time_range: ArrayLike | None = None,
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
+        verbose: bool = False,
     ) -> Result:
         if targets is None:
             targets = self.qubit_labels
@@ -682,8 +691,15 @@ class CharacterizationMixin(
         else:
             targets = list(targets)
 
-        detuning_range = np.array(detuning_range, dtype=np.float64)
-        time_range = np.array(time_range, dtype=np.float64)
+        if detuning_range is None:
+            detuning_range = np.linspace(-0.05, 0.05, 21)
+        else:
+            detuning_range = np.asarray(detuning_range, dtype=np.float64)
+
+        if time_range is None:
+            time_range = np.arange(0, 101, 4)
+        else:
+            time_range = np.asarray(time_range, dtype=np.float64)
 
         result = self.obtain_freq_rabi_relation(
             targets=targets,
@@ -692,22 +708,26 @@ class CharacterizationMixin(
             time_range=time_range,
             shots=shots,
             interval=interval,
-            plot=plot,
+            plot=plot and verbose,
         )
-        fit_data = {
-            target: data.fit()["f_resonance"] for target, data in result.data.items()
-        }
 
-        print("\nResults\n-------")
-        print("ef frequency (GHz):")
-        for target, fit in fit_data.items():
-            label = Target.ge_label(target)
-            print(f"    {label}: {fit:.6f}")
-        print("anharmonicity (GHz):")
-        for target, fit in fit_data.items():
-            label = Target.ge_label(target)
-            ge_freq = self.targets[label].frequency
-            print(f"    {label}: {fit - ge_freq:.6f}")
+        if plot:
+            fit_data = {
+                target: data.fit()["f_resonance"]
+                for target, data in result.data.items()
+            }
+
+            print("\nResults\n-------")
+            print("ef frequency (GHz):")
+            for target, fit in fit_data.items():
+                label = Target.ge_label(target)
+                print(f"    {label}: {fit:.6f}")
+            print("anharmonicity (GHz):")
+            for target, fit in fit_data.items():
+                label = Target.ge_label(target)
+                ge_freq = self.targets[label].frequency
+                print(f"    {label}: {fit - ge_freq:.6f}")
+
         return Result(data=fit_data)
 
     def calibrate_readout_frequency(
@@ -1203,7 +1223,7 @@ class CharacterizationMixin(
         plot: bool = True,
     ) -> Result:
         if time_range is None:
-            time_range = np.arange(0, 10001, 500)
+            time_range = np.arange(0, 10001, 100)
 
         if x90 is None:
             x90 = {
@@ -1255,13 +1275,16 @@ class CharacterizationMixin(
 
         fit_result = fitting.fit_cosine(
             time_range * 2e-3,
-            (1 - result.data[target_qubit].normalized) * 0.5,
+            result.data[target_qubit].normalized,
             is_damped=True,
             plot=plot,
             title=f"JAZZ experiment: {target_qubit}-{spectator_qubit}",
             xlabel="Wait time (μs)",
             ylabel=f"Normalized value : {target_qubit}",
         )
+
+        if fit_result["status"] != "success":
+            raise RuntimeError("Fitting failed in JAZZ experiment.")
 
         xi = fit_result["f"] * 1e-3
         zeta = 2 * xi

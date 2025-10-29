@@ -84,6 +84,9 @@ class ControlParams(Model):
     def get_control_amplitude(self, qubit: str) -> float:
         return self.control_amplitude.get(qubit, DEFAULT_CONTROL_AMPLITUDE)
 
+    def get_ef_control_amplitude(self, qubit: str) -> float:
+        return self.get_control_amplitude(qubit) / np.sqrt(2)
+
     def get_readout_amplitude(self, qubit: str) -> float:
         return self.readout_amplitude.get(qubit, DEFAULT_READOUT_AMPLITUDE)
 

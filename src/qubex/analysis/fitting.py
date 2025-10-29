@@ -599,9 +599,10 @@ def fit_cosine(
     i = np.argmax(np.abs(F))
 
     # Estimate the initial parameters
-    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
-    amplitude_est_2 = 2 * np.abs(F[i]) / N
-    amplitude_est = max(amplitude_est_1, amplitude_est_2)
+    if is_damped:
+        amplitude_est = (np.max(y) - np.min(y)) / 2
+    else:
+        amplitude_est = 2 * np.abs(F[i]) / N
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(y) + np.min(y)) / 2
@@ -616,20 +617,27 @@ def fit_cosine(
     p0: tuple[Any, ...]
     bounds: tuple[tuple[Any, ...], tuple[Any, ...]]
 
-    if is_damped:
-        p0 = (amplitude_est, omega_est, phase_est, offset_est, tau_est)
-        bounds = (
-            (0, 0, -np.pi, -np.inf, 0),
-            (np.inf, np.inf, np.pi, np.inf, np.inf),
+    try:
+        if is_damped:
+            p0 = (amplitude_est, omega_est, phase_est, offset_est, tau_est)
+            bounds = (
+                (0, 0, -np.pi, -np.inf, 0),
+                (np.inf, np.inf, np.pi, np.inf, np.inf),
+            )
+            popt, pcov = curve_fit(func_damped_cos, x, y, p0=p0, bounds=bounds)
+        else:
+            p0 = (amplitude_est, omega_est, phase_est, offset_est)
+            bounds = (
+                (0, 0, -np.pi, -np.inf),
+                (np.inf, np.inf, np.pi, np.inf),
+            )
+            popt, pcov = curve_fit(func_cos, x, y, p0=p0, bounds=bounds)
+    except RuntimeError:
+        print(f"Failed to fit the data for {target}.")
+        return FitResult(
+            status=FitStatus.ERROR,
+            message="Failed to fit the data.",
         )
-        popt, pcov = curve_fit(func_damped_cos, x, y, p0=p0, bounds=bounds)
-    else:
-        p0 = (amplitude_est, omega_est, phase_est, offset_est)
-        bounds = (
-            (0, 0, -np.pi, -np.inf),
-            (np.inf, np.inf, np.pi, np.inf),
-        )
-        popt, pcov = curve_fit(func_cos, x, y, p0=p0, bounds=bounds)
 
     if is_damped:
         A, omega, phi, C, tau = popt
@@ -787,9 +795,7 @@ def fit_delayed_cosine(
     F = np.fft.fft(y)[1 : N // 2]
     i = np.argmax(np.abs(F))
 
-    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
-    amplitude_est_2 = 2 * np.abs(F[i]) / N
-    amplitude_est = max(amplitude_est_1, amplitude_est_2)
+    amplitude_est = 2 * np.abs(F[i]) / N
     omega_est = 2 * np.pi * f[i]
     offset_est = (np.max(y) + np.min(y)) / 2
 
@@ -1468,9 +1474,10 @@ def fit_rabi(
     i = np.argmax(np.abs(F))
 
     # Estimate the initial parameters
-    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
-    amplitude_est_2 = 2 * np.abs(F[i]) / N
-    amplitude_est = max(amplitude_est_1, amplitude_est_2)
+    if is_damped:
+        amplitude_est = (np.max(y) - np.min(y)) / 2
+    else:
+        amplitude_est = 2 * np.abs(F[i]) / N
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(y) + np.min(y)) / 2
@@ -1788,9 +1795,7 @@ def fit_ramsey(
     i = np.argmax(np.abs(F))
 
     # Estimate the initial parameters
-    amplitude_est_1 = 0.5 * (np.max(data) - np.min(data))
-    amplitude_est_2 = 2 * np.abs(F[i]) / N
-    amplitude_est = max(amplitude_est_1, amplitude_est_2)
+    amplitude_est = (np.max(data) - np.min(data)) / 2
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(data) + np.min(data)) / 2
@@ -2243,9 +2248,7 @@ def fit_ampl_calib_data(
     F = np.fft.fft(y)[1 : N // 2]
     i = np.argmax(np.abs(F))
 
-    amplitude_est_1 = 0.5 * (np.max(y) - np.min(y))
-    amplitude_est_2 = 2 * np.abs(F[i]) / N
-    amplitude_est = max(amplitude_est_1, amplitude_est_2)
+    amplitude_est = 2 * np.abs(F[i]) / N
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
     offset_est = (np.max(y) + np.min(y)) / 2

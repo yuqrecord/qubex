@@ -52,7 +52,6 @@ from ...pulse import (
     PulseArray,
     PulseSchedule,
     RampType,
-    Rect,
     VirtualZ,
     Waveform,
 )
@@ -623,7 +622,7 @@ class MeasurementMixin(
         time_range = np.asarray(time_range)
 
         if ramptime is None:
-            ramptime = HPI_DURATION - HPI_RAMPTIME
+            ramptime = HPI_DURATION - HPI_RAMPTIME  # π/2
 
         if amplitudes is None:
             ampl = self.params.control_amplitude
@@ -695,7 +694,8 @@ class MeasurementMixin(
         ef_targets = [self.targets[ef] for ef in ef_labels]
 
         amplitudes = {
-            ef.label: self.params.get_control_amplitude(ef.qubit) for ef in ef_targets
+            ef.label: self.params.get_ef_control_amplitude(ef.qubit)
+            for ef in ef_targets
         }
 
         rabi_data = {}
@@ -885,7 +885,14 @@ class MeasurementMixin(
                 ps.barrier()
                 # apply the ef drive to induce the ef Rabi oscillation
                 for ef in ef_labels:
-                    ps.add(ef, Rect(duration=T, amplitude=amplitudes[ef]))
+                    ps.add(
+                        ef,
+                        FlatTop(
+                            duration=T + 2 * ramptime,
+                            amplitude=amplitudes[ef],
+                            tau=ramptime,
+                        ),
+                    )
             return ps
 
         # detune target frequencies if necessary
