@@ -785,6 +785,7 @@ class CharacterizationMixin(
         self.params.readout_amplitude = original_readout_amplitudes
 
         fit_data = {}
+        figs = {}
         for target, values in result.items():
             freq = self.resonators[target].frequency
             fit_result = fitting.fit_lorentzian(
@@ -797,6 +798,9 @@ class CharacterizationMixin(
             )
             if "f0" in fit_result:
                 fit_data[target] = fit_result["f0"]
+            
+            if "fig" in fit_result:
+                figs[target] = fit_result["fig"]
 
             if save_image:
                 fig = fit_result["fig"]
@@ -812,7 +816,7 @@ class CharacterizationMixin(
         for target, freq in fit_data.items():
             print(f"{target}: {freq:.6f}")
 
-        return Result(data=fit_data)
+        return Result(data={"data":fit_data,"fig":figs})
 
     def t1_experiment(
         self,
