@@ -507,6 +507,7 @@ class CharacterizationMixin(
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
+        verbose: bool = False,
     ) -> ExperimentResult[FreqRabiData]:
         if targets is None:
             targets = self.qubit_labels
@@ -552,7 +553,7 @@ class CharacterizationMixin(
                 )
             else:
                 raise ValueError("Invalid rabi_level.")
-            if plot:
+            if verbose:
                 rabi_result.fit()
             rabi_params = rabi_result.rabi_params
             if rabi_params is None:
@@ -694,6 +695,9 @@ class CharacterizationMixin(
         targets = [
             target for target in targets if Target.ef_label(target) in self.targets
         ]
+        if len(targets) == 0:
+            print("No ef targets found for the given targets.")
+            return Result(data={})
 
         if detuning_range is None:
             detuning_range = np.linspace(-0.05, 0.05, 21)
@@ -712,7 +716,8 @@ class CharacterizationMixin(
             time_range=time_range,
             shots=shots,
             interval=interval,
-            plot=plot and verbose,
+            plot=False,
+            verbose=verbose,
         )
 
         if plot:

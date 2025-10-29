@@ -81,7 +81,8 @@ class IQPlotter:
                 [
                     np.max([np.abs(center) for center in centers.values()])
                     for centers in state_centers.values()
-                ]
+                ],
+                initial=0.0,
             )
 
     def update(self, data: TargetMap[IQArray]):
