@@ -846,7 +846,7 @@ class CharacterizationMixin(
         if time_range is None:
             time_range = np.logspace(
                 np.log10(100),
-                np.log10(100 * 1000),
+                np.log10(200 * 1000),
                 51,
             )
         time_range = self.util.discretize_time_range(np.asarray(time_range))
@@ -942,7 +942,7 @@ class CharacterizationMixin(
         if time_range is None:
             time_range = np.logspace(
                 np.log10(300),
-                np.log10(100 * 1000),
+                np.log10(200 * 1000),
                 51,
             )
         time_range = self.util.discretize_time_range(
@@ -2945,7 +2945,7 @@ class CharacterizationMixin(
         save_image: bool = True,
     ) -> Result:
         if amplitude_range is None:
-            amplitude_range = np.arange(0.01, 0.21, 0.01)
+            amplitude_range = np.arange(0.01, 0.26, 0.01)
         else:
             amplitude_range = np.array(amplitude_range)
 

@@ -2179,7 +2179,7 @@ class CalibrationMixin(
         else:
             targets = list(targets)
 
-        data = {
+        return_data = {
             "obtain_ef_rabi_params": {},
             "calibrate_ef_hpi_pulse": {},
             "build_classifier": {},
@@ -2193,13 +2193,14 @@ class CalibrationMixin(
                     interval=interval,
                     plot=plot,
                 )
-                rabi_param = result.data[target].rabi_param
+                data = next(iter(result.data.values()))
+                rabi_param = data.rabi_param
                 if rabi_param.r2 < 0.9:
                     print(f"Warning: R² for {target} is low ({rabi_param.r2:.2f}).")
                 elif rabi_param.r2 < 0.5:
                     print(f"Error: R² for {target} is very low ({rabi_param.r2:.2f}).")
                     continue
-                data["obtain_rabi_params"][target] = result.data[target]
+                return_data["obtain_ef_rabi_params"][target] = data
 
                 result = self.calibrate_ef_hpi_pulse(
                     target,
@@ -2207,7 +2208,10 @@ class CalibrationMixin(
                     interval=interval,
                     plot=plot,
                 )
-                data["calibrate_ef_hpi_pulse"][target] = result.data[target]
+                data = next(iter(result.data.values()))
+                return_data["calibrate_ef_hpi_pulse"][target] = data
+
+                self.save_calib_note()
 
                 result = self.build_classifier(
                     target,
@@ -2216,11 +2220,13 @@ class CalibrationMixin(
                     interval=interval,
                     plot=plot,
                 )
-                data["build_classifier"][target] = result
+                data = next(iter(result.values()))
+                return_data["build_classifier"][target] = data
+
                 self.save_calib_note()
 
             except Exception as e:
                 print(f"Error calibrating ef gates for {targets}: {e}")
                 continue
 
-        return Result(data=data)
+        return Result(data=return_data)
