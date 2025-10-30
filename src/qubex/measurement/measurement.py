@@ -494,6 +494,9 @@ class Measurement:
         readout_ramp_type: RampType | None = None,
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool = False,
+        enable_dsp_classification: bool = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
     ) -> MeasureResult:
         """
         Measure with the given control waveforms.
@@ -561,6 +564,9 @@ class Measurement:
             repeats=shots,
             integral_mode=measure_mode.integral_mode,
             enable_sum=enable_dsp_sum,
+            enable_classification=enable_dsp_classification,
+            line_param0=line_param0,
+            line_param1=line_param1,
         )
         result = self._create_measure_result(
             backend_result=backend_result,
@@ -589,6 +595,9 @@ class Measurement:
         add_last_measurement: bool = False,
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool = False,
+        enable_dsp_classification: bool = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
         plot: bool = False,
     ) -> MultipleMeasureResult:
         """
@@ -626,6 +635,8 @@ class Measurement:
             Whether to add pump pulses, by default False.
         enable_dsp_sum : bool, optional
             Whether to enable DSP summation, by default False.
+        enable_dsp_classification : bool, optional
+            Whether to enable DSP classification, by default False.
         plot : bool, optional
             Whether to plot the results, by default False.
 
@@ -660,6 +671,9 @@ class Measurement:
             repeats=shots,
             integral_mode=measure_mode.integral_mode,
             enable_sum=enable_dsp_sum,
+            enable_classification=enable_dsp_classification,
+            line_param0=line_param0,
+            line_param1=line_param1,
         )
         result = self._create_multiple_measure_result(
             backend_result=backend_result,
