@@ -799,8 +799,8 @@ class DeviceController:
         software_demodulation: bool = False,
         enable_sum: bool = False,
         enable_classification: bool = False,
-        line_param0: tuple[float, float, float] = None,
-        line_param1: tuple[float, float, float] = None,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
     ) -> RawResult:
         """
         Execute a single sequence and return the measurement result.
@@ -823,6 +823,10 @@ class DeviceController:
         RawResult
             Measurement result.
         """
+        if line_param0 is None:
+            line_param0 = (1, 0, 0)
+        if line_param1 is None:
+            line_param1 = (0, 1, 0)
         sequencer.set_measurement_option(
             repeats=repeats,
             interval=sequencer.interval,  # type: ignore

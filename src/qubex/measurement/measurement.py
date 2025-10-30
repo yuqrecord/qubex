@@ -495,8 +495,8 @@ class Measurement:
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool = False,
         enable_dsp_classification: bool = False,
-        line_param0: tuple[float, float, float] = None,
-        line_param1: tuple[float, float, float] = None,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
     ) -> MeasureResult:
         """
         Measure with the given control waveforms.
@@ -566,7 +566,7 @@ class Measurement:
             enable_sum=enable_dsp_sum,
             enable_classification=enable_dsp_classification,
             line_param0=line_param0,
-            line_param1=line_param1
+            line_param1=line_param1,
         )
         result = self._create_measure_result(
             backend_result=backend_result,
@@ -596,8 +596,8 @@ class Measurement:
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool = False,
         enable_dsp_classification: bool = False,
-        line_param0: tuple[float, float, float] = None,
-        line_param1: tuple[float, float, float] = None,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
         plot: bool = False,
     ) -> MultipleMeasureResult:
         """
@@ -673,7 +673,7 @@ class Measurement:
             enable_sum=enable_dsp_sum,
             enable_classification=enable_dsp_classification,
             line_param0=line_param0,
-            line_param1=line_param1
+            line_param1=line_param1,
         )
         result = self._create_multiple_measure_result(
             backend_result=backend_result,
