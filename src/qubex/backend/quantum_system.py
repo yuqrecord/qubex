@@ -87,6 +87,9 @@ class Qubit(Model):
     _control_frequency_ge: Optional[float] = None
     _control_frequency_ef: Optional[float] = None
 
+    def __repr__(self) -> str:
+        return f"Qubit('{self.label}', ω={self.frequency:.6f} GHz, α={self.anharmonicity:.6f} GHz, Ej/Ec={self.ej_over_ec:.2f})"
+
     @property
     def frequency(self) -> float:
         if self._control_frequency_ge is not None:
@@ -129,6 +132,28 @@ class Qubit(Model):
         return 2 * math.pi * self.anharmonicity
 
     @property
+    def charging_energy(self) -> float:
+        return -self.anharmonicity
+
+    @property
+    def josephson_energy(self) -> float:
+        if self.charging_energy == 0:
+            return math.nan
+        return (self.frequency + self.charging_energy) ** 2 / (8 * self.charging_energy)
+
+    @property
+    def ej_over_ec(self) -> float:
+        if self.charging_energy == 0:
+            return math.nan
+        return self.josephson_energy / self.charging_energy
+
+    @property
+    def ec_over_ej(self) -> float:
+        if self.josephson_energy == 0:
+            return math.nan
+        return self.charging_energy / self.josephson_energy
+
+    @property
     def is_valid(self) -> bool:
         return not math.isnan(self.frequency) and not math.isnan(self.anharmonicity)
 
@@ -142,6 +167,13 @@ class Resonator(Model):
     _frequency_g: Optional[float] = None
     _frequency_e: Optional[float] = None
     _readout_frequency: Optional[float] = None
+
+    def __repr__(self) -> str:
+        repr = f"Resonator(label='{self.label}', frequency={self.readout_frequency:.6f} GHz"
+        if not math.isnan(self.dispersive_shift):
+            return repr + f", dispersive_shift={self.dispersive_shift:.6f} GHz)"
+        else:
+            return repr + ")"
 
     @property
     def frequency(self) -> float:

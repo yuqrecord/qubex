@@ -683,7 +683,7 @@ class CharacterizationMixin(
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
-        verbose: bool = False,
+        verbose: bool = True,
     ) -> Result:
         if targets is None:
             targets = self.qubit_labels
