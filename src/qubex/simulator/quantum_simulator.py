@@ -10,11 +10,15 @@ import numpy.typing as npt
 import plotly.graph_objects as go
 import qctrlvisualizer as qv
 import qutip as qt
+import qutip.typing as qtt
 from scipy.interpolate import interp1d
+from typing_extensions import deprecated
 
 from ..analysis.visualization import plot_bloch_vectors
 from ..pulse import PulseSchedule, Waveform
 from .quantum_system import Object, QuantumSystem
+
+TIME_STEP = 0.1  # ns
 
 
 class Control:
@@ -151,6 +155,29 @@ class Control:
 
 
 @dataclass
+class SimulationModel:
+    """
+    The simulation model for QuTip solvers.
+
+    Attributes
+    ----------
+    hamiltonian : qtt.QobjEvoLike
+        The Hamiltonian of the quantum system.
+    initial_state : qt.Qobj
+        The initial state of the quantum system.
+    times : npt.NDArray
+        The time points of the simulation.
+    collapse_operators : qt.Qobj | qt.QobjEvo | list[qtt.QobjEvoLike]
+        The collapse operators of the quantum system.
+    """
+
+    hamiltonian: qtt.QobjEvoLike
+    initial_state: qt.Qobj
+    times: npt.NDArray
+    collapse_operators: qt.Qobj | qt.QobjEvo | list[qtt.QobjEvoLike]
+
+
+@dataclass
 class SimulationResult:
     """
     The result of a simulation.
@@ -159,21 +186,24 @@ class SimulationResult:
     ----------
     system : QuantumSystem
         The quantum system.
-    times : npt.NDArray
-        The time points of the simulation.
     controls : list[Control]
         The control signals.
+    times : npt.NDArray
+        The time points of the simulation.
     states : npt.NDArray
         The states of the quantum system at each time point.
     unitaries : npt.NDArray
         The unitaries of the quantum system at each time point.
+    model : SimulationModel | None
+        The simulation model used for QuTip solvers.
     """
 
     system: QuantumSystem
-    times: npt.NDArray
     controls: list[Control]
+    times: npt.NDArray
     states: npt.NDArray
     unitaries: npt.NDArray
+    model: SimulationModel | None = None
 
     @cached_property
     def control_frequencies(self) -> dict[str, float]:
@@ -499,11 +529,14 @@ class QuantumSimulator:
         if len(set([control.n_segments for control in controls])) != 1:
             raise ValueError("The waveforms must have the same length.")
 
+    @deprecated(
+        "This method will be removed in future versions. Please use mesolve instead."
+    )
     def simulate(
         self,
         controls: list[Control] | PulseSchedule,
         initial_state: qt.Qobj | dict | None = None,
-        dt: float = 0.1,
+        dt: float = TIME_STEP,
         n_samples: int | None = None,
     ) -> SimulationResult:
         """
@@ -516,7 +549,7 @@ class QuantumSimulator:
         initial_state : qt.Qobj | dict | None, optional
             The initial state of the quantum system, by default None
         dt : float, optional
-            The time step of the simulation, by default 0.1
+            The time step of the simulation, by default TIME_STEP
         n_samples : int | None, optional
             The number of samples to return, by default None
 
@@ -545,8 +578,8 @@ class QuantumSimulator:
         if control.n_segments == 0:
             return SimulationResult(
                 system=self.system,
-                times=times,
                 controls=controls,
+                times=times,
                 states=np.array([initial_state]),
                 unitaries=np.array([self.system.identity_matrix]),
             )
@@ -581,8 +614,8 @@ class QuantumSimulator:
 
         return SimulationResult(
             system=self.system,
-            times=times,
             controls=controls,
+            times=times,
             states=states,
             unitaries=unitaries,
         )
@@ -591,7 +624,7 @@ class QuantumSimulator:
         self,
         controls: list[Control] | PulseSchedule,
         initial_state: qt.Qobj | dict | None = None,
-        dt: float = 0.1,
+        dt: float | None = None,
         n_samples: int | None = None,
     ) -> SimulationResult:
         """
@@ -604,7 +637,7 @@ class QuantumSimulator:
         initial_state : qt.Qobj | dict | None, optional
             The initial state of the quantum system, by default None
         dt : float, optional
-            The time step of the simulation, by default 0.1
+            The time step of the simulation.
         n_samples : int | None, optional
             The number of samples to return, by default None
 
@@ -613,31 +646,77 @@ class QuantumSimulator:
         SimulationResult
             The result of the simulation.
         """
-        if not isinstance(initial_state, qt.Qobj):
-            initial_state = self.system.state(initial_state)
-        if initial_state.dims[0] != self.system.object_dimensions:
-            raise ValueError("The dims of the initial state do not match the system.")
+        if isinstance(controls, PulseSchedule):
+            controls = self._convert_pulse_schedule_to_controls(controls)
+        self._validate_controls(controls)
+
+        model = self.create_simulation_model(
+            controls=controls,
+            initial_state=initial_state,
+            dt=dt,
+        )
+
+        hamiltonian = model.hamiltonian
+        initial_state = model.initial_state
+        times = model.times
+        collapse_operators = model.collapse_operators
+
+        # Run the simulation
+        result = qt.mesolve(
+            H=hamiltonian,
+            rho0=initial_state,
+            tlist=times,
+            c_ops=collapse_operators,
+        )
+
+        states = np.array(result.states)
+
+        if n_samples is not None:
+            times = downsample(times, n_samples)
+            states = downsample(states, n_samples)
+
+        return SimulationResult(
+            system=self.system,
+            controls=controls,
+            times=times,
+            states=states,
+            unitaries=np.array([]),
+            model=model,
+        )
+
+    def propagator(
+        self,
+        controls: list[Control] | PulseSchedule,
+        dt: float | None = None,
+    ) -> qt.Qobj:
+        params = self.create_simulation_parameters(
+            controls=controls,
+            dt=dt,
+        )
+
+        # Run the simulation
+        return qt.propagator(
+            H=params["hamiltonian"],
+            tlist=params["times"],
+            c_ops=params["collapse_operators"],
+            t=params["times"][-1],
+        )  # type: ignore
+
+    def create_simulation_parameters(
+        self,
+        controls: list[Control] | PulseSchedule,
+        dt: float | None = None,
+    ) -> dict:
+        if dt is None:
+            dt = TIME_STEP
 
         if isinstance(controls, PulseSchedule):
             controls = self._convert_pulse_schedule_to_controls(controls)
-
         self._validate_controls(controls)
 
-        if initial_state is None:
-            initial_state = self.system.ground_state
-
         control = controls[0]
-        N = int(control.duration / dt)
-        times = np.linspace(0, control.duration, N + 1)
-
-        if control.n_segments == 0:
-            return SimulationResult(
-                system=self.system,
-                times=times,
-                controls=controls,
-                states=np.array([initial_state]),
-                unitaries=np.array([self.system.identity_matrix]),
-            )
+        n_steps = int(control.duration / dt)
+        times = np.linspace(0, control.duration, n_steps + 1)
 
         static_hamiltonian = self.system.zero_matrix
         coupling_hamiltonian: list = []
@@ -673,37 +752,46 @@ class QuantumSimulator:
             control_hamiltonian.append([a, np.conj(gamma)])
 
         # Total Hamiltonian
-        H = [static_hamiltonian] + coupling_hamiltonian + control_hamiltonian
+        hamiltonian = [static_hamiltonian] + coupling_hamiltonian + control_hamiltonian
 
         # Add collapse operators
         for object in self.system.objects:
             a = self.system.get_lowering_operator(object.label)
-            N = self.system.get_number_operator(object.label)
+            n_steps = self.system.get_number_operator(object.label)
             relaxation_operator = np.sqrt(object.relaxation_rate) * a
-            dephasing_operator = np.sqrt(object.dephasing_rate) * N
+            dephasing_operator = np.sqrt(object.dephasing_rate) * n_steps
             collapse_operators.append(relaxation_operator)
             collapse_operators.append(dephasing_operator)
 
-        # Run the simulation
-        result = qt.mesolve(
-            H=H,
-            rho0=initial_state,
-            tlist=times,
-            c_ops=collapse_operators,
+        return {
+            "times": times,
+            "hamiltonian": hamiltonian,
+            "collapse_operators": collapse_operators,
+        }
+
+    def create_simulation_model(
+        self,
+        controls: list[Control] | PulseSchedule,
+        initial_state: qt.Qobj | dict | None = None,
+        dt: float | None = None,
+    ) -> SimulationModel:
+        if initial_state is None:
+            initial_state = self.system.ground_state
+        if not isinstance(initial_state, qt.Qobj):
+            initial_state = self.system.state(initial_state)
+        if initial_state.dims[0] != self.system.object_dimensions:
+            raise ValueError("The dims of the initial state do not match the system.")
+
+        params = self.create_simulation_parameters(
+            controls=controls,
+            dt=dt,
         )
 
-        states = np.array(result.states)
-
-        if n_samples is not None:
-            times = downsample(times, n_samples)
-            states = downsample(states, n_samples)
-
-        return SimulationResult(
-            system=self.system,
-            times=times,
-            controls=controls,
-            states=states,
-            unitaries=np.array([]),
+        return SimulationModel(
+            hamiltonian=params["hamiltonian"],
+            initial_state=initial_state,
+            times=params["times"],
+            collapse_operators=params["collapse_operators"],
         )
 
     @staticmethod
