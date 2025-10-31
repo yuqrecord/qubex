@@ -316,6 +316,44 @@ class QuantumSystem:
             H += self.get_rotating_coupling_hamiltonian(coupling.label, time)
         return H
 
+    def get_projection_operator(
+        self,
+        levels: Sequence[int] = (0, 1),
+    ) -> qt.Qobj:
+        return qt.tensor(
+            *[
+                qt.Qobj(
+                    sum(
+                        qt.projection(obj.dimension, level, level)
+                        for level in levels
+                        if level < obj.dimension
+                    )
+                )
+                for obj in self.objects
+            ]
+        )
+
+    def truncate_superoperator(
+        self,
+        superoperator: qt.Qobj,
+    ) -> qt.Qobj:
+        if not isinstance(superoperator, qt.Qobj):
+            raise ValueError("Input must be a Qobj.")
+
+        choi = qt.to_choi(superoperator)
+        n_objects = len(self.objects)
+        dims = np.array(choi.dims).flatten()
+        n_dims = len(dims)
+
+        choi_truncated = qt.Qobj(
+            choi.full()
+            .reshape(*dims)[tuple(slice(0, 2) for _ in range(n_dims))]
+            .reshape((4**n_objects, 4**n_objects)),
+            dims=[[[2] * n_objects] * 2] * 2,
+            superrep=choi.superrep,
+        )
+        return qt.to_super(choi_truncated)
+
     def draw(self, **kwargs):
         nx.draw(
             self.graph,
