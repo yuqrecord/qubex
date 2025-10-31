@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pytest
 
@@ -108,3 +109,55 @@ def test_delete_key(tmp_path):
     assert file_path.exists()
     note.delete()
     assert not file_path.exists()
+
+
+def test_save_sanitizes_nonfinite_values(tmp_path):
+    """Saving should convert NaN/Infinity/-Infinity into null in the JSON file."""
+    p = tmp_path / "note.json"
+    en = ExperimentNote(file_path=p)
+    en.clear()
+
+    en.put(
+        "rabi_params",
+        {
+            "Q33": {
+                "frequency": np.nan,
+                "amplitude": np.inf,
+                "neg_amp": -np.inf,
+                "timestamp": "2025-10-30 21:52:15",
+            }
+        },
+    )
+
+    en.save()
+
+    content = p.read_text()
+
+    # raw JSON must not contain literal NaN or Infinity
+    assert "NaN" not in content
+    assert "Infinity" not in content
+
+    # JSON should load and the problematic numeric values should be null
+    data = json.loads(content)
+    assert data["rabi_params"]["Q33"]["frequency"] is None
+    assert data["rabi_params"]["Q33"]["amplitude"] is None
+    assert data["rabi_params"]["Q33"]["neg_amp"] is None
+
+
+def test_str_and_repr_are_sanitized(tmp_path):
+    p = tmp_path / "note2.json"
+    en = ExperimentNote(file_path=p)
+    en.clear()
+    en.put("val", np.nan)
+
+    s = str(en)
+    r = repr(en)
+
+    # ensure string forms don't contain NaN/Infinity and use null instead
+    assert "NaN" not in s
+    assert "Infinity" not in s
+    assert "null" in s
+
+    assert "NaN" not in r
+    assert "Infinity" not in r
+    assert "null" in r

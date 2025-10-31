@@ -66,7 +66,8 @@ class ExperimentNote:
         if isinstance(old_value, dict) and isinstance(value, dict):
             self._update_dict_recursively(old_value, value)
         else:
-            if isinstance(value, float) and np.isnan(value):
+            # Replace any non-finite float (NaN, Infinity, -Infinity) with None
+            if isinstance(value, (float, np.floating)) and not np.isfinite(value):
                 value = None
             self._dict[key] = value
 
@@ -145,7 +146,9 @@ class ExperimentNote:
             # Save the merged data
             with open(target_path, "w") as file:
                 sorted_dict = self._sort_dict_recursively(self._dict, depth=2)
-                json.dump(sorted_dict, file, indent=4)
+                # Sanitize the data to ensure no NaN/Infinity values are written
+                sanitized = self._sanitize_for_json(sorted_dict)
+                json.dump(sanitized, file, indent=4)
 
             print(f"ExperimentNote saved to '{target_path}'.")
         except Exception as e:
@@ -206,7 +209,8 @@ class ExperimentNote:
         str
             The JSON representation of the ExperimentNote.
         """
-        return json.dumps(self._dict)
+        # Use sanitized JSON to avoid returning NaN/Infinity in string form
+        return json.dumps(self._sanitize_for_json(self._dict))
 
     def __repr__(self) -> str:
         """
@@ -217,7 +221,8 @@ class ExperimentNote:
         str
             The JSON representation of the ExperimentNote.
         """
-        return json.dumps(self._dict, indent=4)
+        # Use sanitized JSON to avoid returning NaN/Infinity in string form
+        return json.dumps(self._sanitize_for_json(self._dict), indent=4)
 
     def _is_json_serializable(self, value: Any) -> bool:
         """
@@ -275,9 +280,34 @@ class ExperimentNote:
                 else:
                     self._update_dict_recursively(old_dict[key], value)
             else:
-                if isinstance(value, float) and np.isnan(value):
+                # Replace any non-finite float (NaN, Infinity, -Infinity) with None
+                if isinstance(value, (float, np.floating)) and not np.isfinite(value):
                     value = None
                 old_dict[key] = value
+
+    def _sanitize_for_json(self, obj: Any) -> Any:
+        """
+        Recursively replace non-finite float values in the object with None so that
+        the resulting structure conforms to RFC 8259 (no NaN/Infinity values).
+
+        Returns a sanitized copy of the object (dicts/lists are recreated).
+        """
+        # dict -> sanitize each value
+        if isinstance(obj, dict):
+            return {k: self._sanitize_for_json(v) for k, v in obj.items()}
+
+        # list/tuple -> sanitize each element (tuples become lists for JSON)
+        if isinstance(obj, list) or isinstance(obj, tuple):
+            return [self._sanitize_for_json(v) for v in obj]
+
+        # floats (including numpy floats): convert non-finite to None
+        if isinstance(obj, (float, np.floating)):
+            if not np.isfinite(obj):
+                return None
+            return obj
+
+        # other types are returned as-is
+        return obj
 
     def _sort_dict_recursively(
         self,
