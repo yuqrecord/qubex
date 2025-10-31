@@ -688,7 +688,16 @@ class QuantumSimulator:
         self,
         controls: list[Control] | PulseSchedule,
         dt: float | None = None,
+        options: dict | None = None,
     ) -> qt.Qobj:
+        if options is None:
+            options = {
+                "nsteps": 200000,
+                "rtol": 1e-7,
+                "atol": 1e-9,
+                "method": "bdf",
+            }
+
         params = self.create_simulation_parameters(
             controls=controls,
             dt=dt,
@@ -700,7 +709,26 @@ class QuantumSimulator:
             tlist=params["times"],
             c_ops=params["collapse_operators"],
             t=params["times"][-1],
+            options=options,
         )  # type: ignore
+
+    def gate_fidelity(
+        self,
+        target_unitary: qt.Qobj,
+        controls: list[Control] | PulseSchedule,
+        dt: float | None = None,
+        options: dict | None = None,
+    ) -> float:
+        superop = self.propagator(
+            controls=controls,
+            dt=dt,
+            options=options,
+        )
+        superop_truncated = self.system.truncate_superoperator(superop)
+        return qt.average_gate_fidelity(
+            superop_truncated,
+            target_unitary,
+        )
 
     def create_simulation_parameters(
         self,
