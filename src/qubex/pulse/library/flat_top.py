@@ -10,7 +10,13 @@ from ..pulse import Pulse
 from .drag import Drag
 from .vert_ramp import VertRamp
 
-RampType: TypeAlias = Literal["Gaussian", "RaisedCosine", "Sintegral", "Bump"]
+RampType: TypeAlias = Literal[
+    "Gaussian",
+    "RaisedCosine",
+    "Sintegral",
+    "Bump",
+    "VertRamp",
+]
 
 
 class FlatTop(Pulse):

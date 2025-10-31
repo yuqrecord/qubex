@@ -12,7 +12,6 @@ import qctrlvisualizer as qv
 import qutip as qt
 import qutip.typing as qtt
 from scipy.interpolate import interp1d
-from typing_extensions import deprecated
 
 from ..analysis.visualization import plot_bloch_vectors
 from ..pulse import PulseSchedule, Waveform
@@ -529,9 +528,6 @@ class QuantumSimulator:
         if len(set([control.n_segments for control in controls])) != 1:
             raise ValueError("The waveforms must have the same length.")
 
-    @deprecated(
-        "This method will be removed in future versions. Please use mesolve instead."
-    )
     def simulate(
         self,
         controls: list[Control] | PulseSchedule,
