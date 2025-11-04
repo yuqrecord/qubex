@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Final, Literal, Optional
+from typing import Final, Literal, Optional, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -18,6 +18,10 @@ from ..pulse import PulseSchedule, Waveform
 from .quantum_system import Object, QuantumSystem
 
 TIME_STEP = 0.1  # ns
+
+
+FrameType: TypeAlias = Literal["qubit", "drive"]
+SubspaceType: TypeAlias = Literal["ge", "ef", "gf"]
 
 
 class Control:
@@ -216,10 +220,21 @@ class SimulationResult:
     def final_state(self) -> qt.Qobj:
         return self.states[-1]
 
+    def _get_subspace_slice(self, subspace: SubspaceType) -> slice:
+        subspaces = {
+            "ge": slice(0, 2),
+            "ef": slice(1, 3),
+            "gf": slice(0, 3),
+        }
+        if subspace not in subspaces:
+            return slice(0, None)
+        else:
+            return subspaces[subspace]
+
     def get_substates(
         self,
         label: str,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
     ) -> npt.NDArray:
         """
         Extract the substates of a qubit from the states.
@@ -233,7 +248,7 @@ class SimulationResult:
         -------
         list[qt.Qobj]
             The substates of the qubit.
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default "qubit"
         """
         if frame is None:
@@ -261,7 +276,7 @@ class SimulationResult:
     def get_initial_substate(
         self,
         label: str,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
     ) -> qt.Qobj:
         """
         Extract the initial substate of a qubit from the states.
@@ -270,7 +285,7 @@ class SimulationResult:
         ----------
         label : str
             The label of the qubit.
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default "qubit"
 
         Returns
@@ -283,7 +298,7 @@ class SimulationResult:
     def get_final_substate(
         self,
         label: str,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
     ) -> qt.Qobj:
         """
         Extract the final substate of a qubit from the states.
@@ -292,7 +307,7 @@ class SimulationResult:
         ----------
         label : str
             The label of the qubit.
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default "qubit"
 
         Returns
@@ -323,7 +338,8 @@ class SimulationResult:
         label: str,
         *,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> npt.NDArray:
         """
         Extract the block vectors of a qubit from the states.
@@ -334,7 +350,7 @@ class SimulationResult:
             The label of the qubit.
         n_samples : int | None, optional
             The number of samples to return, by default None
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default None
 
         Returns
@@ -347,8 +363,9 @@ class SimulationResult:
         Z = qt.sigmaz()
         substates = self.get_substates(label, frame=frame)
         buffer = []
+        level = self._get_subspace_slice(subspace)
         for substate in substates:
-            rho = qt.Qobj(substate.full()[:2, :2])
+            rho = qt.Qobj(substate.full()[level, level])
             x = qt.expect(X, rho)
             y = qt.expect(Y, rho)
             z = qt.expect(Z, rho)
@@ -361,9 +378,9 @@ class SimulationResult:
         self,
         label: str,
         *,
-        dim: int = 2,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> npt.NDArray:
         """
         Extract the density matrices of a qubit from the states.
@@ -376,7 +393,7 @@ class SimulationResult:
             The dimension of the qubit, by default 2
         n_samples : int | None, optional
             The number of samples to return, by default None
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default None
 
         Returns
@@ -385,7 +402,8 @@ class SimulationResult:
             The density matrices of the qubit.
         """
         substates = self.get_substates(label, frame=frame)
-        rho = np.array([substate.full() for substate in substates])[:, :dim, :dim]
+        level = self._get_subspace_slice(subspace)
+        rho = np.array([substate.full() for substate in substates])[:, level, level]
         rho = downsample(rho, n_samples)
         return rho
 
@@ -394,12 +412,14 @@ class SimulationResult:
         label: str,
         *,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> None:
         vectors = self.get_bloch_vectors(
             label,
             n_samples=n_samples,
             frame=frame,
+            subspace=subspace,
         )
         times = self.get_times(
             n_samples=n_samples,
@@ -416,7 +436,8 @@ class SimulationResult:
         label: str,
         *,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> None:
         """
         Display the Bloch sphere of a qubit.
@@ -427,13 +448,14 @@ class SimulationResult:
             The label of the qubit.
         n_samples : int | None, optional
             The number of samples to return, by default None
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default None
         """
         rho = self.get_density_matrices(
             label,
             n_samples=n_samples,
             frame=frame,
+            subspace=subspace,
         )
         qv.display_bloch_sphere_from_density_matrices(rho)
 
