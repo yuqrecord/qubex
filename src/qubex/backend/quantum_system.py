@@ -171,7 +171,7 @@ class Resonator(Model):
     _readout_frequency: Optional[float] = None
 
     def __repr__(self) -> str:
-        repr = f"Resonator(label='{self.label}', frequency={self.readout_frequency:.6f} GHz"
+        repr = f"Resonator(label='{self.label}', frequency={self.frequency:.6f} GHz"
         if not math.isnan(self.dispersive_shift):
             return repr + f", dispersive_shift={self.dispersive_shift:.6f} GHz)"
         else:
