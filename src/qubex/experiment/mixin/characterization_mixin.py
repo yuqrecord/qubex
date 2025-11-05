@@ -2855,7 +2855,7 @@ class CharacterizationMixin(
         save_image: bool = True,
     ) -> Result:
         if df is None:
-            df = 0.0002
+            df = 0.0004
         if frequency_width is None:
             frequency_width = 0.02
         result_0 = self.measure_reflection_coefficient(
