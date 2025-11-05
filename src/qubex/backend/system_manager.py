@@ -263,14 +263,16 @@ class SystemManager:
 
     def load_skew_file(
         self,
-        box_ids: list[str],
+        box_ids: list[str],  # deprecated
     ):
         skew_file_path = self.config_loader.config_path / "skew.yaml"
         if not Path(skew_file_path).exists():
             print(f"Skew file not found: {skew_file_path}")
         else:
             try:
-                self.device_controller.load_skew_file(box_ids, skew_file_path)
+                self.device_controller.qubecalib.sysdb.load_skew_yaml(
+                    str(skew_file_path)
+                )
             except Exception as e:
                 print(f"Failed to load the skew file: {e}")
 

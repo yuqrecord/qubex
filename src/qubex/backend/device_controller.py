@@ -283,6 +283,7 @@ class DeviceController:
         if self._boxpool is not None:
             self._boxpool._box_config_cache.clear()
 
+    @deprecated("Use qubecalib.sysdb.load_skew_yaml instead.")
     def load_skew_file(self, box_list: list[str], file_path: str | Path):
         if len(box_list) == 0:
             return

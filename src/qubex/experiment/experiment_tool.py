@@ -14,7 +14,7 @@ from rich.table import Table
 try:
     import quel_clock_master as qcm
     from qubecalib import QubeCalib
-    from qubecalib.instrument.quel.quel1.tool.skew import Skew, SkewSetting
+    from qubecalib.instrument.quel.quel1.tool.skew import Skew
     from quel_ic_config import Quel1Box
 except ImportError:
     pass
@@ -30,15 +30,24 @@ system_manager = SystemManager.shared()
 def check_skew(
     box_ids: Collection[str],
     estimate: bool = True,
-    config_dir: str = "/home/shared/config/",
+    config_dir: str | None = None,
     skew_file: str = "skew.yaml",
     box_file: str = "box.yaml",
 ) -> dict:
     """Check the skew of the boxes."""
+    clock_master_address = (
+        system_manager.experiment_system.control_system.clock_master_address
+    )
+
+    if config_dir is not None:
+        config_path = Path(config_dir)
+    else:
+        config_path = system_manager.config_loader.config_path
+
     box_ids = list(box_ids)
 
-    box_file_path = Path(config_dir) / box_file
-    skew_file_path = Path(config_dir) / skew_file
+    box_file_path = config_path / box_file
+    skew_file_path = config_path / skew_file
 
     with open(skew_file_path, "r") as file:
         config = yaml.safe_load(file)
@@ -58,13 +67,13 @@ Do you want to continue?
         return {}
 
     all_box_ids = list(set(list(box_ids) + [ref_port]))
-    qc = get_qubecalib()
-    qc.sysdb.load_box_yaml(str(box_file_path))
-    qc.sysdb.load_skew_yaml(str(skew_file_path))
-    setting = SkewSetting.from_yaml(str(skew_file_path))
-    system = qc.sysdb.create_quel1system(*all_box_ids)
-    system.resync(*all_box_ids)
-    skew = Skew.create(setting=setting, system=system, sysdb=qc.sysdb)
+    skew = Skew.from_yaml(
+        str(skew_file_path),
+        box_yaml=str(box_file_path),
+        clockmaster_ip=clock_master_address,
+        boxes=all_box_ids,
+    )
+    skew.system.resync()
     skew.measure()
     if estimate:
         skew.estimate()
@@ -145,8 +154,13 @@ This operation will reset LO/NCO settings. Do you want to continue?
     print("Operation completed.")
 
 
-def reset_clockmaster(ipaddr: str = "10.3.0.255") -> bool:
+def reset_clockmaster(
+    ipaddr: str | None = None,
+) -> bool:
     """Reset the clock master."""
+    if ipaddr is None:
+        ipaddr = system_manager.experiment_system.control_system.clock_master_address
+
     return qcm.QuBEMasterClient(ipaddr).reset()
 
 
