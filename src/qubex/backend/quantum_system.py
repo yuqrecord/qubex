@@ -92,7 +92,9 @@ class Qubit(Model):
 
     @property
     def frequency(self) -> float:
-        if self._control_frequency_ge is not None:
+        if self._control_frequency_ge is not None and not math.isnan(
+            self._control_frequency_ge
+        ):
             return self._control_frequency_ge
         elif self._bare_frequency is not None:
             return self._bare_frequency
@@ -177,7 +179,9 @@ class Resonator(Model):
 
     @property
     def frequency(self) -> float:
-        if self._readout_frequency is not None:
+        if self._readout_frequency is not None and not math.isnan(
+            self._readout_frequency
+        ):
             return self._readout_frequency
         elif self._frequency_g is not None:
             return self._frequency_g
