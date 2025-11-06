@@ -930,7 +930,7 @@ class CharacterizationMixin(
         targets: Collection[str] | str | None = None,
         *,
         time_range: ArrayLike | None = None,
-        n_cpmg: int = 1,
+        n_cpmg: int | None = 1,
         pi_cpmg: Waveform | None = None,
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
@@ -952,10 +952,17 @@ class CharacterizationMixin(
                 np.log10(200 * 1000),
                 51,
             )
-        time_range = self.util.discretize_time_range(
-            time_range=np.asarray(time_range),
-            sampling_period=2 * SAMPLING_PERIOD * n_cpmg,
-        )
+
+        if n_cpmg is not None:
+            time_range = self.util.discretize_time_range(
+                time_range=np.asarray(time_range),
+                sampling_period=2 * SAMPLING_PERIOD * n_cpmg,
+            )
+        else:
+            time_range = self.util.discretize_time_range(
+                time_range=np.asarray(time_range),
+                sampling_period=2 * SAMPLING_PERIOD,
+            )
 
         data: dict[str, T2Data] = {}
 
@@ -973,25 +980,42 @@ class CharacterizationMixin(
                         hpi = self.get_hpi_pulse(target)
                         pi = pi_cpmg or hpi.repeated(2).shifted(np.pi / 2)
                         ps.add(target, hpi)
-                        total_blank = T - pi.duration * n_cpmg
-                        if total_blank > 0:
-                            tau = total_blank // (2 * n_cpmg)
-                            ps.add(
-                                target,
-                                CPMG(
-                                    tau=tau,
-                                    pi=pi,
-                                    n=n_cpmg,
-                                ),
-                            )
+                        if n_cpmg is not None:
+                            total_blank = T - pi.duration * n_cpmg
+                            if total_blank > 0:
+                                tau = total_blank // (2 * n_cpmg)
+                                ps.add(
+                                    target,
+                                    CPMG(
+                                        tau=tau,
+                                        pi=pi,
+                                        n=n_cpmg,
+                                    ),
+                                )
+                            else:
+                                ps.add(target, Blank(T))
                         else:
-                            ps.add(target, Blank(T))
+                            tau = pi.duration * 5
+                            cpmg = CPMG(
+                                tau=tau,
+                                pi=pi,
+                                n=2,
+                            )
+                            n_repeats = int(T // cpmg.duration)
+                            remainder = T % cpmg.duration
+                            if n_repeats > 0:
+                                ps.add(target, cpmg.repeated(n_repeats))
+                            if remainder > 0:
+                                ps.add(target, Blank(remainder))
                         ps.add(target, hpi.scaled(-1))
                 return ps
 
             print(
                 f"({idx + 1}/{len(subgroups)}) Conducting T2 experiment for {subgroup}...\n"
             )
+
+            # if plot:
+            #     t2_sequence(time_range[-1]).plot()
 
             sweep_result = self.sweep_parameter(
                 sequence=t2_sequence,
