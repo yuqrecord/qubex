@@ -954,7 +954,7 @@ class CharacterizationMixin(
             )
         time_range = self.util.discretize_time_range(
             time_range=np.asarray(time_range),
-            sampling_period=2 * SAMPLING_PERIOD,
+            sampling_period=2 * SAMPLING_PERIOD * n_cpmg,
         )
 
         data: dict[str, T2Data] = {}
@@ -971,18 +971,22 @@ class CharacterizationMixin(
                 with PulseSchedule(subgroup) as ps:
                     for target in subgroup:
                         hpi = self.get_hpi_pulse(target)
-                        pi = pi_cpmg or hpi.repeated(2)
+                        pi = pi_cpmg or hpi.repeated(2).shifted(np.pi / 2)
                         ps.add(target, hpi)
-                        if T > 0:
+                        total_blank = T - pi.duration * n_cpmg
+                        if total_blank > 0:
+                            tau = total_blank // (2 * n_cpmg)
                             ps.add(
                                 target,
                                 CPMG(
-                                    tau=(T - pi.duration * n_cpmg) // (2 * n_cpmg),
+                                    tau=tau,
                                     pi=pi,
                                     n=n_cpmg,
                                 ),
                             )
-                        ps.add(target, hpi.shifted(np.pi))
+                        else:
+                            ps.add(target, Blank(T))
+                        ps.add(target, hpi.scaled(-1))
                 return ps
 
             print(
@@ -1001,7 +1005,7 @@ class CharacterizationMixin(
                 fit_result = fitting.fit_exp_decay(
                     target=target,
                     x=sweep_data.sweep_range,
-                    y=0.5 * (1 - sweep_data.normalized),
+                    y=0.5 * (1 + sweep_data.normalized),
                     plot=plot,
                     title="T2 echo",
                     xlabel="Time (μs)",
