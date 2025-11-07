@@ -760,7 +760,7 @@ def print_target_frequencies(qubits: Collection[str] | str | None = None) -> Non
                     f"{ffreq * 1e3:.3f}",
                     f"{tfreq * 1e3:.3f}",
                     f"{diff * 1e3:+.3f}",
-                    f"{awg * 1e3:.3f}",
+                    f"{awg * 1e3:+.3f}",
                 ],
             )
         )
