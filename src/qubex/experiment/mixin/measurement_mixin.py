@@ -4920,3 +4920,75 @@ class MeasurementMixin(
                 "figure": fig,
             }
         )
+
+    def rzx_gate_property(
+        self,
+        control_qubit: str,
+        target_qubit: str,
+        *,
+        angle_arr:np.ndarray = np.linspace(np.pi/18,np.pi/2,9),
+        measurement_times:int = 10,
+    ):
+        def cartesian_to_spherical(x, y, z):
+            r = np.sqrt(x**2 + y**2 + z**2)
+            theta = np.arctan2(y, x)/np.pi*180
+            phi = np.arccos(z / r)/np.pi*180 if r != 0 else 0
+            return r, theta, phi
+        
+        result_rzx_angle=[]
+        for angle in tqdm(angle_arr,leave=False):
+            result_mea=[]
+            for i in tqdm(range(measurement_times),leave=False):
+                result = self.state_tomography(self.rzx(
+                    control_qubit=control_qubit,
+                    target_qubit=target_qubit,
+                    angle=angle))
+                r,theta,phi = cartesian_to_spherical(result[target_qubit][0],result[target_qubit][1],result[target_qubit][2])
+                result_mea.append([r,theta,phi])
+            mean = np.mean(np.array(result_mea).T[2])
+            std = np.std(np.array(result_mea).T[2])
+            result_rzx_angle.append([angle,mean,std])
+        
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x = np.array(result_rzx_angle).T[0]*180/np.pi,
+                y = np.array(result_rzx_angle).T[1],
+                error_y=dict(
+                    type='data',
+                    array=np.array(result_rzx_angle).T[2]
+                ),
+                name='Measured'
+            ),
+        )
+        fig.add_trace(
+            go.Scatter(
+                x = [0,95],
+                y = [0,95],
+                mode='lines',
+                line=dict(color='red', dash='dash'),
+                name='Ideal'
+            )
+        )
+        fig.update_layout(
+            title=f'Sweep result : {target_qubit}',
+            xaxis=dict(
+                title = "Angle (deg)",
+                range =(0,95),
+                tickvals=angle_arr*180/np.pi,
+                dtick=5,
+                gridcolor='gray',
+                gridwidth=1,
+                griddash='dot'
+            ),
+            yaxis=dict(
+                title="Z Angle (deg)" ,
+                range=(0,95),
+                tickvals=angle_arr*180/np.pi,
+                dtick=5,
+                gridcolor='gray',
+                gridwidth=1,
+                griddash='dot'
+            )
+        )
+        fig.show()
