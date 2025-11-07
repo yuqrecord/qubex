@@ -88,6 +88,16 @@ class Target(Model):
             raise ValueError("Invalid channel.")
 
     @property
+    def awg_frequency(self) -> float:
+        if isinstance(self.channel, GenChannel):
+            if self.sideband == "L":
+                return self.fine_frequency - self.frequency
+            else:
+                return self.frequency - self.fine_frequency
+        else:
+            raise ValueError("Invalid channel.")
+
+    @property
     def is_available(self) -> bool:
         return abs(self.frequency - self.fine_frequency) < 250 * 1e-3  # 250 MHz
 

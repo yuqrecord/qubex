@@ -731,6 +731,7 @@ def print_target_frequencies(qubits: Collection[str] | str | None = None) -> Non
     table.add_column("F_FINE", justify="right")
     table.add_column("F_TARGET", justify="right")
     table.add_column("F_DIFF", justify="right")
+    table.add_column("F_AWG", justify="right")
 
     rows = []
     for target in targets:
@@ -738,6 +739,7 @@ def print_target_frequencies(qubits: Collection[str] | str | None = None) -> Non
         tfreq = target.frequency
         ffreq = target.fine_frequency
         diff = tfreq - ffreq
+        awg = target.awg_frequency
 
         if target.channel.port.lo_freq is None:
             lo = None
@@ -758,6 +760,7 @@ def print_target_frequencies(qubits: Collection[str] | str | None = None) -> Non
                     f"{ffreq * 1e3:.3f}",
                     f"{tfreq * 1e3:.3f}",
                     f"{diff * 1e3:+.3f}",
+                    f"{awg * 1e3:.3f}",
                 ],
             )
         )
