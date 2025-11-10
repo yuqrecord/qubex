@@ -51,17 +51,16 @@ class ChipInspector:
         )
         experiment_system = config_loader.get_experiment_system(chip_id)
         self.graph = experiment_system.quantum_system._graph
-        props = config_loader._props_dict[chip_id]
 
-        frequency_dict = props.get("qubit_frequency", {})
-        anharmonicity_dict = props.get("anharmonicity", {})
-        t1_dict = props.get("t1", {})
-        t2_echo_dict = props.get("t2_echo", {})
-        coupling_dict = props.get("qubit_qubit_coupling_strength", {})
+        frequency_dict = config_loader._load_param_data("qubit_frequency")
+        anharmonicity_dict = config_loader._load_param_data("qubit_anharmonicity")
+        t1_dict = config_loader._load_param_data("t1")
+        t2_echo_dict = config_loader._load_param_data("t2_echo")
+        coupling_dict = config_loader._load_param_data("qubit_qubit_coupling_strength")
 
         for node in self.graph.qubit_nodes.values():
             label = node["label"]
-            node["properties"] = {
+            node["properties"] = {  # type: ignore
                 "frequency": frequency_dict.get(label),
                 "anharmonicity": anharmonicity_dict.get(label),
                 "t1": t1_dict.get(label),
@@ -70,7 +69,7 @@ class ChipInspector:
 
         for edge in self.graph.qubit_edges.values():
             label = edge["label"]
-            edge["properties"] = {
+            edge["properties"] = {  # type: ignore
                 "coupling": coupling_dict.get(label),
             }
 
