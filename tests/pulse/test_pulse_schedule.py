@@ -121,15 +121,15 @@ def test_detuned():
     assert detuned.values["Q00"] == pytest.approx(
         [
             1,
-            2 * np.exp(1j * 0.001 * 2 * np.pi * dt),
-            3 * np.exp(2j * 0.001 * 2 * np.pi * dt),
+            2 * np.exp(-1j * 0.001 * 2 * np.pi * dt),
+            3 * np.exp(-2j * 0.001 * 2 * np.pi * dt),
         ]
     )
     assert detuned.values["Q01"] == pytest.approx(
         [
             1j,
-            2j * np.exp(1j * 0.001 * 2 * np.pi * dt),
-            3j * np.exp(2j * 0.001 * 2 * np.pi * dt),
+            2j * np.exp(-1j * 0.001 * 2 * np.pi * dt),
+            3j * np.exp(-2j * 0.001 * 2 * np.pi * dt),
         ]
     )
 

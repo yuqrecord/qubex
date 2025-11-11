@@ -428,6 +428,14 @@ class Experiment(
         return self.get_cr_pairs()
 
     @property
+    def edge_pairs(self) -> list[tuple[str, str]]:
+        return self.get_edge_pairs()
+
+    @property
+    def edge_labels(self) -> list[str]:
+        return self.get_edge_labels()
+
+    @property
     def boxes(self) -> dict[str, Box]:
         boxes = self.experiment_system.get_boxes_for_qubits(self.qubit_labels)
         return {box.id: box for box in boxes}
@@ -762,18 +770,21 @@ class Experiment(
         """
         cr_pairs = []
         for label in self.cr_targets:
-            pair = Target.cr_qubit_pair(label)
-            control_qubit = self.quantum_system.get_qubit(pair[0])
-            target_qubit = self.quantum_system.get_qubit(pair[1])
-            if target_qubit.label not in self.available_targets:
+            try:
+                pair = Target.cr_qubit_pair(label)
+                control_qubit = self.quantum_system.get_qubit(pair[0])
+                target_qubit = self.quantum_system.get_qubit(pair[1])
+                if target_qubit.label not in self.available_targets:
+                    continue
+                # if control_qubit.frequency < target_qubit.frequency:
+                if control_qubit.index % 4 in [0, 3]:
+                    if low_to_high:
+                        cr_pairs.append(pair)
+                else:
+                    if high_to_low:
+                        cr_pairs.append(pair)
+            except Exception:
                 continue
-            # if control_qubit.frequency < target_qubit.frequency:
-            if control_qubit.index % 4 in [0, 3]:
-                if low_to_high:
-                    cr_pairs.append(pair)
-            else:
-                if high_to_low:
-                    cr_pairs.append(pair)
         return cr_pairs
 
     def get_cr_labels(
@@ -788,6 +799,28 @@ class Experiment(
             Target.cr_label(*pair)
             for pair in self.get_cr_pairs(low_to_high, high_to_low)
         ]
+
+    def get_edge_pairs(
+        self,
+    ) -> list[tuple[str, str]]:
+        """
+        Get the qubit edge pairs.
+        """
+        edge_pairs = []
+        for qubit in self.qubit_labels:
+            spectators = self.get_spectators(qubit, in_same_mux=True)
+            for spectator in spectators:
+                pair = (qubit, spectator.label)
+                edge_pairs.append(pair)
+        return edge_pairs
+
+    def get_edge_labels(
+        self,
+    ) -> list[str]:
+        """
+        Get the qubit edge labels.
+        """
+        return [f"{pair[0]}-{pair[1]}" for pair in self.get_edge_pairs()]
 
     @staticmethod
     def cr_pair(cr_label: str) -> tuple[str, str]:
@@ -1594,7 +1627,10 @@ class Experiment(
         qubit = Target.qubit_label(target)
         if rabi_amplitude_ratio is None:
             rabi_param = self.rabi_params.get(target)
-            default_amplitude = self.params.get_control_amplitude(qubit)
+            if self.targets[target].type == TargetType.CTRL_EF:
+                default_amplitude = self.params.get_ef_control_amplitude(qubit)
+            else:
+                default_amplitude = self.params.get_control_amplitude(qubit)
 
             if rabi_param is None:
                 raise ValueError(f"Rabi parameters for {target} are not stored.")
@@ -1853,6 +1889,80 @@ class Experiment(
             cr_beta = cr_param["cr_beta"]
         if cancel_amplitude is None:
             cancel_amplitude = cr_param["cancel_amplitude"]
+        if cancel_phase is None:
+            cancel_phase = cr_param["cancel_phase"]
+        if cancel_beta is None:
+            cancel_beta = cr_param["cancel_beta"]
+        if rotary_amplitude is None:
+            rotary_amplitude = cr_param["rotary_amplitude"]
+
+        cancel_pulse = cancel_amplitude * np.exp(1j * cancel_phase) + rotary_amplitude
+
+        return CrossResonance(
+            control_qubit=control_qubit,
+            target_qubit=target_qubit,
+            cr_amplitude=cr_amplitude,
+            cr_duration=cr_duration,
+            cr_ramptime=cr_ramptime,
+            cr_phase=cr_phase,
+            cr_beta=cr_beta,
+            cancel_amplitude=np.abs(cancel_pulse),
+            cancel_phase=np.angle(cancel_pulse),
+            cancel_beta=cancel_beta,
+            echo=echo,
+            pi_pulse=pi_pulse,
+            pi_margin=x180_margin,
+        )
+
+    def rzx(
+        self,
+        control_qubit: str,
+        target_qubit: str,
+        angle: float,
+        *,
+        cr_duration: float | None = None,
+        cr_ramptime: float | None = None,
+        cr_amplitude: float | None = None,
+        cr_phase: float | None = None,
+        cr_beta: float | None = None,
+        cancel_amplitude: float | None = None,
+        cancel_phase: float | None = None,
+        cancel_beta: float | None = None,
+        rotary_amplitude: float | None = None,
+        echo: bool = True,
+        x180: TargetMap[Waveform] | Waveform | None = None,
+        x180_margin: float = 0.0,
+    ) -> PulseSchedule:
+        # Reference angle for RZX gate normalization (half pi)
+        REFERENCE_ANGLE = np.pi / 2
+        coeff_value = angle / REFERENCE_ANGLE
+        cr_label = f"{control_qubit}-{target_qubit}"
+        cr_param = self.calib_note.get_cr_param(
+            cr_label,
+            valid_days=self._calibration_valid_days,
+        )
+        if cr_param is None:
+            raise ValueError(f"CR parameters for {cr_label} are not stored.")
+
+        if x180 is None:
+            pi_pulse = self.x180(control_qubit)
+        elif isinstance(x180, Waveform):
+            pi_pulse = x180
+        else:
+            pi_pulse = x180[control_qubit]
+
+        if cr_amplitude is None:
+            cr_amplitude = cr_param["cr_amplitude"] * coeff_value
+        if cr_duration is None:
+            cr_duration = cr_param["duration"]
+        if cr_ramptime is None:
+            cr_ramptime = cr_param["ramptime"]
+        if cr_phase is None:
+            cr_phase = cr_param["cr_phase"]
+        if cr_beta is None:
+            cr_beta = cr_param["cr_beta"]
+        if cancel_amplitude is None:
+            cancel_amplitude = cr_param["cancel_amplitude"] * coeff_value
         if cancel_phase is None:
             cancel_phase = cr_param["cancel_phase"]
         if cancel_beta is None:

@@ -13,6 +13,9 @@ from numpy.typing import ArrayLike, NDArray
 from ..style import COLORS, get_colors, get_config
 from ..typing import IQArray
 
+DEFAULT_IMAGES_DIR = "./images"
+DEFAULT_TEMPLATE = "qubex"
+
 
 def display_bloch_sphere(bloch_vectors: NDArray[np.float64]):
     qcv.display_bloch_sphere_from_bloch_vectors(bloch_vectors)
@@ -22,18 +25,19 @@ def save_figure_image(
     fig: go.Figure,
     name: str = "image",
     *,
-    images_dir: Path | str = "./images",
+    images_dir: Path | str = DEFAULT_IMAGES_DIR,
     format: Literal["png", "svg", "jpeg", "webp"] = "png",
     width: int | None = None,
     height: int | None = None,
-    scale: int | None = None,
+    scale: int = 3,
 ):
-    width = width or 600
-    height = height or 300
-    scale = scale or 3
-
     if not os.path.exists(images_dir):
         os.makedirs(images_dir)
+
+    if width is None:
+        width = 600
+    if height is None:
+        height = 300
 
     counter = 1
     current_date = datetime.datetime.now().strftime("%Y%m%d")
@@ -71,7 +75,7 @@ def plot(
     ylim: tuple[float, float] | list[float] | None = None,
     width: int = 600,
     height: int = 300,
-    template: str = "qubex",
+    template: str = DEFAULT_TEMPLATE,
     return_figure: bool = False,
     save_image: bool = False,
     **kwargs,
@@ -120,6 +124,14 @@ def plot(
         template=template,
     )
 
+    if save_image:
+        save_figure_image(
+            fig,
+            name="plot",
+            width=width,
+            height=height,
+        )
+
     if return_figure:
         return fig
     else:
@@ -130,12 +142,101 @@ def plot(
                 height=height,
             )
         )
+
+
+def plot_cdf(
+    data: ArrayLike | Mapping,
+    *,
+    xlim: tuple[float, float] | None = None,
+    title: str = "Cumulative distribution",
+    xlabel: str = "Value",
+    ylabel: str = "Cumulative probability",
+    width: int = 600,
+    height: int = 400,
+    template: str = DEFAULT_TEMPLATE,
+    return_figure: bool = False,
+    save_image: bool = False,
+):
+    dataset = {}
+    data_min = float("inf")
+    data_max = float("-inf")
+
+    if not isinstance(data, Mapping):
+        values = np.asarray(data).astype(float)
+        values = values[~np.isnan(values)]
+        values.sort()
+        dataset["data"] = values
+        data_min = np.min(values)
+        data_max = np.max(values)
+    else:
+        for key, values in data.items():
+            values = np.asarray(values).astype(float)
+            values = values[~np.isnan(values)]
+            values.sort()
+            dataset[key] = values
+            data_min = min(data_min, np.min(values))
+            data_max = max(data_max, np.max(values))
+
+    fig = go.Figure()
+
+    for key, values in dataset.items():
+        N = len(values)
+        mean_val = np.mean(values)
+
+        if xlim is None:
+            dx = (data_max - data_min) / 100
+            xlim = (data_min - dx, data_max + dx)
+
+        x = [xlim[0]] + values.tolist() + [xlim[1]]
+        y = [0] + [(i + 1) / N for i in range(N)] + [1]
+
+        fig.add_scatter(
+            x=x,
+            y=y,
+            name=key,
+            mode="lines",
+            line=dict(
+                color=COLORS[0],
+                width=3,
+            ),
+            line_shape="hv",
+        )
+
+        fig.add_vline(
+            x=mean_val,
+            line_width=2,
+            line_dash="dash",
+            line_color="lightgrey",
+            layer="below",
+        )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=xlabel,
+        yaxis_title=ylabel,
+        yaxis=dict(range=[0, 1]),
+        width=width,
+        height=height,
+        template=template,
+    )
+
     if save_image:
         save_figure_image(
             fig,
-            name="plot",
+            name="plot_cdf",
             width=width,
             height=height,
+        )
+
+    if return_figure:
+        return fig
+    else:
+        fig.show(
+            config=get_config(
+                filename="plot_cdf",
+                width=width,
+                height=height,
+            )
         )
 
 
@@ -151,7 +252,7 @@ def plot_fft(
     ylim: tuple[float, float] | list[float] | None = None,
     width: int = 600,
     height: int = 300,
-    template: str = "qubex",
+    template: str = DEFAULT_TEMPLATE,
     return_figure: bool = False,
     save_image: bool = False,
     **kwargs,
@@ -173,6 +274,15 @@ def plot_fft(
         height=height,
         template=template,
     )
+
+    if save_image:
+        save_figure_image(
+            fig,
+            name="plot_fft",
+            width=width,
+            height=height,
+        )
+
     if return_figure:
         return fig
     else:
@@ -182,13 +292,6 @@ def plot_fft(
                 width=width,
                 height=height,
             )
-        )
-    if save_image:
-        save_figure_image(
-            fig,
-            name="plot_fft",
-            width=width,
-            height=height,
         )
 
 
@@ -202,7 +305,7 @@ def plot_bloch_vectors(
     ylabel: str = "Expectation value",
     width: int = 600,
     height: int = 300,
-    template: str = "qubex",
+    template: str = DEFAULT_TEMPLATE,
     return_figure: bool = False,
     save_image: bool = False,
 ):
@@ -243,6 +346,15 @@ def plot_bloch_vectors(
         height=height,
         template=template,
     )
+
+    if save_image:
+        save_figure_image(
+            fig,
+            name="plot_bloch_vectors",
+            width=width,
+            height=height,
+        )
+
     if return_figure:
         return fig
     else:
@@ -252,13 +364,6 @@ def plot_bloch_vectors(
                 width=width,
                 height=height,
             )
-        )
-    if save_image:
-        save_figure_image(
-            fig,
-            name="plot_bloch_vectors",
-            width=width,
-            height=height,
         )
 
 
@@ -272,7 +377,7 @@ def plot_waveform(
     ylabel: str = "Signal (arb. units)",
     width: int = 600,
     height: int = 300,
-    template: str = "qubex",
+    template: str = DEFAULT_TEMPLATE,
     return_figure: bool = False,
     save_image: bool = False,
 ):
@@ -301,6 +406,15 @@ def plot_waveform(
         height=height,
         template=template,
     )
+
+    if save_image:
+        save_figure_image(
+            fig,
+            name="plot_waveform",
+            width=width,
+            height=height,
+        )
+
     if return_figure:
         return fig
     else:
@@ -310,13 +424,6 @@ def plot_waveform(
                 width=width,
                 height=height,
             )
-        )
-    if save_image:
-        save_figure_image(
-            fig,
-            name="plot_waveform",
-            width=width,
-            height=height,
         )
 
 
@@ -330,7 +437,7 @@ def scatter_iq_data(
     width: int = 500,
     height: int = 400,
     text: Collection[str] | None = None,
-    template: str = "qubex",
+    template: str = DEFAULT_TEMPLATE,
     return_figure: bool = False,
     save_image: bool = False,
 ):
@@ -385,6 +492,15 @@ def scatter_iq_data(
             showgrid=True,
         ),
     )
+
+    if save_image:
+        save_figure_image(
+            fig,
+            name="plot_state_distribution",
+            width=width,
+            height=height,
+        )
+
     if return_figure:
         return fig
     else:
@@ -394,11 +510,4 @@ def scatter_iq_data(
                 width=width,
                 height=height,
             )
-        )
-    if save_image:
-        save_figure_image(
-            fig,
-            name="plot_state_distribution",
-            width=width,
-            height=height,
         )

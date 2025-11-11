@@ -3,18 +3,25 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Final, Literal, Optional
+from typing import Final, Literal, Optional, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 import plotly.graph_objects as go
 import qctrlvisualizer as qv
 import qutip as qt
+import qutip.typing as qtt
 from scipy.interpolate import interp1d
 
 from ..analysis.visualization import plot_bloch_vectors
 from ..pulse import PulseSchedule, Waveform
 from .quantum_system import Object, QuantumSystem
+
+TIME_STEP = 0.1  # ns
+
+
+FrameType: TypeAlias = Literal["qubit", "drive"]
+SubspaceType: TypeAlias = Literal["ge", "ef", "gf"]
 
 
 class Control:
@@ -88,7 +95,8 @@ class Control:
             x=self.times,
             y=self.values,
             kind=self.interpolation,
-            fill_value="extrapolate",  # type: ignore
+            bounds_error=False,
+            fill_value=(self.values[0], self.values[-1]),  # type: ignore
         )
 
     def get_samples(
@@ -150,6 +158,29 @@ class Control:
 
 
 @dataclass
+class SimulationModel:
+    """
+    The simulation model for QuTip solvers.
+
+    Attributes
+    ----------
+    hamiltonian : qtt.QobjEvoLike
+        The Hamiltonian of the quantum system.
+    initial_state : qt.Qobj
+        The initial state of the quantum system.
+    times : npt.NDArray
+        The time points of the simulation.
+    collapse_operators : qt.Qobj | qt.QobjEvo | list[qtt.QobjEvoLike]
+        The collapse operators of the quantum system.
+    """
+
+    hamiltonian: qtt.QobjEvoLike
+    initial_state: qt.Qobj
+    times: npt.NDArray
+    collapse_operators: qt.Qobj | qt.QobjEvo | list[qtt.QobjEvoLike]
+
+
+@dataclass
 class SimulationResult:
     """
     The result of a simulation.
@@ -158,30 +189,52 @@ class SimulationResult:
     ----------
     system : QuantumSystem
         The quantum system.
-    times : npt.NDArray
-        The time points of the simulation.
     controls : list[Control]
         The control signals.
+    times : npt.NDArray
+        The time points of the simulation.
     states : npt.NDArray
         The states of the quantum system at each time point.
     unitaries : npt.NDArray
         The unitaries of the quantum system at each time point.
+    model : SimulationModel | None
+        The simulation model used for QuTip solvers.
     """
 
     system: QuantumSystem
-    times: npt.NDArray
     controls: list[Control]
+    times: npt.NDArray
     states: npt.NDArray
     unitaries: npt.NDArray
+    model: SimulationModel | None = None
 
     @cached_property
     def control_frequencies(self) -> dict[str, float]:
         return {control.target: control.frequency for control in self.controls}
 
+    @property
+    def initial_state(self) -> qt.Qobj:
+        return self.states[0]
+
+    @property
+    def final_state(self) -> qt.Qobj:
+        return self.states[-1]
+
+    def _get_subspace_slice(self, subspace: SubspaceType) -> slice:
+        subspaces = {
+            "ge": slice(0, 2),
+            "ef": slice(1, 3),
+            "gf": slice(0, 3),
+        }
+        if subspace not in subspaces:
+            return slice(0, None)
+        else:
+            return subspaces[subspace]
+
     def get_substates(
         self,
         label: str,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
     ) -> npt.NDArray:
         """
         Extract the substates of a qubit from the states.
@@ -195,7 +248,7 @@ class SimulationResult:
         -------
         list[qt.Qobj]
             The substates of the qubit.
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default "qubit"
         """
         if frame is None:
@@ -220,6 +273,50 @@ class SimulationResult:
 
         return substates
 
+    def get_initial_substate(
+        self,
+        label: str,
+        frame: FrameType | None = None,
+    ) -> qt.Qobj:
+        """
+        Extract the initial substate of a qubit from the states.
+
+        Parameters
+        ----------
+        label : str
+            The label of the qubit.
+        frame : FrameType | None, optional
+            The frame of the substates, by default "qubit"
+
+        Returns
+        -------
+        qt.Qobj
+            The initial substate of the qubit.
+        """
+        return self.get_substates(label, frame=frame)[0]
+
+    def get_final_substate(
+        self,
+        label: str,
+        frame: FrameType | None = None,
+    ) -> qt.Qobj:
+        """
+        Extract the final substate of a qubit from the states.
+
+        Parameters
+        ----------
+        label : str
+            The label of the qubit.
+        frame : FrameType | None, optional
+            The frame of the substates, by default "qubit"
+
+        Returns
+        -------
+        qt.Qobj
+            The final substate of the qubit.
+        """
+        return self.get_substates(label, frame=frame)[-1]
+
     def get_times(
         self,
         *,
@@ -241,7 +338,8 @@ class SimulationResult:
         label: str,
         *,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> npt.NDArray:
         """
         Extract the block vectors of a qubit from the states.
@@ -252,7 +350,7 @@ class SimulationResult:
             The label of the qubit.
         n_samples : int | None, optional
             The number of samples to return, by default None
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default None
 
         Returns
@@ -265,8 +363,9 @@ class SimulationResult:
         Z = qt.sigmaz()
         substates = self.get_substates(label, frame=frame)
         buffer = []
+        level = self._get_subspace_slice(subspace)
         for substate in substates:
-            rho = qt.Qobj(substate.full()[:2, :2])
+            rho = qt.Qobj(substate.full()[level, level])
             x = qt.expect(X, rho)
             y = qt.expect(Y, rho)
             z = qt.expect(Z, rho)
@@ -279,9 +378,9 @@ class SimulationResult:
         self,
         label: str,
         *,
-        dim: int = 2,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> npt.NDArray:
         """
         Extract the density matrices of a qubit from the states.
@@ -294,7 +393,7 @@ class SimulationResult:
             The dimension of the qubit, by default 2
         n_samples : int | None, optional
             The number of samples to return, by default None
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default None
 
         Returns
@@ -303,7 +402,8 @@ class SimulationResult:
             The density matrices of the qubit.
         """
         substates = self.get_substates(label, frame=frame)
-        rho = np.array([substate.full() for substate in substates])[:, :dim, :dim]
+        level = self._get_subspace_slice(subspace)
+        rho = np.array([substate.full() for substate in substates])[:, level, level]
         rho = downsample(rho, n_samples)
         return rho
 
@@ -312,12 +412,14 @@ class SimulationResult:
         label: str,
         *,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> None:
         vectors = self.get_bloch_vectors(
             label,
             n_samples=n_samples,
             frame=frame,
+            subspace=subspace,
         )
         times = self.get_times(
             n_samples=n_samples,
@@ -334,7 +436,8 @@ class SimulationResult:
         label: str,
         *,
         n_samples: int | None = None,
-        frame: Literal["qubit", "drive"] | None = None,
+        frame: FrameType | None = None,
+        subspace: SubspaceType = "ge",
     ) -> None:
         """
         Display the Bloch sphere of a qubit.
@@ -345,13 +448,14 @@ class SimulationResult:
             The label of the qubit.
         n_samples : int | None, optional
             The number of samples to return, by default None
-        frame : Literal["qubit", "drive"] | None, optional
+        frame : FrameType | None, optional
             The frame of the substates, by default None
         """
         rho = self.get_density_matrices(
             label,
             n_samples=n_samples,
             frame=frame,
+            subspace=subspace,
         )
         qv.display_bloch_sphere_from_density_matrices(rho)
 
@@ -450,7 +554,7 @@ class QuantumSimulator:
         self,
         controls: list[Control] | PulseSchedule,
         initial_state: qt.Qobj | dict | None = None,
-        dt: float = 0.1,
+        dt: float = TIME_STEP,
         n_samples: int | None = None,
     ) -> SimulationResult:
         """
@@ -463,7 +567,7 @@ class QuantumSimulator:
         initial_state : qt.Qobj | dict | None, optional
             The initial state of the quantum system, by default None
         dt : float, optional
-            The time step of the simulation, by default 0.1
+            The time step of the simulation, by default TIME_STEP
         n_samples : int | None, optional
             The number of samples to return, by default None
 
@@ -492,8 +596,8 @@ class QuantumSimulator:
         if control.n_segments == 0:
             return SimulationResult(
                 system=self.system,
-                times=times,
                 controls=controls,
+                times=times,
                 states=np.array([initial_state]),
                 unitaries=np.array([self.system.identity_matrix]),
             )
@@ -514,11 +618,11 @@ class QuantumSimulator:
                 gamma = Omega * np.exp(-1j * delta * t)  # continuous
                 H_ctrl = gamma * ad + np.conj(gamma) * a
                 H += H_ctrl
-            U = (-1j * H * dt).expm() * U_list[-1]
+            U = (-1j * H * dt).expm() @ U_list[-1]
             U_list.append(U)
 
         rho0 = qt.ket2dm(initial_state)
-        states = np.array([U * rho0 * U.dag() for U in U_list])
+        states = np.array([U @ rho0 @ U.dag() for U in U_list])
         unitaries = np.array(U_list)
 
         if n_samples is not None:
@@ -528,8 +632,8 @@ class QuantumSimulator:
 
         return SimulationResult(
             system=self.system,
-            times=times,
             controls=controls,
+            times=times,
             states=states,
             unitaries=unitaries,
         )
@@ -538,7 +642,7 @@ class QuantumSimulator:
         self,
         controls: list[Control] | PulseSchedule,
         initial_state: qt.Qobj | dict | None = None,
-        dt: float = 0.1,
+        dt: float | None = None,
         n_samples: int | None = None,
     ) -> SimulationResult:
         """
@@ -551,7 +655,7 @@ class QuantumSimulator:
         initial_state : qt.Qobj | dict | None, optional
             The initial state of the quantum system, by default None
         dt : float, optional
-            The time step of the simulation, by default 0.1
+            The time step of the simulation.
         n_samples : int | None, optional
             The number of samples to return, by default None
 
@@ -560,31 +664,105 @@ class QuantumSimulator:
         SimulationResult
             The result of the simulation.
         """
-        if not isinstance(initial_state, qt.Qobj):
-            initial_state = self.system.state(initial_state)
-        if initial_state.dims[0] != self.system.object_dimensions:
-            raise ValueError("The dims of the initial state do not match the system.")
+        if isinstance(controls, PulseSchedule):
+            controls = self._convert_pulse_schedule_to_controls(controls)
+        self._validate_controls(controls)
+
+        model = self.create_simulation_model(
+            controls=controls,
+            initial_state=initial_state,
+            dt=dt,
+        )
+
+        hamiltonian = model.hamiltonian
+        initial_state = model.initial_state
+        times = model.times
+        collapse_operators = model.collapse_operators
+
+        # Run the simulation
+        result = qt.mesolve(
+            H=hamiltonian,
+            rho0=initial_state,
+            tlist=times,
+            c_ops=collapse_operators,
+        )
+
+        states = np.array(result.states)
+
+        if n_samples is not None:
+            times = downsample(times, n_samples)
+            states = downsample(states, n_samples)
+
+        return SimulationResult(
+            system=self.system,
+            controls=controls,
+            times=times,
+            states=states,
+            unitaries=np.array([]),
+            model=model,
+        )
+
+    def propagator(
+        self,
+        controls: list[Control] | PulseSchedule,
+        dt: float | None = None,
+        options: dict | None = None,
+    ) -> qt.Qobj:
+        if options is None:
+            options = {
+                "nsteps": 200000,
+                "rtol": 1e-7,
+                "atol": 1e-9,
+                "method": "bdf",
+            }
+
+        params = self.create_simulation_parameters(
+            controls=controls,
+            dt=dt,
+        )
+
+        # Run the simulation
+        return qt.propagator(
+            H=params["hamiltonian"],
+            tlist=params["times"],
+            c_ops=params["collapse_operators"],
+            t=params["times"][-1],
+            options=options,
+        )  # type: ignore
+
+    def gate_fidelity(
+        self,
+        target_unitary: qt.Qobj,
+        controls: list[Control] | PulseSchedule,
+        dt: float | None = None,
+        options: dict | None = None,
+    ) -> float:
+        superop = self.propagator(
+            controls=controls,
+            dt=dt,
+            options=options,
+        )
+        superop_truncated = self.system.truncate_superoperator(superop)
+        return qt.average_gate_fidelity(
+            superop_truncated,
+            target_unitary,
+        )
+
+    def create_simulation_parameters(
+        self,
+        controls: list[Control] | PulseSchedule,
+        dt: float | None = None,
+    ) -> dict:
+        if dt is None:
+            dt = TIME_STEP
 
         if isinstance(controls, PulseSchedule):
             controls = self._convert_pulse_schedule_to_controls(controls)
-
         self._validate_controls(controls)
 
-        if initial_state is None:
-            initial_state = self.system.ground_state
-
         control = controls[0]
-        N = int(control.duration / dt)
-        times = np.linspace(0, control.duration, N + 1)
-
-        if control.n_segments == 0:
-            return SimulationResult(
-                system=self.system,
-                times=times,
-                controls=controls,
-                states=np.array([initial_state]),
-                unitaries=np.array([self.system.identity_matrix]),
-            )
+        n_steps = int(control.duration / dt)
+        times = np.linspace(0, control.duration, n_steps + 1)
 
         static_hamiltonian = self.system.zero_matrix
         coupling_hamiltonian: list = []
@@ -599,7 +777,7 @@ class QuantumSimulator:
         for coupling in self.system.couplings:
             ad_0 = self.system.get_raising_operator(coupling.pair[0])
             a_1 = self.system.get_lowering_operator(coupling.pair[1])
-            op = ad_0 * a_1
+            op = ad_0 @ a_1
             g = 2 * np.pi * coupling.strength
             Delta = self.system.get_coupling_detuning(coupling.label)
             coeffs = g * np.exp(-1j * Delta * times)  # continuous
@@ -620,37 +798,46 @@ class QuantumSimulator:
             control_hamiltonian.append([a, np.conj(gamma)])
 
         # Total Hamiltonian
-        H = [static_hamiltonian] + coupling_hamiltonian + control_hamiltonian
+        hamiltonian = [static_hamiltonian] + coupling_hamiltonian + control_hamiltonian
 
         # Add collapse operators
         for object in self.system.objects:
             a = self.system.get_lowering_operator(object.label)
-            N = self.system.get_number_operator(object.label)
+            n_steps = self.system.get_number_operator(object.label)
             relaxation_operator = np.sqrt(object.relaxation_rate) * a
-            dephasing_operator = np.sqrt(object.dephasing_rate) * N
+            dephasing_operator = np.sqrt(object.dephasing_rate) * n_steps
             collapse_operators.append(relaxation_operator)
             collapse_operators.append(dephasing_operator)
 
-        # Run the simulation
-        result = qt.mesolve(
-            H=H,
-            rho0=initial_state,
-            tlist=times,
-            c_ops=collapse_operators,
+        return {
+            "times": times,
+            "hamiltonian": hamiltonian,
+            "collapse_operators": collapse_operators,
+        }
+
+    def create_simulation_model(
+        self,
+        controls: list[Control] | PulseSchedule,
+        initial_state: qt.Qobj | dict | None = None,
+        dt: float | None = None,
+    ) -> SimulationModel:
+        if initial_state is None:
+            initial_state = self.system.ground_state
+        if not isinstance(initial_state, qt.Qobj):
+            initial_state = self.system.state(initial_state)
+        if initial_state.dims[0] != self.system.object_dimensions:
+            raise ValueError("The dims of the initial state do not match the system.")
+
+        params = self.create_simulation_parameters(
+            controls=controls,
+            dt=dt,
         )
 
-        states = np.array(result.states)
-
-        if n_samples is not None:
-            times = downsample(times, n_samples)
-            states = downsample(states, n_samples)
-
-        return SimulationResult(
-            system=self.system,
-            times=times,
-            controls=controls,
-            states=states,
-            unitaries=np.array([]),
+        return SimulationModel(
+            hamiltonian=params["hamiltonian"],
+            initial_state=initial_state,
+            times=params["times"],
+            collapse_operators=params["collapse_operators"],
         )
 
     @staticmethod

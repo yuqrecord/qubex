@@ -119,7 +119,7 @@ class SequencerMod(Sequencer):
         #     gseq.padding += first_padding
 
         interval = self.interval if self.interval is not None else 10240
-        cap_e7_settings: dict[tuple[str, int, int], CaptureParam] = (
+        cap_e7_settings: dict[tuple[str, Quel1PortType, int], CaptureParam] = (
             Converter.convert_to_cap_device_specific_sequence(
                 gen_sampled_sequence=self.gen_sampled_sequence,
                 cap_sampled_sequence=self.cap_sampled_sequence,
@@ -132,6 +132,9 @@ class SequencerMod(Sequencer):
                 dsp_demodulation=self.dsp_demodulation,
                 software_demodulation=self.software_demodulation,
                 enable_sum=self.enable_sum,
+                enable_classification=self.enable_classification,
+                line_param0=self.line_param0,
+                line_param1=self.line_param1,
             )
         )
         # phase_offset_list_by_target = {

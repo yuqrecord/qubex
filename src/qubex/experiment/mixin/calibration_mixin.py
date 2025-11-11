@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from numpy.typing import ArrayLike, NDArray
 from plotly.subplots import make_subplots
 
-from ...analysis import fitting, util
+from ...analysis import FitResult, fitting, util
 from ...analysis import visualization as viz
 from ...backend import SAMPLING_PERIOD, Target
 from ...measurement.measurement import DEFAULT_INTERVAL, DEFAULT_SHOTS
@@ -35,6 +35,7 @@ from ..experiment_constants import (
 )
 from ..experiment_result import AmplCalibData, ExperimentResult
 from ..protocol import BaseProtocol, CalibrationProtocol, MeasurementProtocol
+from ..result import Result
 
 
 class CalibrationMixin(
@@ -424,7 +425,7 @@ class CalibrationMixin(
         plot: bool = True,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-    ) -> dict[str, dict]:
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -435,7 +436,7 @@ class CalibrationMixin(
         rabi_params = self.rabi_params
         self.validate_rabi_params(rabi_params)
 
-        def calibrate(target: str) -> dict:
+        def calibrate(target: str) -> FitResult:
             # hpi
             if pulse_type == "hpi":
                 hpi_param = self.calib_note.get_drag_hpi_param(target)
@@ -556,11 +557,11 @@ class CalibrationMixin(
 
             return fit_result
 
-        result: dict[str, dict] = {}
+        result: dict[str, FitResult] = {}
         for target in targets:
             result[target] = calibrate(target)
 
-        return result
+        return Result(data=result)
 
     def calibrate_drag_beta(
         self,
@@ -575,7 +576,7 @@ class CalibrationMixin(
         plot: bool = True,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-    ) -> dict[str, float]:
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -704,7 +705,7 @@ class CalibrationMixin(
         for target in targets:
             result[target] = calibrate(target)
 
-        return result
+        return Result(data=result)
 
     def calibrate_drag_hpi_pulse(
         self,
@@ -724,7 +725,7 @@ class CalibrationMixin(
         plot: bool = True,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-    ) -> dict:
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -785,10 +786,12 @@ class CalibrationMixin(
                     for target in targets
                 }
 
-        return {
-            "amplitude": amplitude,
-            "beta": beta,
-        }
+        return Result(
+            data={
+                "amplitude": amplitude,
+                "beta": beta,
+            }
+        )
 
     def calibrate_drag_pi_pulse(
         self,
@@ -808,7 +811,7 @@ class CalibrationMixin(
         plot: bool = True,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-    ) -> dict:
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -869,10 +872,12 @@ class CalibrationMixin(
                     for target in targets
                 }
 
-        return {
-            "amplitude": amplitude,
-            "beta": beta,
-        }
+        return Result(
+            data={
+                "amplitude": amplitude,
+                "beta": beta,
+            }
+        )
 
     def measure_cr_dynamics(
         self,
@@ -900,7 +905,7 @@ class CalibrationMixin(
         interval: float = DEFAULT_INTERVAL,
         reset_awg_and_capunits: bool = True,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         cr_label = f"{control_qubit}-{target_qubit}"
         if time_range is None:
             time_range = np.array(DEFAULT_CR_TIME_RANGE, dtype=float)
@@ -987,19 +992,21 @@ class CalibrationMixin(
             fit_result["fig3d"].show()
             viz.display_bloch_sphere(target_states)
 
-        return {
-            "time_range": time_range,
-            "effective_drive_range": effective_drive_range,
-            "control_states": control_states,
-            "target_states": target_states,
-            "fit_result": fit_result,
-            "cr_amplitude": cr_amplitude,
-            "ramptime": ramptime,
-        }
+        return Result(
+            data={
+                "time_range": time_range,
+                "effective_drive_range": effective_drive_range,
+                "control_states": control_states,
+                "target_states": target_states,
+                "fit_result": fit_result,
+                "cr_amplitude": cr_amplitude,
+                "ramptime": ramptime,
+            }
+        )
 
     def _ramptime(self, control_qubit: str, target_qubit: str) -> float:
         f_ge_control = self.qubits[control_qubit].frequency
-        f_ef_target = self.qubits[target_qubit].ef_frequency
+        f_ef_target = self.qubits[target_qubit].control_frequency_ef
 
         if f_ge_control < f_ef_target:
             return DEFAULT_CR_RAMPTIME
@@ -1037,7 +1044,7 @@ class CalibrationMixin(
         interval: float = DEFAULT_INTERVAL,
         reset_awg_and_capunits: bool = True,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         cr_label = f"{control_qubit}-{target_qubit}"
 
         if cr_amplitude is None:
@@ -1355,23 +1362,25 @@ class CalibrationMixin(
 
             print(f"Estimated ZX90 gate length : {zx90_duration:.1f} ns")
 
-        return {
-            "Omega": Omega,
-            "coeffs": coeffs,
-            "cr_rotation_amplitude": cr_rotation_amplitude,
-            "cr_rotation_amplitude_hw": cr_rotation_amplitude_hw,
-            "cr_rotation_phase": cr_rotation_phase,
-            "xt_rotation_amplitude": xt_rotation_amplitude,
-            "xt_rotation_amplitude_hw": xt_rotation_amplitude_hw,
-            "xt_rotation_phase": xt_rotation_phase,
-            "cr_drive_amplitude": cr_rabi_rate,
-            "cr_drive_amplitude_hw": cr_amplitude,
-            "zx90_duration": zx90_duration,
-            "result_0": result_0,
-            "result_1": result_1,
-            "fig_c": fig_c,
-            "fig_t": fig_t,
-        }
+        return Result(
+            data={
+                "Omega": Omega,
+                "coeffs": coeffs,
+                "cr_rotation_amplitude": cr_rotation_amplitude,
+                "cr_rotation_amplitude_hw": cr_rotation_amplitude_hw,
+                "cr_rotation_phase": cr_rotation_phase,
+                "xt_rotation_amplitude": xt_rotation_amplitude,
+                "xt_rotation_amplitude_hw": xt_rotation_amplitude_hw,
+                "xt_rotation_phase": xt_rotation_phase,
+                "cr_drive_amplitude": cr_rabi_rate,
+                "cr_drive_amplitude_hw": cr_amplitude,
+                "zx90_duration": zx90_duration,
+                "result_0": result_0,
+                "result_1": result_1,
+                "fig_c": fig_c,
+                "fig_t": fig_t,
+            }
+        )
 
     def update_cr_params(
         self,
@@ -1392,7 +1401,7 @@ class CalibrationMixin(
         interval: float = DEFAULT_INTERVAL,
         reset_awg_and_capunits: bool = True,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         if ramptime is None:
             ramptime = self._ramptime(control_qubit, target_qubit)
         if cr_amplitude is None:
@@ -1487,10 +1496,12 @@ class CalibrationMixin(
             },
         )
 
-        return {
-            **result,
-            "cr_param": self.calib_note.cr_params[cr_label],
-        }
+        return Result(
+            data={
+                **result,
+                "cr_param": self.calib_note.cr_params[cr_label],
+            }
+        )
 
     def obtain_cr_params(
         self,
@@ -1514,7 +1525,7 @@ class CalibrationMixin(
         interval: float = DEFAULT_INTERVAL,
         reset_awg_and_capunits: bool = True,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         if ramptime is None:
             ramptime = self._ramptime(control_qubit, target_qubit)
         if adiabatic_safe_factor is None:
@@ -1646,10 +1657,12 @@ class CalibrationMixin(
         if plot:
             fig.show()
 
-        return {
-            "params_history": params_history,
-            "coeffs_history": hamiltonian_coeffs,
-        }
+        return Result(
+            data={
+                "params_history": params_history,
+                "coeffs_history": hamiltonian_coeffs,
+            }
+        )
 
     def calibrate_zx90(
         self,
@@ -1675,7 +1688,7 @@ class CalibrationMixin(
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         if ramptime is None:
             ramptime = self._ramptime(control_qubit, target_qubit)
         if adiabatic_safe_factor is None:
@@ -1949,50 +1962,53 @@ class CalibrationMixin(
                 show_physical_pulse=True,
             )
 
-        return {
-            "amplitude_range": amplitude_range,
-            "signal": signal,
-            **fit_result,
-            "n1": {
-                "signal": signal_n1,
-                **fit_result_n1,
-            },
-            "n3": {
-                "signal": signal_n3,
-                **fit_result_n3,
-            },
-            "coherence_limit": coherence_limit,
-        }
+        return Result(
+            data={
+                "amplitude_range": amplitude_range,
+                "signal": signal,
+                **fit_result,
+                "n1": {
+                    "signal": signal_n1,
+                    **fit_result_n1,
+                },
+                "n3": {
+                    "signal": signal_n3,
+                    **fit_result_n3,
+                },
+                "coherence_limit": coherence_limit,
+            }
+        )
 
     def calc_zx90_coherence_limit(
         self,
         control_qubit: str,
         target_qubit: str,
-    ) -> dict:
+    ) -> Result:
         zx90 = self.zx90(
             control_qubit=control_qubit,
             target_qubit=target_qubit,
         )
         gate_time = zx90.duration
-        props_dict = self.system_manager.config_loader._props_dict[self.chip_id]
-        t1_dict = props_dict["t1"]
-        t2_dict = props_dict["t2_echo"]
+        t1_dict = self.system_manager.config_loader._load_param_data("t1")
+        t2_dict = self.system_manager.config_loader._load_param_data("t2_echo")
         t1 = (t1_dict[control_qubit], t1_dict[target_qubit])
         t2 = (t2_dict[control_qubit], t2_dict[target_qubit])
-        return {
-            "control_qubit": control_qubit,
-            "target_qubit": target_qubit,
-            "gate_time": gate_time,
-            "t1_control": t1[0],
-            "t1_target": t1[1],
-            "t2_control": t2[0],
-            "t2_target": t2[1],
-            **util.calc_2q_gate_coherence_limit(
-                gate_time=gate_time,
-                t1=t1,
-                t2=t2,
-            ),
-        }
+        return Result(
+            data={
+                "control_qubit": control_qubit,
+                "target_qubit": target_qubit,
+                "gate_time": gate_time,
+                "t1_control": t1[0],
+                "t1_target": t1[1],
+                "t2_control": t2[0],
+                "t2_target": t2[1],
+                **util.calc_2q_gate_coherence_limit(
+                    gate_time=gate_time,
+                    t1=t1,
+                    t2=t2,
+                ),
+            }
+        )
 
     def calibrate_1q(
         self,
@@ -2001,7 +2017,8 @@ class CalibrationMixin(
         shots: int = CALIBRATION_SHOTS,
         interval: int = DEFAULT_INTERVAL,
         plot: bool = True,
-    ) -> dict:
+        coarse: bool = False,
+    ) -> Result:
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -2041,21 +2058,22 @@ class CalibrationMixin(
                 )
                 data["calibrate_hpi_pulse"][target] = result.data[target]
 
-                result = self.calibrate_drag_hpi_pulse(
-                    target,
-                    shots=shots,
-                    interval=interval,
-                    plot=plot,
-                )
-                data["calibrate_drag_hpi_pulse"][target] = result
+                if not coarse:
+                    result = self.calibrate_drag_hpi_pulse(
+                        target,
+                        shots=shots,
+                        interval=interval,
+                        plot=plot,
+                    )
+                    data["calibrate_drag_hpi_pulse"][target] = result
 
-                result = self.calibrate_drag_pi_pulse(
-                    target,
-                    shots=shots,
-                    interval=interval,
-                    plot=plot,
-                )
-                data["calibrate_drag_pi_pulse"][target] = result
+                    result = self.calibrate_drag_pi_pulse(
+                        target,
+                        shots=shots,
+                        interval=interval,
+                        plot=plot,
+                    )
+                    data["calibrate_drag_pi_pulse"][target] = result
 
                 result = self.build_classifier(
                     target,
@@ -2070,7 +2088,7 @@ class CalibrationMixin(
                 print(f"Error calibrating 1Q gates for {targets}: {e}")
                 continue
 
-        return data
+        return Result(data=data)
 
     def calibrate_2q(
         self,
@@ -2080,7 +2098,7 @@ class CalibrationMixin(
         shots: int = CALIBRATION_SHOTS,
         interval: int = DEFAULT_INTERVAL,
         plot: bool = True,
-    ) -> dict:
+    ) -> Result:
         if targets is None:
             targets = self.cr_labels
         elif isinstance(targets, str):
@@ -2143,4 +2161,71 @@ class CalibrationMixin(
                 print(f"Error calibrating {cr_label}: {e}")
                 continue
 
-        return data
+        return Result(data=data)
+
+    def calibrate_1q_ef(
+        self,
+        targets: Collection[str] | str | None = None,
+        *,
+        shots: int = CALIBRATION_SHOTS,
+        interval: int = DEFAULT_INTERVAL,
+        plot: bool = True,
+    ) -> Result:
+        if targets is None:
+            targets = self.qubit_labels
+        elif isinstance(targets, str):
+            targets = [targets]
+        else:
+            targets = list(targets)
+
+        return_data = {
+            "obtain_ef_rabi_params": {},
+            "calibrate_ef_hpi_pulse": {},
+            "build_classifier": {},
+        }
+
+        for target in targets:
+            try:
+                result = self.obtain_ef_rabi_params(
+                    target,
+                    shots=shots,
+                    interval=interval,
+                    plot=plot,
+                )
+                data = next(iter(result.data.values()))
+                rabi_param = data.rabi_param
+                if rabi_param.r2 < 0.9:
+                    print(f"Warning: R² for {target} is low ({rabi_param.r2:.2f}).")
+                elif rabi_param.r2 < 0.5:
+                    print(f"Error: R² for {target} is very low ({rabi_param.r2:.2f}).")
+                    continue
+                return_data["obtain_ef_rabi_params"][target] = data
+
+                result = self.calibrate_ef_hpi_pulse(
+                    target,
+                    shots=shots,
+                    interval=interval,
+                    plot=plot,
+                )
+                data = next(iter(result.data.values()))
+                return_data["calibrate_ef_hpi_pulse"][target] = data
+
+                self.save_calib_note()
+
+                result = self.build_classifier(
+                    target,
+                    shots=shots * 4,
+                    n_states=3,
+                    interval=interval,
+                    plot=plot,
+                )
+                data = next(iter(result.values()))
+                return_data["build_classifier"][target] = data
+
+                self.save_calib_note()
+
+            except Exception as e:
+                print(f"Error calibrating ef gates for {targets}: {e}")
+                continue
+
+        return Result(data=return_data)

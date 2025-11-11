@@ -44,10 +44,11 @@ class IQPlotter:
             ),
             showlegend=True,
         )
+        self._max_val_center = 0.0
 
-        if state_centers is not None:
+        if len(self._state_centers) > 0:
             colors = get_colors(alpha=0.1)
-            for idx, (label, centers) in enumerate(state_centers.items()):
+            for idx, (label, centers) in enumerate(self._state_centers.items()):
                 color = colors[idx % len(colors)]
                 center_values = list(centers.values())
                 x = np.real(center_values)
@@ -76,6 +77,14 @@ class IQPlotter:
                     )
                 )
 
+            self._max_val_center = np.max(
+                [
+                    np.max([np.abs(center) for center in centers.values()])
+                    for centers in self._state_centers.values()
+                ],
+                initial=0.0,
+            )
+
     def update(self, data: TargetMap[IQArray]):
         if self._num_scatters == -1:
             display(self._output)
@@ -97,6 +106,7 @@ class IQPlotter:
             raise ValueError("Number of scatters does not match")
 
         max_val = np.max([np.max(np.abs(data[qubit])) for qubit in data])
+        max_val = max(max_val, self._max_val_center)
         axis_range = [-max_val * 1.1, max_val * 1.1]
         dtick = max_val / 2
 

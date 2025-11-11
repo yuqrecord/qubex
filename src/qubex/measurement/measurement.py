@@ -257,6 +257,22 @@ class Measurement:
         """
         return self.experiment_system.get_awg_frequency(target)
 
+    def get_diff_frequency(self, target: str) -> float:
+        """
+        Get the difference frequency for the target.
+
+        Parameters
+        ----------
+        target : str
+            The target label.
+
+        Returns
+        -------
+        float
+            The difference frequency in Hz.
+        """
+        return self.experiment_system.get_diff_frequency(target)
+
     def update_classifiers(self, classifiers: TargetMap[StateClassifier]):
         """Update the state classifiers."""
         for target, classifier in classifiers.items():
@@ -477,7 +493,11 @@ class Measurement:
         readout_drag_coeff: float | None = None,
         readout_ramp_type: RampType | None = None,
         add_pump_pulses: bool = False,
+        enable_dsp_demodulation: bool = True,
         enable_dsp_sum: bool = False,
+        enable_dsp_classification: bool = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
     ) -> MeasureResult:
         """
         Measure with the given control waveforms.
@@ -544,7 +564,11 @@ class Measurement:
             sequencer=sequencer,
             repeats=shots,
             integral_mode=measure_mode.integral_mode,
+            dsp_demodulation=enable_dsp_demodulation,
             enable_sum=enable_dsp_sum,
+            enable_classification=enable_dsp_classification,
+            line_param0=line_param0,
+            line_param1=line_param1,
         )
         result = self._create_measure_result(
             backend_result=backend_result,
@@ -572,7 +596,11 @@ class Measurement:
         readout_ramp_type: RampType | None = None,
         add_last_measurement: bool = False,
         add_pump_pulses: bool = False,
+        enable_dsp_demodulation: bool = True,
         enable_dsp_sum: bool = False,
+        enable_dsp_classification: bool = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
         plot: bool = False,
     ) -> MultipleMeasureResult:
         """
@@ -610,6 +638,8 @@ class Measurement:
             Whether to add pump pulses, by default False.
         enable_dsp_sum : bool, optional
             Whether to enable DSP summation, by default False.
+        enable_dsp_classification : bool, optional
+            Whether to enable DSP classification, by default False.
         plot : bool, optional
             Whether to plot the results, by default False.
 
@@ -643,7 +673,11 @@ class Measurement:
             sequencer=sequencer,
             repeats=shots,
             integral_mode=measure_mode.integral_mode,
+            dsp_demodulation=enable_dsp_demodulation,
             enable_sum=enable_dsp_sum,
+            enable_classification=enable_dsp_classification,
+            line_param0=line_param0,
+            line_param1=line_param1,
         )
         result = self._create_multiple_measure_result(
             backend_result=backend_result,
@@ -810,9 +844,10 @@ class Measurement:
                 post_margin=readout_post_margin,
             )
             padded_waveform[readout_slice] = readout_pulse.values
-            omega = 2 * np.pi * self.get_awg_frequency(readout_target)
+            # use diff_frequency instead of awg_frequency since the envelope will be adjusted by conjugation later
+            omega = 2 * np.pi * self.get_diff_frequency(readout_target)
             offset = capture_start[qubit] * SAMPLING_PERIOD
-            padded_waveform *= np.exp(-1j * omega * offset)
+            padded_waveform *= np.exp(1j * omega * offset)
             readout_waveforms[readout_target] = padded_waveform
 
         # zero padding (pump)
@@ -837,6 +872,8 @@ class Measurement:
         cap_sequences: dict[str, pls.CapSampledSequence] = {}
         for target, waveform in user_waveforms.items():
             # add GenSampledSequence (control)
+            if self.experiment_system.get_target(target).sideband != "L":
+                waveform = np.conj(waveform)
             gen_sequences[target] = pls.GenSampledSequence(
                 target_name=target,
                 prev_blank=0,
@@ -856,6 +893,8 @@ class Measurement:
             )
         for target, waveform in pump_waveforms.items():
             # add GenSampledSequence (pump)
+            if self.experiment_system.get_target(target).sideband != "L":
+                waveform = np.conj(waveform)
             gen_sequences[target] = pls.GenSampledSequence(
                 target_name=target,
                 prev_blank=0,
@@ -876,6 +915,8 @@ class Measurement:
         for target, waveform in readout_waveforms.items():
             qubit = Target.qubit_label(target)
             # add GenSampledSequence (readout)
+            if self.experiment_system.get_target(target).sideband != "L":
+                waveform = np.conj(waveform)
             modulation_frequency = self.get_awg_frequency(target)
             gen_sequences[target] = pls.GenSampledSequence(
                 target_name=target,
@@ -942,6 +983,7 @@ class Measurement:
             resource_map=resource_map,  # type: ignore
             interval=backend_interval,
             sysdb=self.device_controller.qubecalib.sysdb,
+            driver=self.device_controller.quel1system,
         )
 
     def _create_sampled_sequences_from_schedule(
@@ -1103,15 +1145,18 @@ class Measurement:
             if not ranges:
                 continue
             seq = sampled_sequences[target]
-            omega = 2 * np.pi * self.get_awg_frequency(target)
+            # use diff_frequency instead of awg_frequency since the envelope will be adjusted by conjugation later
+            omega = 2 * np.pi * self.get_diff_frequency(target)
             delay = capture_delay_sample[target]
             for rng in ranges:
                 offset = (rng.start + delay) * SAMPLING_PERIOD
-                seq[rng] *= np.exp(-1j * omega * offset)
+                seq[rng] *= np.exp(1j * omega * offset)
 
         # create GenSampledSequence
         gen_sequences: dict[str, pls.GenSampledSequence] = {}
         for target, waveform in sampled_sequences.items():
+            if self.experiment_system.get_target(target).sideband != "L":
+                waveform = np.conj(waveform)
             gen_sequences[target] = pls.GenSampledSequence(
                 target_name=target,
                 prev_blank=0,
@@ -1270,6 +1315,7 @@ class Measurement:
             resource_map=resource_map,  # type: ignore
             interval=backend_interval,
             sysdb=self.device_controller.qubecalib.sysdb,
+            driver=self.device_controller.quel1system,
         )
 
     def _create_measure_result(

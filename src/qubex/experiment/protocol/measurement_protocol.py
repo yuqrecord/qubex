@@ -38,6 +38,9 @@ class MeasurementProtocol(Protocol):
         add_last_measurement: bool = False,
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool | None = None,
+        enable_dsp_classification: bool = False,
+        line_param0: tuple[float, float, float] | None = None,
+        line_param1: tuple[float, float, float] | None = None,
         reset_awg_and_capunits: bool = True,
         plot: bool = False,
     ) -> MultipleMeasureResult:
@@ -78,6 +81,8 @@ class MeasurementProtocol(Protocol):
             Whether to reset the AWG and capture units before the experiment. Defaults to True.
         enable_dsp_sum : bool | None, optional
             Whether to enable DSP summation. Defaults to None.
+        enable_dsp_classification : bool, optional
+            Whether to enable DSP classification. Defaults to False
         plot : bool, optional
             Whether to plot the measured signals. Defaults to False.
 
@@ -118,6 +123,7 @@ class MeasurementProtocol(Protocol):
         readout_ramp_type: RampType | None = None,
         add_pump_pulses: bool = False,
         enable_dsp_sum: bool | None = None,
+        enable_dsp_classification: bool = False,
         reset_awg_and_capunits: bool = True,
         plot: bool = False,
     ) -> MeasureResult:
@@ -156,6 +162,8 @@ class MeasurementProtocol(Protocol):
             Whether to add pump pulses to the sequence. Defaults to False.
         enable_dsp_sum : bool | None, optional
             Whether to enable DSP summation. Defaults to None.
+        enable_dsp_classification : bool, optional
+            Whether to enable DSP classification. Defaults to False.
         reset_awg_and_capunits : bool, optional
             Whether to reset the AWG and capture units before the experiment. Defaults to True.
         plot : bool, optional
@@ -443,6 +451,7 @@ class MeasurementProtocol(Protocol):
         amplitudes: dict[str, float] | None = None,
         frequencies: dict[str, float] | None = None,
         is_damped: bool = False,
+        fit_threshold: float = 0.5,
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
@@ -470,6 +479,7 @@ class MeasurementProtocol(Protocol):
         frequencies: dict[str, float] | None = None,
         detuning: float | None = None,
         is_damped: bool = True,
+        fit_threshold: float = 0.5,
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,

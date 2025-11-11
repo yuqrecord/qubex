@@ -8,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from typing_extensions import deprecated
 
 
 class Waveform(ABC):
@@ -33,9 +34,15 @@ class Waveform(ABC):
         detuning: float | None = None,
         phase: float | None = None,
     ):
-        self._scale = scale or 1.0
-        self._detuning = detuning or 0.0
-        self._phase = phase or 0.0
+        if scale is None:
+            scale = 1.0
+        if detuning is None:
+            detuning = 0.0
+        if phase is None:
+            phase = 0.0
+        self._scale = scale
+        self._detuning = detuning
+        self._phase = phase
 
     @property
     def name(self) -> str:
@@ -131,6 +138,11 @@ class Waveform(ABC):
     @abstractmethod
     def inverted(self) -> Waveform:
         """Returns a copy of the waveform with the time inverted."""
+
+    def reset_cached_duration(self):
+        """Resets the cached duration of the waveform."""
+        if "cached_duration" in self.__dict__:
+            del self.__dict__["cached_duration"]
 
     def _number_of_samples(
         self,
@@ -351,15 +363,55 @@ class Waveform(ABC):
             }
         )
 
+    @deprecated(
+        "plot_fft is deprecated and will be removed in a future version. "
+        "Use plot_spectrum instead. Note that `frequency_sign` is opposite to that of `plot_spectrum`.",
+    )
     def plot_fft(
         self,
         *,
         title: str | None = None,
         xlabel: str = "Frequency (MHz)",
         ylabel: str = "Amplitude (arb. units)",
+        zero_padding_factor: int = 100,
     ):
         """
         Plots the FFT of the waveform.
+
+        Parameters
+        ----------
+        title : str, optional
+            Title of the plot.
+        xlabel : str, optional
+            Label of the x-axis.
+        ylabel : str, optional
+            Label of the y-axis.
+
+        Note
+        ----
+        This method is deprecated. Use `plot_spectrum` instead.
+        Note that `frequency_sign` is opposite to that of `plot_spectrum`.
+        """
+        self.plot_spectrum(
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            zero_padding_factor=zero_padding_factor,
+            frequency_sign="positive",
+        )
+
+    def plot_spectrum(
+        self,
+        *,
+        title: str | None = None,
+        xlabel: str = "Frequency (MHz)",
+        ylabel: str = "Amplitude (arb. units)",
+        zero_padding_factor: int = 100,
+        frequency_sign: Literal["positive", "negative"] = "negative",
+        xlim: tuple[float, float] | None = None,
+    ):
+        """
+        Plots the spectrum of the waveform.
 
         Parameters
         ----------
@@ -377,15 +429,22 @@ class Waveform(ABC):
         if title is None:
             title = "Frequency spectrum"
 
+        if xlim is not None:
+            xlim = (xlim[0] * 1e3, xlim[1] * 1e3)
+
         pulse = self.padded(
-            total_duration=self.duration * 100,
+            total_duration=self.duration * zero_padding_factor,
             pad_side="right",
         )
 
         N = pulse.length
         values = pulse.values
         fft_values = np.fft.fft(values)
-        freqs = np.fft.fftfreq(N, d=self.SAMPLING_PERIOD)
+        if frequency_sign == "positive":
+            d = self.SAMPLING_PERIOD
+        else:
+            d = -self.SAMPLING_PERIOD
+        freqs = np.fft.fftfreq(N, d=d)
         idx = np.argsort(freqs)
         freqs = freqs[idx]
         fft_values = np.abs(fft_values[idx])  # type: ignore
@@ -402,6 +461,7 @@ class Waveform(ABC):
             title=title,
             xaxis_title=xlabel,
             yaxis_title=ylabel,
+            xaxis_range=xlim if xlim is not None else None,
         )
         fig.show(
             config={

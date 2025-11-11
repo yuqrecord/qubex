@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "qubex"
 dynamic = ["version"]
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 authors = [{ name = "Akinori Machino" }]
 description = "Qubex: Qubit experiment framework"
 readme = "README.md"
@@ -38,7 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 backend = [
-    "qubecalib @ git+https://github.com/qiqb-osaka/qube-calib.git@3.1.14",
+    "qubecalib @ git+https://github.com/qiqb-osaka/qube-calib.git@3.1.15",
 ]
 dev = ["pyinstrument", "pytest", "pytest-cov", "ruff"]
 
@@ -53,3 +53,4 @@ addopts = "--import-mode=importlib"
 
 [tool.ruff.lint]
 ignore = ["E731", "E741"]
+unfixable = ["F401"]

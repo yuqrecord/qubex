@@ -9,7 +9,7 @@ import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
 
-from ..analysis import fitting, util
+from ..analysis import FitResult, fitting, util
 from ..analysis import visualization as viz
 from ..typing import TargetMap
 from .experiment_record import ExperimentRecord
@@ -63,6 +63,10 @@ class ExperimentResult(Generic[T]):
     created_at: str = field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
+
+    def __repr__(self) -> str:
+        data_repr = "{" + ", ".join(f"{k}:..." for k in self.data.keys()) + "}"
+        return f"<ExperimentResult data={data_repr}>"
 
     def plot(
         self,
@@ -227,12 +231,14 @@ class RabiData(TargetData):
         self,
         use_zvalue: bool = False,
         yaxis_range: tuple[float, float] | None = None,
-    ) -> dict:
+        **kwargs,
+    ) -> FitResult:
         return fitting.fit_rabi(
             target=self.target,
             times=self.time_range,
             data=self.data if not use_zvalue else self.zvalues + 0j,
             yaxis_range=yaxis_range if not use_zvalue else (-1.2, 1.2),
+            **kwargs,
         )
 
 
@@ -453,11 +459,12 @@ class AmplCalibData(SweepData):
             r2=r2,
         )
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_ampl_calib_data(
             target=self.target,
             amplitude_range=self.sweep_range,
             data=self.normalized,
+            **kwargs,
         )
 
 
@@ -521,7 +528,7 @@ class T1Data(SweepData):
             r2=r2,
         )
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_exp_decay(
             target=self.target,
             x=self.sweep_range,
@@ -531,6 +538,7 @@ class T1Data(SweepData):
             ylabel="Population",
             xaxis_type="log",
             yaxis_type="linear",
+            **kwargs,
         )
 
 
@@ -594,7 +602,7 @@ class T2Data(SweepData):
             r2=r2,
         )
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_exp_decay(
             target=self.target,
             x=self.sweep_range,
@@ -602,6 +610,7 @@ class T2Data(SweepData):
             title="T2",
             xlabel="Time (μs)",
             ylabel="Population",
+            **kwargs,
         )
 
 
@@ -670,11 +679,12 @@ class RamseyData(SweepData):
             r2=r2,
         )
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_ramsey(
             target=self.target,
             times=self.sweep_range,
             data=self.normalized,
+            **kwargs,
         )
 
 
@@ -738,11 +748,12 @@ class RBData(SweepData):
             avg_gate_fidelity=avg_gate_fidelity,
         )
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_rb(
             target=self.target,
             x=self.sweep_range,
             y=self.normalized,
+            **kwargs,
         )
 
 
@@ -779,7 +790,7 @@ class AmplRabiData(TargetData):
         )
         fig.show()
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_linear(
             self.sweep_range,
             self.data * 1e3,  # Convert to MHz
@@ -788,6 +799,7 @@ class AmplRabiData(TargetData):
             ylabel="Rabi rate (MHz)",
             xmin=0.0,
             ymin=0.0,
+            **kwargs,
         )
 
 
@@ -827,9 +839,10 @@ class FreqRabiData(TargetData):
         )
         fig.show()
 
-    def fit(self) -> dict:
+    def fit(self, **kwargs) -> FitResult:
         return fitting.fit_detuned_rabi(
             target=self.target,
             control_frequencies=self.frequency_range,
             rabi_frequencies=self.data,
+            **kwargs,
         )
