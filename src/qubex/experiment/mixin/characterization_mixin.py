@@ -1217,13 +1217,13 @@ class CharacterizationMixin(
         elif isinstance(stark_detuning, float):
             detuning = stark_detuning
             if abs(detuning) > 0.2:
-                raise ValueError(f"Detuning of a stark tone must not exceed 0.2 GHz： the guard-banded AWG baseband limit.")
+                raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz： the guard-banded AWG baseband limit.")
             stark_detuning = {target: detuning for target in targets}
         else:
             for target in targets:
                 detuning = stark_detuning[target]
                 if abs(detuning) > 0.2:
-                    raise ValueError(f"Detuning of a stark tone must not exceed 0.2 GHz: the guard-banded AWG baseband limit for {target}.")
+                    raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz: the guard-banded AWG baseband limit.")
 
         if stark_amplitude is None:
             stark_amplitude = {target: 0.1 for target in targets}
@@ -1250,7 +1250,7 @@ class CharacterizationMixin(
         for target in targets:
             stark_power = self.calc_control_amplitude(target=target, rabi_rate=stark_amplitude[target])
             if stark_power > 1:
-                raise ValueError(f"Drive amplitude of a stark tone must not exceed 1 for {target}")
+                raise ValueError("Drive amplitude of a stark tone must not exceed 1")
             def stark_t1_sequence(T: int) -> PulseSchedule:
                 with PulseSchedule([target]) as ps:
                     ps.add(target, self.get_hpi_pulse(target).repeated(2))
@@ -1338,13 +1338,13 @@ class CharacterizationMixin(
         elif isinstance(stark_detuning, float):
             detuning = stark_detuning
             if abs(detuning) > 0.2:
-                raise ValueError(f"Detuning of a stark tone must not exceed 0.2 GHz： the guard-banded AWG baseband limit.")
+                raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz： the guard-banded AWG baseband limit.")
             stark_detuning = {target: detuning for target in targets}
         else:
             for target in targets:
                 detuning = stark_detuning[target]
                 if abs(detuning) > 0.2:
-                    raise ValueError(f"Detuning of a stark tone must not exceed 0.2 GHz: the guard-banded AWG baseband limit for {target}.")
+                    raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz: the guard-banded AWG baseband limit.")
 
         if stark_amplitude is None:
             stark_amplitude = {target: 0.1 for target in targets}
@@ -1368,7 +1368,7 @@ class CharacterizationMixin(
         for target in targets:
             stark_power = self.calc_control_amplitude(target=target, rabi_rate=stark_amplitude[target])
             if stark_power > 1:
-                raise ValueError(f"Drive amplitude of a stark tone must not exceed 1 for {target}")
+                raise ValueError("Drive amplitude of a stark tone must not exceed 1")
             def stark_ramsey_sequence(T: int) -> PulseSchedule:
                 x90 = self.get_hpi_pulse(target=target)
                 with PulseSchedule([target]) as ps:
@@ -1446,9 +1446,9 @@ class CharacterizationMixin(
                     )
                     data[target] = ramsey_data
 
-                    print(f"AC stark shift :")
+                    print("AC stark shift :")
                     if stark_detuning[target] > 0:
-                        print(f"  {target}: {ramsey_data.ramsey_freq:.6f}")
+                        print(f"{target}: {ramsey_data.ramsey_freq:.6f}")
                     print("")
 
                     fig = fit_result["fig"]
