@@ -176,8 +176,6 @@ def print_chip_info(
         "resonator_frequency",
         "qubit_frequency",
         "qubit_anharmonicity",
-        "external_loss_rate",
-        "internal_loss_rate",
         "t1",
         "t2_star",
         "t2_echo",
@@ -194,16 +192,11 @@ def print_chip_info(
 ) -> None:
     """Print the information of the chip."""
     chip = system_manager.experiment_system.chip
-
-    props: dict[str, dict[str, float]] = {
-        key: {
-            qubit: value if value is not None else math.nan
-            for qubit, value in values.items()
-        }
-        for key, values in system_manager.config_loader._props_dict[chip.id].items()
-    }
-
+    loader = system_manager.config_loader
     graph = LatticeGraph(chip.n_qubits)
+
+    def _is_valid(value: float | None) -> bool:
+        return value is not None and not math.isnan(value)
 
     draw_individual_results = False
 
@@ -225,399 +218,339 @@ def print_chip_info(
             "resonator_frequency",
             "qubit_frequency",
             "qubit_anharmonicity",
-            "external_loss_rate",
-            "internal_loss_rate",
             "t1",
             "t2_star",
             "t2_echo",
             "static_zz_interaction",
             "qubit_qubit_coupling_strength",
             "average_readout_fidelity",
-            "average_gate_fidelity",
             "x90_gate_fidelity",
             "x180_gate_fidelity",
             "zx90_gate_fidelity",
         )
 
-    if "chip_summary" in info_type:
-        inspector = ChipInspector(
-            chip_id=chip.id,
-            config_dir=system_manager.config_loader._config_dir,
-            props_dir=system_manager.config_loader._params_dir,
-        )
-        if chip.n_qubits == 144:
-            inspection_params = {
-                "max_frequency": 5.8,
-                "min_frequency": 2,
-            }
-        else:
-            inspection_params = None
-        summary = inspector.execute(
-            params=inspection_params,
-        )
-        summary.draw(
-            draw_individual_results=draw_individual_results,
-            save_image=save_image,
-        )
-
-    if "resonator_frequency" in info_type:
-        if values := props.get("resonator_frequency"):
-            graph.plot_lattice_data(
-                title="Resonator frequency (GHz)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value:.3f}<br>GHz" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e3:.3f} MHz"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="resonator_frequency",
+    try:
+        if "chip_summary" in info_type:
+            inspector = ChipInspector(
+                chip_id=chip.id,
+                config_dir=system_manager.config_loader._config_dir,
+                props_dir=system_manager.config_loader._params_dir,
             )
-
-    if "qubit_frequency" in info_type:
-        if values := props.get("qubit_frequency"):
-            graph.plot_lattice_data(
-                title="Qubit frequency (GHz)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value:.3f}<br>GHz" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e3:.3f} MHz"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="qubit_frequency",
-            )
-
-    if "qubit_anharmonicity" in info_type:
-        if values := props.get("anharmonicity"):
-            graph.plot_lattice_data(
-                title="Qubit anharmonicity (MHz)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value * 1e3:.1f}<br>MHz"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e3:.3f} MHz"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="qubit_anharmonicity",
-            )
-
-    if "external_loss_rate" in info_type:
-        if values := props.get("external_loss_rate"):
-            graph.plot_lattice_data(
-                title="External loss rate (MHz)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value * 1e3:.2f}<br>MHz"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e3:.3f} MHz"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="external_loss_rate",
-            )
-
-    if "internal_loss_rate" in info_type:
-        if values := props.get("internal_loss_rate"):
-            graph.plot_lattice_data(
-                title="Internal loss rate (MHz)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value * 1e3:.2f}<br>MHz"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e3:.3f} MHz"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="internal_loss_rate",
-            )
-
-    if "t1" in info_type:
-        if values := props.get("t1"):
-            graph.plot_lattice_data(
-                title="T1 (μs)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value * 1e-3:.2f}<br>μs"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e-3:.3f} μs"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="t1",
-            )
-
-    if "t2_star" in info_type:
-        if values := props.get("t2_star"):
-            graph.plot_lattice_data(
-                title="T2* (μs)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value * 1e-3:.2f}<br>μs"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e-3:.3f} μs"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="t2_star",
-            )
-
-    if "t2_echo" in info_type:
-        if values := props.get("t2_echo"):
-            graph.plot_lattice_data(
-                title="T2 echo (μs)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value * 1e-3:.2f}<br>μs"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value * 1e-3:.3f} μs"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="t2_echo",
-            )
-
-    def create_undirected_data(
-        data: dict[str, float],
-        method: Literal["avg", "max", "min"],
-    ) -> dict[str, float]:
-        result = {}
-        for key, value in data.items():
-            if value is None or math.isnan(value):
-                continue
-            pair = key.split("-")
-            inv_key = f"{pair[1]}-{pair[0]}"
-            if (
-                inv_key in result
-                and result[inv_key] is not None
-                and not math.isnan(result[inv_key])
-            ):
-                if method == "avg":
-                    result[inv_key] = (result[inv_key] + value) / 2
-                elif method == "max":
-                    result[inv_key] = max(result[inv_key], value)
-                elif method == "min":
-                    result[inv_key] = min(result[inv_key], value)
-                else:
-                    raise ValueError(f"Unknown method: {method}")
+            if chip.n_qubits == 144:
+                inspection_params = {
+                    "max_frequency": 5.8,
+                    "min_frequency": 2,
+                }
             else:
-                result[key] = float(value)
-        return result
+                inspection_params = None
+            summary = inspector.execute(
+                params=inspection_params,
+            )
+            summary.draw(
+                draw_individual_results=draw_individual_results,
+                save_image=save_image,
+            )
 
-    if "static_zz_interaction" in info_type:
-        if static_zz_interaction := props.get("static_zz_interaction"):
-            values = (
-                static_zz_interaction
-                if directed
-                else create_undirected_data(
-                    data=static_zz_interaction,
-                    method="avg",
+        if "resonator_frequency" in info_type:
+            if values := loader._load_param_data("resonator_frequency"):
+                graph.plot_lattice_data(
+                    title="Resonator frequency (GHz)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value:.3f}<br>GHz" if _is_valid(value) else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value * 1e3:.3f} MHz"
+                        if _is_valid(value)
+                        else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="resonator_frequency",
                 )
-            )
-            graph.plot_graph_data(
-                directed=directed,
-                title="Static ZZ interaction (kHz)",
-                edge_values={key: value for key, value in values.items()},
-                edge_texts={
-                    key: f"{value * 1e6:.0f}" if not math.isnan(value) else None
-                    for key, value in values.items()
-                },
-                edge_hovertexts={
-                    key: f"{key}: {value * 1e6:.1f} kHz"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for key, value in values.items()
-                },
-                save_image=save_image,
-                image_name="static_zz_interaction",
-            )
 
-    if "qubit_qubit_coupling_strength" in info_type:
-        if qubit_qubit_coupling_strength := props.get("qubit_qubit_coupling_strength"):
-            values = (
-                qubit_qubit_coupling_strength
-                if directed
-                else create_undirected_data(
-                    data=qubit_qubit_coupling_strength,
-                    method="avg",
+        if "qubit_frequency" in info_type:
+            if values := loader._load_param_data("qubit_frequency"):
+                graph.plot_lattice_data(
+                    title="Qubit frequency (GHz)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value:.3f}<br>GHz" if _is_valid(value) else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value * 1e3:.3f} MHz"
+                        if _is_valid(value)
+                        else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="qubit_frequency",
                 )
-            )
-            graph.plot_graph_data(
-                directed=directed,
-                title="Qubit-qubit coupling strength (MHz)",
-                edge_values={key: value for key, value in values.items()},
-                edge_texts={
-                    key: f"{value * 1e3:.1f}" if not math.isnan(value) else None
-                    for key, value in values.items()
-                },
-                edge_hovertexts={
-                    key: f"{key}: {value * 1e3:.1f} MHz"
-                    if not math.isnan(value)
-                    else "N/A"
-                    for key, value in values.items()
-                },
-                save_image=save_image,
-                image_name="qubit_qubit_coupling_strength",
-            )
 
-    if "average_readout_fidelity" in info_type:
-        if values := props.get("average_readout_fidelity"):
-            graph.plot_lattice_data(
-                title="Average readout fidelity (%)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value:.2%}" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value:.2%}"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="average_readout_fidelity",
-            )
+        if "qubit_anharmonicity" in info_type:
+            if values := loader._load_param_data("qubit_anharmonicity"):
+                graph.plot_lattice_data(
+                    title="Qubit anharmonicity (MHz)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value * 1e3:.1f}<br>MHz"
+                        if _is_valid(value)
+                        else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value * 1e3:.3f} MHz"
+                        if _is_valid(value)
+                        else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="qubit_anharmonicity",
+                )
 
-    if "average_gate_fidelity" in info_type:
-        if values := props.get("average_gate_fidelity"):
-            graph.plot_lattice_data(
-                title="Average gate fidelity (%)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value:.2%}" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value:.2%}"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="average_gate_fidelity",
-            )
+        if "t1" in info_type:
+            if values := loader._load_param_data("t1"):
+                graph.plot_lattice_data(
+                    title="T1 (μs)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value * 1e-3:.2f}<br>μs"
+                        if _is_valid(value)
+                        else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value * 1e-3:.3f} μs"
+                        if _is_valid(value)
+                        else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="t1",
+                )
 
-    if "x90_gate_fidelity" in info_type:
-        if values := props.get("x90_gate_fidelity"):
-            graph.plot_lattice_data(
-                title="X90 gate fidelity (%)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value:.2%}" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value:.2%}"
-                    if not math.isnan(value)
-                    else f"{qubit}: N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="x90_gate_fidelity",
-            )
+        if "t2_star" in info_type:
+            if values := loader._load_param_data("t2_star"):
+                graph.plot_lattice_data(
+                    title="T2* (μs)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value * 1e-3:.2f}<br>μs"
+                        if _is_valid(value)
+                        else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value * 1e-3:.3f} μs"
+                        if _is_valid(value)
+                        else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="t2_star",
+                )
 
-    if "x180_gate_fidelity" in info_type:
-        if values := props.get("x180_gate_fidelity"):
-            graph.plot_lattice_data(
-                title="X180 gate fidelity (%)",
-                values=list(values.values()),
-                texts=[
-                    f"{qubit}<br>{value:.2%}" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                hovertexts=[
-                    f"{qubit}: {value:.2%}" if not math.isnan(value) else "N/A"
-                    for qubit, value in values.items()
-                ],
-                save_image=save_image,
-                image_name="x180_gate_fidelity",
-            )
+        if "t2_echo" in info_type:
+            if values := loader._load_param_data("t2_echo"):
+                graph.plot_lattice_data(
+                    title="T2 echo (μs)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value * 1e-3:.2f}<br>μs"
+                        if _is_valid(value)
+                        else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value * 1e-3:.3f} μs"
+                        if _is_valid(value)
+                        else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="t2_echo",
+                )
 
-    if "zx90_gate_fidelity" in info_type:
-        if values := props.get("zx90_gate_fidelity"):
-            graph.plot_graph_data(
-                directed=True,
-                title="ZX90 gate fidelity (%)",
-                edge_values={key: value for key, value in values.items()},
-                edge_texts={
-                    key: f"{value:.2%}" if not math.isnan(value) else None
-                    for key, value in values.items()
-                },
-                edge_hovertexts={
-                    key: f"{key}: {value:.2%}" if not math.isnan(value) else "N/A"
-                    for key, value in values.items()
-                },
-                save_image=save_image,
-                image_name="zx90_gate_fidelity",
-            )
+        def create_undirected_data(
+            data: dict[str, float],
+            method: Literal["avg", "max", "min"],
+        ) -> dict[str, float]:
+            result = {}
+            for key, value in data.items():
+                if value is None or math.isnan(value):
+                    continue
+                pair = key.split("-")
+                inv_key = f"{pair[1]}-{pair[0]}"
+                if (
+                    inv_key in result
+                    and result[inv_key] is not None
+                    and not math.isnan(result[inv_key])
+                ):
+                    if method == "avg":
+                        result[inv_key] = (result[inv_key] + value) / 2
+                    elif method == "max":
+                        result[inv_key] = max(result[inv_key], value)
+                    elif method == "min":
+                        result[inv_key] = min(result[inv_key], value)
+                    else:
+                        raise ValueError(f"Unknown method: {method}")
+                else:
+                    result[key] = float(value)
+            return result
 
-            values = create_undirected_data(
-                data=values,
-                method="max",
-            )
-            graph.plot_graph_data(
-                directed=False,
-                title="ZX90 gate fidelity (%)",
-                edge_values={key: value for key, value in values.items()},
-                edge_texts={
-                    key: f"{value * 1e2:.1f}" if not math.isnan(value) else None
-                    for key, value in values.items()
-                },
-                edge_hovertexts={
-                    key: f"{key}: {value:.2%}" if not math.isnan(value) else "N/A"
-                    for key, value in values.items()
-                },
-                save_image=save_image,
-                image_name="zx90_gate_fidelity",
-            )
+        if "static_zz_interaction" in info_type:
+            if static_zz_interaction := loader._load_param_data(
+                "static_zz_interaction"
+            ):
+                values = (
+                    static_zz_interaction
+                    if directed
+                    else create_undirected_data(
+                        data=static_zz_interaction,
+                        method="avg",
+                    )
+                )
+                graph.plot_graph_data(
+                    directed=directed,
+                    title="Static ZZ interaction (kHz)",
+                    edge_values={key: value for key, value in values.items()},
+                    edge_texts={
+                        key: f"{value * 1e6:.0f}" if not math.isnan(value) else None
+                        for key, value in values.items()
+                    },
+                    edge_hovertexts={
+                        key: f"{key}: {value * 1e6:.1f} kHz"
+                        if not math.isnan(value)
+                        else "N/A"
+                        for key, value in values.items()
+                    },
+                    save_image=save_image,
+                    image_name="static_zz_interaction",
+                )
+
+        if "qubit_qubit_coupling_strength" in info_type:
+            if qubit_qubit_coupling_strength := loader._load_param_data(
+                "qubit_qubit_coupling_strength"
+            ):
+                values = (
+                    qubit_qubit_coupling_strength
+                    if directed
+                    else create_undirected_data(
+                        data=qubit_qubit_coupling_strength,
+                        method="avg",
+                    )
+                )
+                graph.plot_graph_data(
+                    directed=directed,
+                    title="Qubit-qubit coupling strength (MHz)",
+                    edge_values={key: value for key, value in values.items()},
+                    edge_texts={
+                        key: f"{value * 1e3:.1f}" if not math.isnan(value) else None
+                        for key, value in values.items()
+                    },
+                    edge_hovertexts={
+                        key: f"{key}: {value * 1e3:.1f} MHz"
+                        if not math.isnan(value)
+                        else "N/A"
+                        for key, value in values.items()
+                    },
+                    save_image=save_image,
+                    image_name="qubit_qubit_coupling_strength",
+                )
+
+        if "average_readout_fidelity" in info_type:
+            if values := loader._load_param_data("average_readout_fidelity"):
+                graph.plot_lattice_data(
+                    title="Average readout fidelity (%)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value:.2%}" if _is_valid(value) else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value:.2%}" if _is_valid(value) else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="average_readout_fidelity",
+                )
+
+        if "x90_gate_fidelity" in info_type:
+            if values := loader._load_param_data("x90_gate_fidelity"):
+                graph.plot_lattice_data(
+                    title="X90 gate fidelity (%)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value:.2%}" if _is_valid(value) else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value:.2%}" if _is_valid(value) else f"{qubit}: N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="x90_gate_fidelity",
+                )
+
+        if "x180_gate_fidelity" in info_type:
+            if values := loader._load_param_data("x180_gate_fidelity"):
+                graph.plot_lattice_data(
+                    title="X180 gate fidelity (%)",
+                    values=list(values.values()),
+                    texts=[
+                        f"{qubit}<br>{value:.2%}" if _is_valid(value) else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    hovertexts=[
+                        f"{qubit}: {value:.2%}" if _is_valid(value) else "N/A"
+                        for qubit, value in values.items()
+                    ],
+                    save_image=save_image,
+                    image_name="x180_gate_fidelity",
+                )
+
+        if "zx90_gate_fidelity" in info_type:
+            if values := loader._load_param_data("zx90_gate_fidelity"):
+                graph.plot_graph_data(
+                    directed=True,
+                    title="ZX90 gate fidelity (%)",
+                    edge_values={key: value for key, value in values.items()},
+                    edge_texts={
+                        key: f"{value:.2%}" if _is_valid(value) else None
+                        for key, value in values.items()
+                    },
+                    edge_hovertexts={
+                        key: f"{key}: {value:.2%}" if _is_valid(value) else "N/A"
+                        for key, value in values.items()
+                    },
+                    save_image=save_image,
+                    image_name="zx90_gate_fidelity",
+                )
+
+                values = create_undirected_data(
+                    data=values,
+                    method="max",
+                )
+                graph.plot_graph_data(
+                    directed=False,
+                    title="ZX90 gate fidelity (%)",
+                    edge_values={key: value for key, value in values.items()},
+                    edge_texts={
+                        key: f"{value * 1e2:.1f}" if _is_valid(value) else None
+                        for key, value in values.items()
+                    },
+                    edge_hovertexts={
+                        key: f"{key}: {value:.2%}" if _is_valid(value) else "N/A"
+                        for key, value in values.items()
+                    },
+                    save_image=save_image,
+                    image_name="zx90_gate_fidelity",
+                )
+
+    except Exception as e:
+        print(f"Error occurred while printing chip info: {e}")
 
 
 def print_wiring_info(qubits: Collection[str] | None = None) -> None:

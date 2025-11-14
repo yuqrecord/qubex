@@ -2256,8 +2256,8 @@ def fit_ampl_calib_data(
     if maximize:
         data = -data
 
-    def cos_func(t, ampl, omega, phi, offset):
-        return ampl * np.cos(omega * t + phi) + offset
+    def cos_func(t, ampl, omega, phi, a, b):
+        return ampl * np.cos(omega * t + phi) + a * t + b
 
     x = amplitude_range
     y = data
@@ -2270,10 +2270,11 @@ def fit_ampl_calib_data(
     amplitude_est = 2 * np.abs(F[i]) / N
     omega_est = 2 * np.pi * f[i]
     phase_est = np.angle(F[i])
-    offset_est = (np.max(y) + np.min(y)) / 2
+    a_est = 0
+    b_est = (np.max(y) + np.min(y)) / 2
 
     if p0 is None:
-        p0 = (amplitude_est, omega_est, phase_est, offset_est)
+        p0 = (amplitude_est, omega_est, phase_est, a_est, b_est)
 
     try:
         popt, pcov = curve_fit(cos_func, x, y, p0=p0)

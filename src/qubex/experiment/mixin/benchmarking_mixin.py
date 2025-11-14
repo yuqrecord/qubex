@@ -14,6 +14,7 @@ from ...measurement.measurement import DEFAULT_INTERVAL, DEFAULT_SHOTS
 from ...pulse import PulseArray, PulseSchedule, VirtualZ, Waveform
 from ...typing import TargetMap
 from ..protocol import BaseProtocol, BenchmarkingProtocol, MeasurementProtocol
+from ..result import Result
 
 DEFAULT_RB_N_TRIALS = 30
 DEFAULT_MAX_N_CLIFFORDS_1Q = 2048
@@ -220,7 +221,7 @@ class BenchmarkingMixin(
         xaxis_type: Literal["linear", "log"] | None = None,
         plot: bool = True,
         save_image: bool = True,
-    ) -> dict:
+    ) -> Result:
         if isinstance(targets, str):
             targets = [targets]
         else:
@@ -371,7 +372,7 @@ class BenchmarkingMixin(
                     **fit_result,
                 }
 
-        return return_data
+        return Result(data=return_data)
 
     def rb_experiment_2q(
         self,
@@ -392,7 +393,7 @@ class BenchmarkingMixin(
         xaxis_type: Literal["linear", "log"] | None = None,
         plot: bool = True,
         save_image: bool = True,
-    ):
+    ) -> Result:
         if self.state_centers is None:
             raise ValueError("State classifiers are not built.")
 
@@ -576,7 +577,7 @@ class BenchmarkingMixin(
                     **fit_result,
                 }
 
-        return return_data
+        return Result(data=return_data)
 
     def irb_experiment(
         self,
@@ -597,7 +598,7 @@ class BenchmarkingMixin(
         interval: float | None = None,
         plot: bool = True,
         save_image: bool = True,
-    ) -> dict:
+    ) -> Result:
         if isinstance(targets, str):
             targets = [targets]
         else:
@@ -780,7 +781,7 @@ class BenchmarkingMixin(
                 "irb_fit_result": irb_fit_result,
                 "fig": fig,
             }
-        return results
+        return Result(data=results)
 
     def randomized_benchmarking(
         self,
@@ -798,7 +799,7 @@ class BenchmarkingMixin(
         interval: float | None = None,
         plot: bool = True,
         save_image: bool = True,
-    ) -> dict:
+    ) -> Result:
         if isinstance(targets, str):
             targets = [targets]
         else:
@@ -858,14 +859,14 @@ class BenchmarkingMixin(
         interval: float | None = None,
         plot: bool = True,
         save_image: bool = True,
-    ) -> dict:
+    ) -> Result:
         if isinstance(targets, str):
             targets = [targets]
         else:
             targets = list(targets)
 
         if in_parallel:
-            results = self.irb_experiment(
+            result = self.irb_experiment(
                 targets=targets,
                 interleaved_clifford=interleaved_clifford,
                 interleaved_waveform=interleaved_waveform,
@@ -901,8 +902,9 @@ class BenchmarkingMixin(
                     save_image=save_image,
                 )
                 results[target] = result[target]
+            result = Result(data=results)
 
-        return results
+        return Result(data=result.data)
 
     def benchmark_1q(
         self,

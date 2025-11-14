@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import warnings
 from collections import defaultdict
-from enum import Enum
 from logging import getLogger
 from pathlib import Path
 from typing import Final, Literal
@@ -25,36 +24,36 @@ PROPS_FILE: Final = "props.yaml"  # legacy
 PARAMS_FILE: Final = "params.yaml"  # legacy
 
 
-class Param(Enum):
-    """
-    Canonical parameter names.
-
-    Each value encodes: (name, legacy_name, legacy_file)
-    """
-
-    QUBIT_FREQUENCY = ("qubit_frequency", "qubit_frequency", "props")
-    QUBIT_ANHARMONICITY = ("qubit_anharmonicity", "anharmonicity", "props")
-    RESONATOR_FREQUENCY = ("resonator_frequency", "resonator_frequency", "props")
-
-    CONTROL_FREQUENCY = ("control_frequency", None, "props")
-    CONTROL_FREQUENCY_EF = ("control_frequency_ef", None, "props")
-    READOUT_FREQUENCY = ("readout_frequency", None, "props")
-
-    CONTROL_AMPLITUDE = ("control_amplitude", "control_amplitude", "params")
-    READOUT_AMPLITUDE = ("readout_amplitude", "readout_amplitude", "params")
-
-    CONTROL_VATT = ("control_vatt", "control_vatt", "params")
-    READOUT_VATT = ("readout_vatt", "readout_vatt", "params")
-    PUMP_VATT = ("pump_vatt", "pump_vatt", "params")
-
-    CONTROL_FSC = ("control_fsc", "control_fsc", "params")
-    READOUT_FSC = ("readout_fsc", "readout_fsc", "params")
-    PUMP_FSC = ("pump_fsc", "pump_fsc", "params")
-
-    CAPTURE_DELAY = ("capture_delay", "capture_delay", "params")
-    CAPTURE_DELAY_WORD = ("capture_delay_word", "capture_delay_word", "params")
-
-    JPA_PARAMS = ("jpa_params", "jpa_params", "params")
+PARAMS_MAP = {
+    "qubit_frequency": ("qubit_frequency", "props"),
+    "qubit_anharmonicity": ("anharmonicity", "props"),
+    "resonator_frequency": ("resonator_frequency", "props"),
+    "control_frequency": ("control_frequency", "props"),
+    "control_frequency_ef": (None, "props"),
+    "readout_frequency": (None, "props"),
+    "control_amplitude": ("control_amplitude", "params"),
+    "readout_amplitude": ("readout_amplitude", "params"),
+    "control_vatt": ("control_vatt", "params"),
+    "readout_vatt": ("readout_vatt", "params"),
+    "pump_vatt": ("pump_vatt", "params"),
+    "control_fsc": ("control_fsc", "params"),
+    "readout_fsc": ("readout_fsc", "params"),
+    "pump_fsc": ("pump_fsc", "params"),
+    "capture_delay": ("capture_delay", "params"),
+    "capture_delay_word": ("capture_delay_word", "params"),
+    "jpa_params": ("jpa_params", "params"),
+    "t1": ("t1", "props"),
+    "t2_echo": ("t2_echo", "props"),
+    "t2_star": ("t2_star", "props"),
+    "average_readout_fidelity": ("average_readout_fidelity", "props"),
+    "x90_gate_fidelity": ("x90_gate_fidelity", "props"),
+    "x180_gate_fidelity": ("x180_gate_fidelity", "props"),
+    "zx90_gate_fidelity": ("zx90_gate_fidelity", "props"),
+    "static_zz_interaction": ("static_zz_interaction", "props"),
+    "qubit_qubit_coupling_strength": ("qubit_qubit_coupling_strength", "props"),
+    "resonator_external_linewidth": ("external_loss_rate", "props"),
+    "resonator_internal_linewidth": ("internal_loss_rate", "props"),
+}
 
 
 class ConfigLoader:
@@ -322,9 +321,9 @@ class ConfigLoader:
             return data
         return {k: apply(v, k) for k, v in data.items()}
 
-    def _load_param_data(self, param: Param, use_default: bool = True) -> dict:
+    def _load_param_data(self, param_name: str, use_default: bool = True) -> dict:
         """
-        Load a Param with per-file preference and legacy fallback.
+        Load a parameter dictionary with per-file preference and legacy fallback.
 
         Behavior
         --------
@@ -333,12 +332,12 @@ class ConfigLoader:
           are filled by legacy values. Per-file keys override legacy.
         - If a per-file YAML is absent, return the legacy map as-is (or empty).
         """
-        name, legacy_name, legacy_file = param.value
-        file_path = Path(self._params_dir) / f"{name}.yaml"
+        legacy_name, legacy_file = PARAMS_MAP[param_name]
+        file_path = Path(self._params_dir) / f"{param_name}.yaml"
 
         legacy_root = self._params_dict if legacy_file == "params" else self._props_dict
         legacy_map = legacy_root.get(self._chip_id, {}) or {}
-        legacy_key = legacy_name or name
+        legacy_key = legacy_name or param_name
         legacy_data = legacy_map.get(legacy_key, {}) or {}
 
         if file_path.exists():
@@ -363,7 +362,7 @@ class ConfigLoader:
                 # Per-file exists but empty; return legacy as-is
                 logger.info(
                     "Param `%s` for chip `%s`: per-file %s has no data; using legacy (%s).",
-                    name,
+                    param_name,
                     self._chip_id,
                     file_path.name,
                     PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
@@ -391,7 +390,7 @@ class ConfigLoader:
                     )
                     logger.warning(
                         "Param `%s` for chip `%s`: per-file (%s) overrides legacy (%s) for keys: %s%s.",
-                        name,
+                        param_name,
                         self._chip_id,
                         file_path.name,
                         PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
@@ -401,7 +400,7 @@ class ConfigLoader:
                 else:
                     logger.info(
                         "Param `%s` for chip `%s`: merged per-file (%s) over legacy (%s)%s.",
-                        name,
+                        param_name,
                         self._chip_id,
                         file_path.name,
                         PARAMS_FILE if legacy_file == "params" else PROPS_FILE,
@@ -410,7 +409,7 @@ class ConfigLoader:
             else:
                 logger.info(
                     "Param `%s` for chip `%s`: loaded per-file from %s%s.",
-                    name,
+                    param_name,
                     self._chip_id,
                     file_path.name,
                     f" with unit={unit!r}" if unit else "",
@@ -431,12 +430,12 @@ class ConfigLoader:
             name=chip_info["name"],
             n_qubits=chip_info["n_qubits"],
         )
-        qubit_frequency_dict = self._load_param_data(Param.QUBIT_FREQUENCY)
-        qubit_anharmonicity_dict = self._load_param_data(Param.QUBIT_ANHARMONICITY)
-        resonator_frequency_dict = self._load_param_data(Param.RESONATOR_FREQUENCY)
-        control_frequency_dict = self._load_param_data(Param.CONTROL_FREQUENCY)
-        control_frequency_ef_dict = self._load_param_data(Param.CONTROL_FREQUENCY_EF)
-        readout_frequency_dict = self._load_param_data(Param.READOUT_FREQUENCY)
+        qubit_frequency_dict = self._load_param_data("qubit_frequency")
+        qubit_anharmonicity_dict = self._load_param_data("qubit_anharmonicity")
+        resonator_frequency_dict = self._load_param_data("resonator_frequency")
+        control_frequency_dict = self._load_param_data("control_frequency")
+        control_frequency_ef_dict = self._load_param_data("control_frequency_ef")
+        readout_frequency_dict = self._load_param_data("readout_frequency")
 
         for qubit in chip.qubits:
             qubit._bare_frequency = qubit_frequency_dict.get(qubit.label)
@@ -531,17 +530,17 @@ class ConfigLoader:
         # fall back to monolithic params.yaml where needed. Do not require the
         # legacy monolithic file to exist.
         control_params = ControlParams(
-            control_amplitude=self._load_param_data(Param.CONTROL_AMPLITUDE),
-            readout_amplitude=self._load_param_data(Param.READOUT_AMPLITUDE),
-            control_vatt=self._load_param_data(Param.CONTROL_VATT),
-            readout_vatt=self._load_param_data(Param.READOUT_VATT),
-            pump_vatt=self._load_param_data(Param.PUMP_VATT),
-            control_fsc=self._load_param_data(Param.CONTROL_FSC),
-            readout_fsc=self._load_param_data(Param.READOUT_FSC),
-            pump_fsc=self._load_param_data(Param.PUMP_FSC),
-            capture_delay=self._load_param_data(Param.CAPTURE_DELAY),
-            capture_delay_word=self._load_param_data(Param.CAPTURE_DELAY_WORD),
-            jpa_params=self._load_param_data(Param.JPA_PARAMS),
+            control_amplitude=self._load_param_data("control_amplitude"),
+            readout_amplitude=self._load_param_data("readout_amplitude"),
+            control_vatt=self._load_param_data("control_vatt"),
+            readout_vatt=self._load_param_data("readout_vatt"),
+            pump_vatt=self._load_param_data("pump_vatt"),
+            control_fsc=self._load_param_data("control_fsc"),
+            readout_fsc=self._load_param_data("readout_fsc"),
+            pump_fsc=self._load_param_data("pump_fsc"),
+            capture_delay=self._load_param_data("capture_delay"),
+            capture_delay_word=self._load_param_data("capture_delay_word"),
+            jpa_params=self._load_param_data("jpa_params"),
         )
         return control_params
 
