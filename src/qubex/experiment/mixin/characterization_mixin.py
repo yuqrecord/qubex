@@ -1217,7 +1217,7 @@ class CharacterizationMixin(
         elif isinstance(stark_detuning, float):
             detuning = stark_detuning
             if abs(detuning) > 0.2:
-                raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz： the guard-banded AWG baseband limit.")
+                raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz: the guard-banded AWG baseband limit.")
             stark_detuning = {target: detuning for target in targets}
         else:
             for target in targets:
@@ -1248,18 +1248,22 @@ class CharacterizationMixin(
         data: dict[str, T1Data] = {}
 
         for target in targets:
-            stark_power = self.calc_control_amplitude(target=target, rabi_rate=stark_amplitude[target])
-            if stark_power > 1:
+            power = self.calc_control_amplitude(target=target, rabi_rate=stark_amplitude[target])
+            if power > 1:
                 raise ValueError("Drive amplitude of a stark tone must not exceed 1")
+            ramptime = stark_ramptime[target]
+            detuning = stark_detuning[target]
+
             def stark_t1_sequence(T: int) -> PulseSchedule:
                 with PulseSchedule([target]) as ps:
                     ps.add(target, self.get_hpi_pulse(target).repeated(2))
-                    ps.add(target,
-                           FlatTop(
-                               duration=T + stark_ramptime[target] * 2,
-                               amplitude=stark_power,
-                               tau = stark_ramptime[target],
-                           ).detuned(detuning=stark_detuning[target]))
+                    ps.add(
+                        target,
+                        FlatTop(
+                            duration=T + ramptime * 2,
+                            amplitude=power,
+                            tau=ramptime,
+                        ).detuned(detuning=detuning))
                 return ps
 
 
@@ -1275,9 +1279,9 @@ class CharacterizationMixin(
                 xaxis_type=xaxis_type,
             )
 
-            for target, sweep_data in sweep_result.data.items():
+            for qubit, sweep_data in sweep_result.data.items():
                 fit_result = fitting.fit_exp_decay(
-                    target=target,
+                    target=qubit,
                     x=sweep_data.sweep_range,
                     y=0.5 * (1 - sweep_data.normalized),
                     plot=plot,
@@ -1298,14 +1302,14 @@ class CharacterizationMixin(
                         t1_err=t1_err,
                         r2=r2,
                     )
-                    data[target] = t1_data
+                    data[qubit] = t1_data
 
                     fig = fit_result["fig"]
 
                     if save_image:
                         viz.save_figure_image(
                             fig,
-                            name=f"t1_{target}",
+                            name=f"t1_{qubit}",
                         )
 
         return ExperimentResult(data=data)
@@ -1325,7 +1329,6 @@ class CharacterizationMixin(
         plot: bool = True,
         save_image: bool = False,
     ) -> ExperimentResult[RamseyData]:
-        
         if targets is None:
             targets = self.qubit_labels
         elif isinstance(targets, str):
@@ -1338,7 +1341,7 @@ class CharacterizationMixin(
         elif isinstance(stark_detuning, float):
             detuning = stark_detuning
             if abs(detuning) > 0.2:
-                raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz： the guard-banded AWG baseband limit.")
+                raise ValueError("Detuning of a stark tone must not exceed 0.2 GHz: the guard-banded AWG baseband limit.")
             stark_detuning = {target: detuning for target in targets}
         else:
             for target in targets:
@@ -1366,46 +1369,48 @@ class CharacterizationMixin(
         data: dict[str, RamseyData] = {}
 
         for target in targets:
-            stark_power = self.calc_control_amplitude(target=target, rabi_rate=stark_amplitude[target])
-            if stark_power > 1:
+            power = self.calc_control_amplitude(target=target, rabi_rate=stark_amplitude[target])
+            if power > 1:
                 raise ValueError("Drive amplitude of a stark tone must not exceed 1")
+            ramptime = stark_ramptime[target]
+            detuning = stark_detuning[target]
             def stark_ramsey_sequence(T: int) -> PulseSchedule:
                 x90 = self.get_hpi_pulse(target=target)
                 with PulseSchedule([target]) as ps:
                     ps.add(target, x90)
                     if envelope_region == "full":
                         ps.add(
-                            target, 
+                            target,
                             FlatTop(
-                                duration = T + stark_ramptime[target] * 2,
-                                    amplitude=stark_power,
-                                    tau = stark_ramptime[target],
-                            ).detuned(detuning=stark_detuning[target]))
+                                duration=T + ramptime * 2,
+                                amplitude=power,
+                                tau=ramptime,
+                            ).detuned(detuning=detuning))
                         if second_rotation_axis == "X":
                             ps.add(target, x90.shifted(np.pi))
                         else:
                             ps.add(target, x90.shifted(-np.pi / 2))
                     else:
                         ps.add(
-                            target, 
+                            target,
                             FlatTop(
-                                duration = stark_ramptime[target] * 2,
-                                    amplitude=stark_power,
-                                    tau = stark_ramptime[target],
-                            ).detuned(detuning=stark_detuning[target]))
+                                duration=ramptime * 2,
+                                amplitude=power,
+                                tau=ramptime,
+                            ).detuned(detuning=detuning))
                         ps.add(target, x90.repeated(2))
                         ps.add(
-                            target, 
+                            target,
                             FlatTop(
-                                duration = T + stark_ramptime[target] * 2,
-                                    amplitude=stark_power,
-                                    tau = stark_ramptime[target],
-                            ).detuned(detuning=stark_detuning[target]))
+                                duration = T + ramptime * 2,
+                                amplitude=power,
+                                tau=ramptime,
+                            ).detuned(detuning=detuning))
                         if second_rotation_axis == "X":
                             ps.add(target, VirtualZ(theta=-np.pi))
                             ps.add(target, x90)
                         else:
-                            ps.add(target, VirtualZ(theta=-3*np.pi/2))
+                            ps.add(target, VirtualZ(theta=np.pi/2))
                             ps.add(target, x90)
                 return ps
 
@@ -1417,9 +1422,9 @@ class CharacterizationMixin(
                 plot=plot,
             )
 
-            for target, sweep_data in sweep_result.data.items():
+            for qubit, sweep_data in sweep_result.data.items():
                 fit_result = fitting.fit_ramsey(
-                    target=target,
+                    target=qubit,
                     times=sweep_data.sweep_range,
                     data=sweep_data.normalized,
                     title="Stark-driven Ramsey fringe",
@@ -1428,10 +1433,10 @@ class CharacterizationMixin(
                     plot=plot,
                 )
                 if fit_result["status"] == "success":
-                    f = self.qubits[target].frequency
+                    f = self.qubits[qubit].frequency
                     t2 = fit_result["tau"]
                     ramsey_freq = fit_result["f"]
-                    if stark_detuning[target] > 0:
+                    if stark_detuning[qubit] > 0:
                         dressed_freq = f - ramsey_freq
                     else:
                         dressed_freq = f + ramsey_freq
@@ -1444,19 +1449,22 @@ class CharacterizationMixin(
                         bare_freq=dressed_freq,
                         r2=r2,
                     )
-                    data[target] = ramsey_data
+                    data[qubit] = ramsey_data
+
+                    sign = 1 if stark_detuning[qubit] > 0 else -1
+                    ac_stark_shift = sign * ramsey_data.ramsey_freq
 
                     print("AC stark shift :")
-                    if stark_detuning[target] > 0:
-                        print(f"{target}: {ramsey_data.ramsey_freq:.6f}")
+                    print(f"{qubit}: {ac_stark_shift:.6f}")
                     print("")
+
 
                     fig = fit_result["fig"]
 
                     if save_image:
                         viz.save_figure_image(
                             fig,
-                            name=f"stark_ramsey_{target}",
+                            name=f"stark_ramsey_{qubit}",
                         )
 
         return ExperimentResult(data=data)

@@ -463,11 +463,11 @@ class CharacterizationProtocol(Protocol):
         time_range : ArrayLike, optional
             Time range of the experiment in ns.
         stark_detuning : float | dict[str, float], optional
-            Frequency offset of the Stark tone from the qubit frequency. Defaults to 0.15 GHz(Blue detuning).
+            Frequency offset of the Stark tone from the qubit frequency. Defaults to 0.15 GHz (Blue detuning).
         stark_amplitude : float| dict[str, float], optional
             Drive amplitude of the Stark tone expressed as the on-resonance Rabi rate Ω. Defaults to 0.1 GHz.
         stark_ramptime : float| dict[str, float], optional
-            Ramp time of the stark tone. Defaluts to 10 ns.
+            Ramp time of the stark tone. Defaults to 10 ns.
         shots : int, optional
             Number of shots. Defaults to DEFAULT_SHOTS.
         interval : float, optional
@@ -517,11 +517,11 @@ class CharacterizationProtocol(Protocol):
         time_range : ArrayLike, optional
             Time range of the experiment in ns. Defaults to np.arange(0, 401, 4).
         stark_detuning : float| dict[str, float], optional
-            Frequency offset of the Stark tone from the qubit frequency. Defaults to 0.15 GHz(Blue detuning).
+            Frequency offset of the Stark tone from the qubit frequency. Defaults to 0.15 GHz (Blue detuning).
         stark_amplitude : float| dict[str, float], optional
             Drive amplitude of the Stark tone expressed as the on-resonance Rabi rate Ω. Defaults to 0.1 GHz.
         stark_ramptime : float| dict[str, float], optional
-            Ramp time of the stark tone. Defaluts to 10 ns.
+            Ramp time of the stark tone. Defaults to 10 ns.
         second_rotation_axis : Literal["X", "Y"], optional
             Axis of the second rotation pulse. Defaults to "Y".
         shots : int, optional
