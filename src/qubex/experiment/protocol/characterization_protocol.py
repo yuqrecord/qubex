@@ -439,7 +439,7 @@ class CharacterizationProtocol(Protocol):
         """
         ...
 
-    def _simultaneous_measurement_coherenece(
+    def _simultaneous_measurement_coherence(
         self,
         targets: Collection[str] | str | None = None,
         *,
@@ -450,7 +450,7 @@ class CharacterizationProtocol(Protocol):
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
         save_image: bool = False,
-    ):
+    ) -> dict[str, ExperimentResult]:
         """
         Performs simultaneous T1, T2 echo, and Ramsey experiments.
 
@@ -465,7 +465,7 @@ class CharacterizationProtocol(Protocol):
         second_rotation_axis : Literal["X", "Y"], optional
             Axis of the second rotation pulse. Defaults to "Y".
         shots : int, optional
-            Number of shots. Defaults to CALIBRATION_SHOTS.
+            Number of shots. Defaults to DEFAULT_SHOTS.
         interval : float, optional
             Interval between shots. Defaults to DEFAULT_INTERVAL.
         plot : bool, optional
@@ -486,7 +486,7 @@ class CharacterizationProtocol(Protocol):
 
         Examples
         --------
-        >>> result = ex._simultaneous_measurement_coherenece(
+        >>> result = ex._simultaneous_measurement_coherence(
         ...     targets=["Q00", "Q01", "Q02"],
         ...     time_range=np.arange(0, 50_001, 1000),
         ...     detuning=0.001,
@@ -497,7 +497,7 @@ class CharacterizationProtocol(Protocol):
         >>> ramsey_result = result["Ramsey"]
 
         """
-        ... 
+        ...
 
     def _stark_t1_experiment(
         self,
