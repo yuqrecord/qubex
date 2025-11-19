@@ -1254,7 +1254,7 @@ class CharacterizationMixin(
                 "result_1": result_1,
             }
         )
-
+    
     def jazz_experiment(
         self,
         target_qubit: str,
@@ -1266,6 +1266,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
+        rotation_frequency: float = 0.001, # 追加
         plot: bool = True,
     ) -> Result:
         if time_range is None:
@@ -1290,6 +1291,10 @@ class CharacterizationMixin(
                 target_qubit: x180,
                 spectator_qubit: x180,
             }
+        
+        # rotation_frequencyが負の数の場合はエラーを出す
+        if rotation_frequency < 0:
+            raise ValueError("rotation_frequency must be non-negative.")
 
         def jazz_sequence(tau: float) -> PulseSchedule:
             with PulseSchedule([target_qubit, spectator_qubit]) as ps:
@@ -1300,9 +1305,9 @@ class CharacterizationMixin(
                 ps.add(spectator_qubit, x180[spectator_qubit])
                 ps.add(target_qubit, Blank(tau))
                 if second_rotation_axis == "X":
-                    ps.add(target_qubit, x90[target_qubit].shifted(np.pi))
+                    ps.add(target_qubit, x90[target_qubit].shifted(np.pi - rotation_frequency * 2*tau * 2*np.pi))  # 追加
                 else:
-                    ps.add(target_qubit, x90[target_qubit].shifted(-np.pi / 2))
+                    ps.add(target_qubit, x90[target_qubit].shifted(-np.pi / 2 - rotation_frequency * 2*tau * 2*np.pi))  # 追加
             return ps
 
         time_range = np.asarray(time_range)
@@ -1334,7 +1339,7 @@ class CharacterizationMixin(
         if fit_result["status"] != "success":
             raise RuntimeError("Fitting failed in JAZZ experiment.")
 
-        xi = fit_result["f"] * 1e-3
+        xi = fit_result["f"] * 1e-3 - rotation_frequency  # 追加
         zeta = 2 * xi
 
         print(f"ξ: {xi * 1e6:.2f} kHz")
@@ -1347,7 +1352,7 @@ class CharacterizationMixin(
                 **fit_result,
             }
         )
-
+    
     def obtain_coupling_strength(
         self,
         target_qubit: str,
@@ -1359,6 +1364,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
+        rotation_frequency: float = 0.001, # 追加
         plot: bool = True,
     ) -> Result:
         qubit_1 = target_qubit
@@ -1373,6 +1379,7 @@ class CharacterizationMixin(
             second_rotation_axis=second_rotation_axis,
             shots=shots,
             interval=interval,
+            rotation_frequency=rotation_frequency, # 追加
             plot=plot,
         )
 
@@ -1389,8 +1396,8 @@ class CharacterizationMixin(
 
         g = np.sqrt(np.abs((xi * (Delta_12 + a_1) * (Delta_12 - a_2)) / (a_1 + a_2)))
 
-        print(f"frequency_1: {f_1:.2f} GHz")
-        print(f"frequency_2: {f_2:.2f} GHz")
+        print(f"frequency_1: {f_1:.5f} GHz")
+        print(f"frequency_2: {f_2:.5f} GHz")
         print(f"Delta_12: {Delta_12 * 1e3:.2f} MHz")
         print(f"anharmonicity_1: {a_1 * 1e3:.2f} MHz")
         print(f"anharmonicity_2: {a_2 * 1e3:.2f} MHz")
@@ -1403,6 +1410,7 @@ class CharacterizationMixin(
                 "g": g,
             }
         )
+
 
     @deprecated("Use `measure_electrical_delay` instead.")
     def measure_phase_shift(
