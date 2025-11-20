@@ -1254,7 +1254,7 @@ class CharacterizationMixin(
                 "result_1": result_1,
             }
         )
-    
+
     def jazz_experiment(
         self,
         target_qubit: str,
@@ -1339,7 +1339,7 @@ class CharacterizationMixin(
         if fit_result["status"] != "success":
             raise RuntimeError("Fitting failed in JAZZ experiment.")
 
-        xi = fit_result["f"] * 1e-3 - rotation_frequency  # 追加
+        xi = fit_result["f"] * 1e-3 - rotation_frequency 
         zeta = 2 * xi
 
         print(f"ξ: {xi * 1e6:.2f} kHz")
@@ -1352,7 +1352,7 @@ class CharacterizationMixin(
                 **fit_result,
             }
         )
-    
+
     def obtain_coupling_strength(
         self,
         target_qubit: str,
