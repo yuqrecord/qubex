@@ -1266,7 +1266,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-        rotation_frequency: float = 0.001, # 追加
+        rotation_frequency: float = 0.001, 
         plot: bool = True,
     ) -> Result:
         if time_range is None:
@@ -1292,7 +1292,7 @@ class CharacterizationMixin(
                 spectator_qubit: x180,
             }
         
-        # rotation_frequencyが負の数の場合はエラーを出す
+        # Raise an error when rotation_frequency is negative
         if rotation_frequency < 0:
             raise ValueError("rotation_frequency must be non-negative.")
 
@@ -1305,9 +1305,9 @@ class CharacterizationMixin(
                 ps.add(spectator_qubit, x180[spectator_qubit])
                 ps.add(target_qubit, Blank(tau))
                 if second_rotation_axis == "X":
-                    ps.add(target_qubit, x90[target_qubit].shifted(np.pi - rotation_frequency * 2*tau * 2*np.pi))  # 追加
+                    ps.add(target_qubit, x90[target_qubit].shifted(np.pi - rotation_frequency * 2*tau * 2*np.pi)) 
                 else:
-                    ps.add(target_qubit, x90[target_qubit].shifted(-np.pi / 2 - rotation_frequency * 2*tau * 2*np.pi))  # 追加
+                    ps.add(target_qubit, x90[target_qubit].shifted(-np.pi / 2 - rotation_frequency * 2*tau * 2*np.pi)) 
             return ps
 
         time_range = np.asarray(time_range)
@@ -1364,7 +1364,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-        rotation_frequency: float = 0.001, # 追加
+        rotation_frequency: float = 0.001,
         plot: bool = True,
     ) -> Result:
         qubit_1 = target_qubit
@@ -1379,7 +1379,7 @@ class CharacterizationMixin(
             second_rotation_axis=second_rotation_axis,
             shots=shots,
             interval=interval,
-            rotation_frequency=rotation_frequency, # 追加
+            rotation_frequency=rotation_frequency,
             plot=plot,
         )
 
