@@ -1266,7 +1266,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-        rotation_frequency: float = 0.001, 
+        rotation_frequency: float = 0.0002, 
         plot: bool = True,
     ) -> Result:
         if time_range is None:
@@ -1364,7 +1364,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = CALIBRATION_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-        rotation_frequency: float = 0.001,
+        rotation_frequency: float = 0.0002,
         plot: bool = True,
     ) -> Result:
         qubit_1 = target_qubit
