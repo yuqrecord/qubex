@@ -606,7 +606,7 @@ class T2Data(SweepData):
         return fitting.fit_exp_decay(
             target=self.target,
             x=self.sweep_range,
-            y=0.5 * (1 - self.normalized),
+            y=0.5 * (1 + self.normalized),
             title="T2",
             xlabel="Time (μs)",
             ylabel="Population",
