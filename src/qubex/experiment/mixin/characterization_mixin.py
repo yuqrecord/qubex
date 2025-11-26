@@ -1266,7 +1266,7 @@ class CharacterizationMixin(
         second_rotation_axis: Literal["X", "Y"] = "Y",
         shots: int = DEFAULT_SHOTS,
         interval: float = DEFAULT_INTERVAL,
-        rotation_frequency: float = 0.001, 
+        rotation_frequency: float = 0.001,
         plot: bool = True,
     ) -> Result:
         if time_range is None:
@@ -1291,7 +1291,7 @@ class CharacterizationMixin(
                 target_qubit: x180,
                 spectator_qubit: x180,
             }
-        
+
         # Raise an error when rotation_frequency is negative
         if rotation_frequency < 0:
             raise ValueError("rotation_frequency must be non-negative.")
@@ -1305,9 +1305,19 @@ class CharacterizationMixin(
                 ps.add(spectator_qubit, x180[spectator_qubit])
                 ps.add(target_qubit, Blank(tau))
                 if second_rotation_axis == "X":
-                    ps.add(target_qubit, x90[target_qubit].shifted(np.pi - rotation_frequency * 2*tau * 2*np.pi)) 
+                    ps.add(
+                        target_qubit,
+                        x90[target_qubit].shifted(
+                            np.pi - rotation_frequency * 2 * tau * 2 * np.pi
+                        ),
+                    )
                 else:
-                    ps.add(target_qubit, x90[target_qubit].shifted(-np.pi / 2 - rotation_frequency * 2*tau * 2*np.pi)) 
+                    ps.add(
+                        target_qubit,
+                        x90[target_qubit].shifted(
+                            -np.pi / 2 - rotation_frequency * 2 * tau * 2 * np.pi
+                        ),
+                    )
             return ps
 
         time_range = np.asarray(time_range)
@@ -1339,7 +1349,7 @@ class CharacterizationMixin(
         if fit_result["status"] != "success":
             raise RuntimeError("Fitting failed in JAZZ experiment.")
 
-        xi = fit_result["f"] * 1e-3 - rotation_frequency 
+        xi = fit_result["f"] * 1e-3 - rotation_frequency
         zeta = 2 * xi
 
         print(f"ξ: {xi * 1e6:.2f} kHz")
@@ -1405,12 +1415,10 @@ class CharacterizationMixin(
 
         return Result(
             data={
-                "xi": xi,
-                "zeta": zeta,
                 "g": g,
+                **result.data,
             }
         )
-
 
     @deprecated("Use `measure_electrical_delay` instead.")
     def measure_phase_shift(
