@@ -1394,7 +1394,6 @@ class CharacterizationMixin(
         )
 
         xi = result["xi"]
-        zeta = result["zeta"]
 
         f_1 = self.qubits[qubit_1].frequency
         f_2 = self.qubits[qubit_2].frequency
