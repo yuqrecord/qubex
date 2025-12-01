@@ -722,13 +722,12 @@ class CharacterizationMixin(
             plot=False,
             verbose=verbose,
         )
+        fit_data = {
+            target: data.fit()["f_resonance"]
+            for target, data in result.data.items()
+        }
 
         if plot:
-            fit_data = {
-                target: data.fit()["f_resonance"]
-                for target, data in result.data.items()
-            }
-
             print("\nResults\n-------")
             print("ef frequency (GHz):")
             for target, fit in fit_data.items():
