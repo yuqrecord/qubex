@@ -536,8 +536,8 @@ class T1Data(SweepData):
             title="T1",
             xlabel="Time (μs)",
             ylabel="Population",
-            xaxis_type="log",
-            yaxis_type="linear",
+            xaxis_type=self.xaxis_type,
+            yaxis_type=self.yaxis_type,
             **kwargs,
         )
 
@@ -610,6 +610,8 @@ class T2Data(SweepData):
             title="T2",
             xlabel="Time (μs)",
             ylabel="Population",
+            xaxis_type=self.xaxis_type,
+            yaxis_type=self.yaxis_type,
             **kwargs,
         )
 
@@ -684,6 +686,8 @@ class RamseyData(SweepData):
             target=self.target,
             times=self.sweep_range,
             data=self.normalized,
+            xaxis_type=self.xaxis_type,
+            yaxis_type=self.yaxis_type,
             **kwargs,
         )
 
@@ -753,6 +757,8 @@ class RBData(SweepData):
             target=self.target,
             x=self.sweep_range,
             y=self.normalized,
+            xaxis_type=self.xaxis_type,
+            yaxis_type=self.yaxis_type,
             **kwargs,
         )
 
