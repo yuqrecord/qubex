@@ -32,6 +32,7 @@ from ...pulse import (
     RampType,
     Rect,
     Waveform,
+    VirtualZ,
 )
 from ...style import COLORS
 from ...typing import TargetMap
@@ -1262,7 +1263,6 @@ class CharacterizationMixin(
 
         for target in targets:
             for T in time_range:
-                # Prepare pulse schedules for all targets for each mode
                 t1_schedules = t1_sequence(target, T)
                 t2_schedules = t2_sequence(target, T)
                 ramsey_schedules = ramsey_sequence(target, T)
@@ -1271,7 +1271,6 @@ class CharacterizationMixin(
                     target: self.qubits[target].frequency + detuning
                     for target in targets
                 }
-
                 measurements = {
                     "T1": self.measure(
                         sequence=t1_schedules,
