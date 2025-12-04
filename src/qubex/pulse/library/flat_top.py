@@ -1,22 +1,13 @@
 from __future__ import annotations
 
-from typing import Final, Literal
+from typing import Final
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from typing_extensions import TypeAlias
 
 from ..pulse import Pulse
 from .drag import Drag
-from .vert_ramp import VertRamp
-
-RampType: TypeAlias = Literal[
-    "Gaussian",
-    "RaisedCosine",
-    "Sintegral",
-    "Bump",
-    "VertRamp",
-]
+from .ramp_type import RampType
 
 
 class FlatTop(Pulse):
@@ -54,7 +45,7 @@ class FlatTop(Pulse):
         amplitude: float,
         tau: float,
         beta: float | None = None,
-        type: RampType = "RaisedCosine",
+        type: RampType | None = None,
         **kwargs,
     ):
         self.amplitude: Final = amplitude
@@ -82,7 +73,7 @@ class FlatTop(Pulse):
         amplitude: float,
         tau: float,
         beta: float | None = None,
-        type: RampType = "RaisedCosine",
+        type: RampType | None = None,
     ) -> NDArray:
         """
         Flat-top pulse function.
@@ -99,7 +90,7 @@ class FlatTop(Pulse):
             Rise and fall time of the pulse in ns.
         beta : float, optional
             DRAG correction coefficient. Default is None.
-        type : RampType, optional
+        type : RampType | None, optional
             Type of the pulse. Default is "RaisedCosine".
 
         Returns
@@ -107,6 +98,9 @@ class FlatTop(Pulse):
         NDArray
             Flat-top pulse values.
         """
+        if type is None:
+            type = "RaisedCosine"
+
         t = np.asarray(t)
         T = 2 * tau
         flattime = duration - T
@@ -116,34 +110,21 @@ class FlatTop(Pulse):
 
         beta = beta or 0.0
 
-        if type == "VertRamp":
-            v_rise = VertRamp.func(
-                t=t,
-                duration=tau,
-                amplitude=amplitude,
-            )
-            v_flat = amplitude * np.ones_like(t)
-            v_fall = VertRamp.func(
-                t=-(t - duration),
-                duration=tau,
-                amplitude=amplitude,
-            )
-        else:
-            v_rise = Drag.func(
-                t=t,
-                duration=T,
-                amplitude=amplitude,
-                beta=beta,
-                type=type,
-            )
-            v_flat = amplitude * np.ones_like(t)
-            v_fall = Drag.func(
-                t=t - flattime,
-                duration=T,
-                amplitude=amplitude,
-                beta=beta,
-                type=type,
-            )
+        v_rise = Drag.func(
+            t=t,
+            duration=T,
+            amplitude=amplitude,
+            beta=beta,
+            type=type,
+        )
+        v_flat = amplitude * np.ones_like(t)
+        v_fall = Drag.func(
+            t=t - flattime,
+            duration=T,
+            amplitude=amplitude,
+            beta=beta,
+            type=type,
+        )
 
         return np.where(
             (t >= 0) & (t <= duration),
