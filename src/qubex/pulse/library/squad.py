@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+from typing import Final, Literal
+
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
+from ..pulse import Pulse
+
+SmoothingType = Literal["none", "hann"]
+
+
+class Squad(Pulse):
+    """
+    Smooth quasi-adiabatic (SQUAD) pulse.
+
+    The pulse consists of:
+    - ramp-up on [0, tau]
+    - flat top on [tau, duration - tau]
+    - ramp-down on [duration - tau, duration]
+
+    - "none" : constant adiabatic ramp (FAQUAD)
+    - "hann" : smooth adiabatic ramp using a sin^2(pi u) window.
+
+    Parameters
+    ----------
+    duration : float
+        Total duration of the pulse in ns.
+    amplitude : float
+        Flat-top amplitude of the pulse.
+    delta : float
+        Detuning parameter for Counter-Diabatic term in GHz.
+    tau : float
+        Rise and fall time (each side) in ns.
+    window : {"none", "hann"}, optional
+        Window type for the SQUAD ramp. Default is "none".
+
+    Notes
+    -----
+    flat-top period = duration - 2 * tau
+    """
+
+    def __init__(
+        self,
+        *,
+        duration: float,
+        amplitude: float,
+        delta: float,
+        tau: float,
+        factor: float | None = None,
+        window: SmoothingType | None = None,
+        **kwargs,
+    ):
+        self.amplitude: Final = amplitude
+        self.delta: Final = delta
+        self.tau: Final = tau
+        self.factor: Final = factor
+        self.window: Final = window
+
+        if duration == 0:
+            values = np.array([], dtype=np.complex128)
+        else:
+            t = self._sampling_points(duration)
+            values = self.func(
+                t=t,
+                duration=duration,
+                amplitude=amplitude,
+                delta=delta,
+                tau=tau,
+                factor=factor,
+                window=window,
+            )
+
+        super().__init__(values, **kwargs)
+
+    @staticmethod
+    def _squad_ramp(
+        t: NDArray,
+        *,
+        tau: float,
+        amplitude: float,
+        delta: float,
+        window: SmoothingType | None = None,
+    ) -> NDArray:
+        """
+        window = "none":
+            Constant-adiabaticity ramp (FAQUAD)
+                I(t) = Ω Δ u / sqrt(Δ^2 + Ω^2(1 - u^2))
+
+        window = "hann":
+            SQUAD using f(u) = sin^2(pi u)
+                θ_max = arctan(Ω/Δ)
+                s(t)  = sin(θ_max) * g(u)
+                g(u)  = u - sin(2πu)/(2π)
+                Ω(t) = - Δ * s(t) / sqrt(1 - s(t)^2)
+        """
+        if window is None:
+            window = "hann"
+
+        t = np.asarray(t, dtype=float)
+        values = np.zeros_like(t, dtype=float)
+
+        if tau <= 0:
+            return values
+
+        Ω_max: float = amplitude
+        Δ = delta
+
+        # Normalized time u
+        u = t / tau
+        mask = (u >= 0.0) & (u <= 1.0)
+        if not np.any(mask):
+            return values
+
+        u = u[mask]
+
+        if window == "none":
+            Ω_t = (Ω_max * Δ * u) / np.sqrt(Δ**2 + Ω_max**2 * (1.0 - u**2))
+            values[mask] = Ω_t
+
+        elif window == "hann":
+            θ_max = np.arctan(Ω_max / Δ)
+            g_u = u - np.sin(2.0 * np.pi * u) / (2.0 * np.pi)
+            s_t = np.sin(θ_max) * g_u
+            Ω_t = Δ * s_t / np.sqrt(1.0 - s_t**2)
+            values[mask] = Ω_t
+        else:
+            raise ValueError(f"Invalid window type: {window}")
+
+        return values
+
+    @staticmethod
+    def _squad_flat_top_envelope(
+        t: NDArray,
+        *,
+        duration: float,
+        amplitude: float,
+        delta: float,
+        tau: float,
+        window: SmoothingType | None = None,
+    ) -> NDArray:
+        """
+        Flat-top constant-adiabaticity pulse envelope.
+        """
+        t = np.asarray(t, dtype=float)
+        values = np.zeros_like(t, dtype=np.complex128)
+
+        if duration <= 0:
+            return values
+
+        flattime = duration - 2 * tau
+        if flattime < 0:
+            raise ValueError("duration must be greater than `2 * tau`.")
+
+        # Regions:
+        #  - ramp-up: 0 <= t < tau
+        #  - flat:   tau <= t <= duration - tau
+        #  - ramp-down: duration - tau < t <= duration
+
+        # Rising ramp
+        mask_up = (t >= 0.0) & (t < tau)
+        if np.any(mask_up):
+            values[mask_up] = Squad._squad_ramp(
+                t[mask_up],
+                tau=tau,
+                amplitude=amplitude,
+                delta=delta,
+                window=window,
+            )
+
+        # Flat-top
+        mask_flat = (t >= tau) & (t <= duration - tau)
+        if np.any(mask_flat):
+            values[mask_flat] = amplitude
+
+        # Falling ramp: time-reversed ramp
+        mask_down = (t > duration - tau) & (t <= duration)
+        if np.any(mask_down):
+            u = duration - t[mask_down]
+            values[mask_down] = Squad._squad_ramp(
+                u,
+                tau=tau,
+                amplitude=amplitude,
+                delta=delta,
+                window=window,
+            )
+
+        return values
+
+    @staticmethod
+    def func(
+        t: ArrayLike,
+        *,
+        duration: float,
+        amplitude: float,
+        tau: float,
+        delta: float,
+        factor: float | None = None,
+        window: SmoothingType | None = None,
+    ) -> NDArray:
+        t = np.asarray(t, dtype=float)
+
+        if duration <= 0:
+            return np.zeros_like(t, dtype=np.complex128)
+
+        if factor is None:
+            factor = 1.0
+
+        I = Squad._squad_flat_top_envelope(
+            t,
+            duration=duration,
+            amplitude=amplitude,
+            delta=delta,
+            tau=tau,
+            window=window,
+        )
+
+        if factor == 0:
+            return I
+
+        dI_dt = np.gradient(I, t)
+        Q = (-factor * delta * dI_dt) / (delta**2 + I**2)
+
+        return I + 1j * Q
