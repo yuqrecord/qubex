@@ -76,6 +76,7 @@ class FlatTop(Pulse):
                 type=type,
                 correction_type=correction_type,
                 correction_factor=correction_factor,
+                **kwargs,
             )
 
         super().__init__(values, **kwargs)
@@ -92,6 +93,7 @@ class FlatTop(Pulse):
         type: RampType | None = None,
         correction_type: Literal["DRAG", "CD"] | None = None,
         correction_factor: float | None = None,
+        **kwargs,
     ) -> NDArray:
         """
         Flat-top pulse function.
@@ -139,6 +141,7 @@ class FlatTop(Pulse):
                 amplitude=amplitude,
                 delta=delta,
                 type=type,
+                **kwargs,
             )
 
         mask_flat = (t >= tau) & (t <= duration - tau)
@@ -154,6 +157,7 @@ class FlatTop(Pulse):
                 amplitude=amplitude,
                 delta=delta,
                 type=type,
+                **kwargs,
             )
 
         if beta is not None:
@@ -192,6 +196,7 @@ def _ramp_func(
     amplitude: float,
     delta: float | None = None,
     type: RampType | None = None,
+    **kwargs,
 ) -> NDArray:
     if type is None:
         type = "RaisedCosine"
@@ -237,6 +242,7 @@ def _ramp_func(
             tau=(duration * 0.5) // Pulse.SAMPLING_PERIOD * Pulse.SAMPLING_PERIOD,
             delta=delta,
             factor=0,
+            **kwargs,
         )
     else:
         raise ValueError(f"Unknown ramp type: {type}")

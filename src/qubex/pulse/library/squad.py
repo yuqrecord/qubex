@@ -82,18 +82,6 @@ class Squad(Pulse):
         delta: float,
         window: SmoothingType | None = None,
     ) -> NDArray:
-        """
-        window = "none":
-            Constant-adiabaticity ramp (FAQUAD)
-                I(t) = Ω Δ u / sqrt(Δ^2 + Ω^2(1 - u^2))
-
-        window = "hann":
-            SQUAD using f(u) = sin^2(pi u)
-                θ_max = arctan(Ω/Δ)
-                s(t)  = sin(θ_max) * g(u)
-                g(u)  = u - sin(2πu)/(2π)
-                Ω(t) = - Δ * s(t) / sqrt(1 - s(t)^2)
-        """
         if window is None:
             window = "hann"
 
@@ -115,7 +103,9 @@ class Squad(Pulse):
         u = u[mask]
 
         if window == "none":
-            Ω_t = (Ω_max * Δ * u) / np.sqrt(Δ**2 + Ω_max**2 * (1.0 - u**2))
+            θ_max = np.arctan(Ω_max / Δ)
+            s_t = np.sin(θ_max) * u
+            Ω_t = Δ * s_t / np.sqrt(1.0 - s_t**2)
             values[mask] = Ω_t
 
         elif window == "hann":
@@ -219,6 +209,6 @@ class Squad(Pulse):
             return I
 
         dI_dt = np.gradient(I, t)
-        Q = (-factor * delta * dI_dt) / (delta**2 + I**2)
+        Q = (factor * delta * dI_dt) / (delta**2 + I**2)
 
         return I + 1j * Q
