@@ -112,7 +112,10 @@ class Sintegral(Pulse):
         return np.where(
             (t >= 0) & (t <= duration),
             np.where(
-                (t <= duration // 2),
+                (
+                    t
+                    <= (duration * 0.5) // Pulse.SAMPLING_PERIOD * Pulse.SAMPLING_PERIOD
+                ),
                 values,
                 values if is_odd else 2 * amplitude - values,
             ),
