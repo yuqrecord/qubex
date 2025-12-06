@@ -349,6 +349,7 @@ class CharacterizationProtocol(Protocol):
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
         save_image: bool = False,
+        xaxis_type: Literal["linear", "log"] = "log",
     ) -> ExperimentResult[T2Data]:
         """
         Conducts a T2 experiment in series.
