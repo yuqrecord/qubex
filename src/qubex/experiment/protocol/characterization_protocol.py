@@ -322,6 +322,8 @@ class CharacterizationProtocol(Protocol):
             Whether to plot the measured signals. Defaults to True.
         save_image : bool, optional
             Whether to save the images. Defaults to False.
+        xaxis_type : Literal["linear", "log"], optional
+            Type of x-axis scale for plotting. Defaults to "log".
 
         Returns
         -------
@@ -372,6 +374,8 @@ class CharacterizationProtocol(Protocol):
             Whether to plot the measured signals. Defaults to True.
         save_image : bool, optional
             Whether to save the images. Defaults to False.
+        xaxis_type : Literal["linear", "log"], optional
+            Type of x-axis scale for plotting. Defaults to "log".
 
         Returns
         -------
