@@ -169,12 +169,14 @@ class Experiment(
         classifier_dir: Path | str = CLASSIFIER_DIR,
         classifier_type: Literal["kmeans", "gmm"] = "gmm",
         configuration_mode: Literal["ge-ef-cr", "ge-cr-cr"] = "ge-cr-cr",
+        mock_mode: bool = False,
     ):
         self._load_config(
             chip_id=chip_id,
             config_dir=config_dir,
             params_dir=params_dir,
             configuration_mode=configuration_mode,
+            mock_mode=mock_mode,
         )
         qubits = self._create_qubit_labels(
             muxes=muxes,
@@ -224,6 +226,7 @@ class Experiment(
         config_dir: Path | str | None,
         params_dir: Path | str | None,
         configuration_mode: Literal["ge-ef-cr", "ge-cr-cr"],
+        mock_mode: bool = False,
     ):
         """Load the configuration files."""
         self.system_manager.load(
@@ -231,6 +234,7 @@ class Experiment(
             config_dir=config_dir,
             params_dir=params_dir,
             configuration_mode=configuration_mode,
+            mock_mode=mock_mode,
         )
 
     def _create_qubit_labels(

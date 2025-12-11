@@ -165,6 +165,8 @@ class SystemManager:
         """
         self._experiment_system = experiment_system
         # update device controller to reflect the new experiment system
+        if self._mock_mode:
+            return
         self._update_device_controller(experiment_system)
         self.update_cache()
 
@@ -234,6 +236,7 @@ class SystemManager:
         params_dir: Path | str | None,
         targets_to_exclude: list[str] | None = None,
         configuration_mode: Literal["ge-ef-cr", "ge-cr-cr"] | None = None,
+        mock_mode: bool = False,
     ):
         """
         Load the experiment system and device controller.
@@ -258,6 +261,7 @@ class SystemManager:
             targets_to_exclude=targets_to_exclude,
             configuration_mode=configuration_mode,
         )
+        self._mock_mode = mock_mode
         experiment_system = self.config_loader.get_experiment_system(chip_id)
         self.set_experiment_system(experiment_system)
 
