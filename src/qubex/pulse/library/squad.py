@@ -43,6 +43,10 @@ class Squad(Pulse):
         If None, defaults to 1.0.
     window : {"none", "hann", "beta"}, optional
         Window type for the SQUAD ramp. Default is "hann".
+    beta_mode : float, optional
+        Mode of the beta distribution for window="beta". Default is 1/3.
+    beta_sum : float, optional
+        Sum of alpha and beta parameters for window="beta". Default is 5.0.
 
     Notes
     -----
@@ -58,6 +62,8 @@ class Squad(Pulse):
         tau: float,
         factor: float | None = None,
         window: SmoothingType | None = None,
+        beta_mode: float = 1.0 / 3.0,
+        beta_sum: float = 5.0,
         **kwargs,
     ):
         self.amplitude: Final = amplitude
@@ -65,6 +71,8 @@ class Squad(Pulse):
         self.tau: Final = tau
         self.factor: Final = factor
         self.window: Final = window
+        self.beta_mode: Final = beta_mode
+        self.beta_sum: Final = beta_sum
 
         if duration == 0:
             values = np.array([], dtype=np.complex128)
@@ -78,6 +86,8 @@ class Squad(Pulse):
                 tau=tau,
                 factor=factor,
                 window=window,
+                beta_mode=beta_mode,
+                beta_sum=beta_sum,
             )
 
         super().__init__(values, **kwargs)
@@ -93,6 +103,8 @@ class Squad(Pulse):
         amplitude: float,
         delta: float,
         window: SmoothingType | None = None,
+        beta_mode: float = 1.0 / 3.0,
+        beta_sum: float = 5.0,
     ) -> NDArray:
         """
         Rising (or falling, if t is time-reversed) SQUAD ramp.
@@ -140,8 +152,8 @@ class Squad(Pulse):
         elif window == "beta":
             # Beta-shaped smooth ramp:
             # use regularized incomplete beta I_u(α,β) as g(u)
-            alpha = 2.0
-            beta_param = 3.0
+            alpha = beta_mode * (beta_sum - 2.0) + 1.0
+            beta_param = beta_sum - alpha
             g_u = betainc(alpha, beta_param, u_sel)
 
         else:
@@ -165,6 +177,8 @@ class Squad(Pulse):
         delta: float,
         tau: float,
         window: SmoothingType | None = None,
+        beta_mode: float = 1.0 / 3.0,
+        beta_sum: float = 5.0,
     ) -> NDArray:
         """
         Flat-top constant-adiabaticity pulse envelope (I component only).
@@ -193,6 +207,8 @@ class Squad(Pulse):
                 amplitude=amplitude,
                 delta=delta,
                 window=window,
+                beta_mode=beta_mode,
+                beta_sum=beta_sum,
             )
 
         # Flat-top
@@ -210,6 +226,8 @@ class Squad(Pulse):
                 amplitude=amplitude,
                 delta=delta,
                 window=window,
+                beta_mode=beta_mode,
+                beta_sum=beta_sum,
             )
 
         return values
@@ -227,6 +245,8 @@ class Squad(Pulse):
         delta: float,
         factor: float | None = None,
         window: SmoothingType | None = None,
+        beta_mode: float = 1.0 / 3.0,
+        beta_sum: float = 5.0,
     ) -> NDArray:
         """
         Full complex SQUAD pulse:
@@ -251,6 +271,8 @@ class Squad(Pulse):
             delta=delta,
             tau=tau,
             window=window,
+            beta_mode=beta_mode,
+            beta_sum=beta_sum,
         )
 
         if factor == 0:
