@@ -590,8 +590,7 @@ class QuantumSimulator:
             initial_state = self.system.ground_state
 
         control = controls[0]
-        N = int(control.duration / dt)
-        times = np.linspace(0, control.duration, N + 1)
+        times = self._generate_simulation_times(control.duration, dt)
 
         if control.n_segments == 0:
             return SimulationResult(
@@ -605,7 +604,7 @@ class QuantumSimulator:
         control_samples = [control.get_samples(times) for control in controls]
 
         U_list = [self.system.identity_matrix]
-        for idx in range(N):
+        for idx, delta_t in enumerate(np.diff(times)):
             t = times[idx]
             H = self.system.get_rotating_hamiltonian(t)
             for control, samples in zip(controls, control_samples):
@@ -618,7 +617,7 @@ class QuantumSimulator:
                 gamma = Omega * np.exp(-1j * delta * t)  # continuous
                 H_ctrl = gamma * ad + np.conj(gamma) * a
                 H += H_ctrl
-            U = (-1j * H * dt).expm() @ U_list[-1]
+            U = (-1j * H * delta_t).expm() @ U_list[-1]
             U_list.append(U)
 
         rho0 = qt.ket2dm(initial_state)
@@ -761,8 +760,7 @@ class QuantumSimulator:
         self._validate_controls(controls)
 
         control = controls[0]
-        n_steps = int(control.duration / dt)
-        times = np.linspace(0, control.duration, n_steps + 1)
+        times = self._generate_simulation_times(control.duration, dt)
 
         static_hamiltonian = self.system.zero_matrix
         coupling_hamiltonian: list = []
@@ -839,6 +837,24 @@ class QuantumSimulator:
             times=params["times"],
             collapse_operators=params["collapse_operators"],
         )
+
+    @staticmethod
+    def _generate_simulation_times(
+        duration: float,
+        dt: float,
+    ) -> npt.NDArray:
+        times = np.arange(0, duration, dt)
+
+        # Handle potential floating point overshoot from arange
+        if len(times) > 0 and times[-1] > duration:
+            times = times[:-1]
+
+        if len(times) == 0 or not np.isclose(times[-1], duration, atol=1e-12):
+            times = np.append(times, duration)
+        else:
+            times[-1] = duration
+
+        return times
 
     @staticmethod
     def _convert_pulse_schedule_to_controls(
