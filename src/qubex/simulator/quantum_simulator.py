@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Final, Literal, Optional, TypeAlias
+from typing import Final, Literal, Optional, Sequence, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -494,6 +494,150 @@ class SimulationResult:
             subspace=subspace,
         )
         qv.display_bloch_sphere_from_density_matrices(rho)
+
+    def _get_general_substates(
+        self,
+        labels: Sequence[str],
+        *,
+        frame_frequencies: dict[str, float] | None = None,
+    ) -> npt.NDArray:
+        # 1. Extract substates (ptrace)
+        # Note: qutip.ptrace always sorts the indices, so the order of subsystems
+        # in the result might differ from 'labels'.
+        target_indices = [self.system.get_index(label) for label in labels]
+        substates = np.array([state.ptrace(target_indices) for state in self.states])
+
+        # 2. Restore the order of subsystems if necessary
+        sorted_indices = sorted(target_indices)
+        if target_indices != sorted_indices:
+            # Calculate permutation to match the requested 'labels' order
+            perm_order = [sorted_indices.index(i) for i in target_indices]
+            substates = np.array([rho.permute(perm_order) for rho in substates])
+
+        # 3. Apply frame transformation if requested
+        if frame_frequencies is not None:
+            substates = self._apply_frame_transformation(
+                substates, labels, frame_frequencies
+            )
+
+        return substates
+
+    def _apply_frame_transformation(
+        self,
+        substates: npt.NDArray,
+        labels: Sequence[str],
+        frame_frequencies: dict[str, float],
+    ) -> npt.NDArray:
+        times = self.get_times()
+        dims = [self.system.get_object(label).dimension for label in labels]
+
+        # Construct the effective Hamiltonian for the frame change
+        # H_frame = sum( delta_i * n_i )
+        H_frame = qt.qzero(dims)
+        for i, label in enumerate(labels):
+            if label not in frame_frequencies:
+                continue
+
+            target_freq = frame_frequencies[label]
+            qubit_freq = self.system.get_object(label).frequency
+            delta = 2 * np.pi * (target_freq - qubit_freq)
+
+            if delta == 0:
+                continue
+
+            # Operator for the i-th subsystem: I x ... x n_i x ... x I
+            ops = [qt.qeye(d) for d in dims]
+            ops[i] = qt.num(dims[i])
+            H_frame += delta * qt.tensor(*ops)
+
+        if H_frame.norm() == 0:
+            return substates
+
+        # Apply unitary transformation: rho' = U rho U^dagger
+        # U(t) = exp(i * H_frame * t)
+        transformed_substates = []
+        for t, rho in zip(times, substates):
+            U = (1j * H_frame * t).expm()
+            transformed_substates.append(rho.transform(U))
+
+        return np.array(transformed_substates)
+
+    def _get_general_bloch_vectors(
+        self,
+        labels: Sequence[str],
+        *,
+        basis_set: tuple[Sequence[int], Sequence[int]],
+        frame_frequencies: dict[str, float] | None = None,
+        n_samples: int | None = None,
+    ) -> npt.NDArray:
+        dimensions = [self.system.get_object(label).dimension for label in labels]
+        ket0 = qt.tensor(
+            *[qt.basis(dim, basis) for dim, basis in zip(dimensions, basis_set[0])]
+        )
+        ket1 = qt.tensor(
+            *[qt.basis(dim, basis) for dim, basis in zip(dimensions, basis_set[1])]
+        )
+        bra0 = ket0.dag()
+        bra1 = ket1.dag()
+
+        X: qt.Qobj = ket0 @ bra1 + ket1 @ bra0
+        Y: qt.Qobj = -1j * ket0 @ bra1 + 1j * ket1 @ bra0
+        Z: qt.Qobj = ket0 @ bra0 - ket1 @ bra1
+
+        buffer = []
+        states = self._get_general_substates(
+            labels=labels,
+            frame_frequencies=frame_frequencies,
+        )
+        for rho in states:
+            x = qt.expect(X, rho)
+            y = qt.expect(Y, rho)
+            z = qt.expect(Z, rho)
+            buffer.append([x, y, z])
+
+        vectors = np.real(buffer)
+        vectors = downsample(vectors, n_samples)
+        return vectors
+
+    def _plot_general_bloch_vectors(
+        self,
+        labels: Sequence[str],
+        *,
+        basis_set: tuple[Sequence[int], Sequence[int]],
+        frame_frequencies: dict[str, float] | None = None,
+        n_samples: int | None = None,
+    ) -> None:
+        vectors = self._get_general_bloch_vectors(
+            labels,
+            basis_set=basis_set,
+            frame_frequencies=frame_frequencies,
+            n_samples=n_samples,
+        )
+        times = self.get_times(
+            n_samples=n_samples,
+        )
+        plot_bloch_vectors(
+            times=times,
+            bloch_vectors=vectors,
+            mode="lines",
+            title=f"State evolution : {', '.join(labels)}",
+        )
+
+    def _display_general_bloch_sphere(
+        self,
+        labels: Sequence[str],
+        *,
+        basis_set: tuple[Sequence[int], Sequence[int]],
+        frame_frequencies: dict[str, float] | None = None,
+        n_samples: int | None = None,
+    ) -> None:
+        vectors = self._get_general_bloch_vectors(
+            labels,
+            basis_set=basis_set,
+            frame_frequencies=frame_frequencies,
+            n_samples=n_samples,
+        )
+        qv.display_bloch_sphere_from_bloch_vectors(vectors)
 
     def show_last_population(
         self,
