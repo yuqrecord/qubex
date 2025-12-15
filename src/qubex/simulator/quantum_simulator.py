@@ -32,6 +32,7 @@ class Control:
         durations: list | npt.NDArray | None = None,
         frequency: float | None = None,
         interpolation: str = "previous",
+        final_frame_shift: float = 0.0,
     ):
         """
         A control signal for a quantum system.
@@ -69,6 +70,7 @@ class Control:
             else np.full(len(self.waveform), Waveform.SAMPLING_PERIOD)
         )
         self.interpolation = interpolation
+        self.final_frame_shift = final_frame_shift
 
         if len(self.waveform) != len(self.durations):
             raise ValueError("The lengths of rabi_rates and durations do not match.")
@@ -587,6 +589,7 @@ class QuantumSimulator:
     def simulate(
         self,
         controls: list[Control] | PulseSchedule,
+        *,
         initial_state: qt.Qobj | dict | None = None,
         dt: float = TIME_STEP,
         n_samples: int | None = None,
@@ -674,6 +677,7 @@ class QuantumSimulator:
     def mesolve(
         self,
         controls: list[Control] | PulseSchedule,
+        *,
         initial_state: qt.Qobj | dict | None = None,
         dt: float | None = None,
         n_samples: int | None = None,
@@ -738,6 +742,7 @@ class QuantumSimulator:
     def propagator(
         self,
         controls: list[Control] | PulseSchedule,
+        *,
         dt: float | None = None,
         options: dict | None = None,
     ) -> qt.Qobj:
@@ -749,13 +754,16 @@ class QuantumSimulator:
                 "method": "bdf",
             }
 
+        if isinstance(controls, PulseSchedule):
+            controls = self._convert_pulse_schedule_to_controls(controls)
+        self._validate_controls(controls)
+
         params = self.create_simulation_parameters(
             controls=controls,
             dt=dt,
         )
 
-        # Run the simulation
-        return qt.propagator(
+        S: qt.Qobj = qt.propagator(
             H=params["hamiltonian"],
             tlist=params["times"],
             c_ops=params["collapse_operators"],
@@ -763,10 +771,18 @@ class QuantumSimulator:
             options=options,
         )  # type: ignore
 
+        R = self.system.get_rotation_matrix(
+            {control.target: -control.final_frame_shift for control in controls},
+        )
+        SR = qt.to_super(R)
+
+        return SR @ S
+
     def gate_fidelity(
         self,
-        target_unitary: qt.Qobj,
         controls: list[Control] | PulseSchedule,
+        target_unitary: qt.Qobj,
+        *,
         dt: float | None = None,
         options: dict | None = None,
     ) -> float:
@@ -784,6 +800,7 @@ class QuantumSimulator:
     def create_simulation_parameters(
         self,
         controls: list[Control] | PulseSchedule,
+        *,
         dt: float | None = None,
     ) -> dict:
         if dt is None:
@@ -850,6 +867,7 @@ class QuantumSimulator:
     def create_simulation_model(
         self,
         controls: list[Control] | PulseSchedule,
+        *,
         initial_state: qt.Qobj | dict | None = None,
         dt: float | None = None,
     ) -> SimulationModel:
@@ -915,6 +933,7 @@ class QuantumSimulator:
                     frequency=frequencies[label],
                     waveform=waveform,
                     durations=durations,
+                    final_frame_shift=pulse_schedule.get_final_frame_shift(label),
                 )
             )
         return controls
