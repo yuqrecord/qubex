@@ -2229,3 +2229,132 @@ class CalibrationMixin(
                 continue
 
         return Result(data=return_data)
+
+
+    def measure_cr_crosstalk(
+        self,
+        *,
+        control_qubit: str,
+        target_qubit: str,
+        time_range: ArrayLike | None = None,
+        ramptime: float | None = None,
+        cr_amplitude: float | None = None,
+        cr_phase: float | None = None,
+        cancel_amplitude: float | None = None,
+        cancel_phase: float | None = None,
+        echo: bool = False,
+        control_state: str = "0",
+        x90: TargetMap[Waveform] | None = None,
+        x180: TargetMap[Waveform] | None = None,
+        ramp_type: Literal[
+            "Gaussian",
+            "RaisedCosine",
+            "Sintegral",
+            "Bump",
+        ] = "RaisedCosine",
+        x180_margin: float | None = None,
+        shots: int = DEFAULT_SHOTS,
+        interval: float = DEFAULT_INTERVAL,
+        reset_awg_and_capunits: bool = True,
+        plot: bool = True,
+    ) -> Result:
+
+        cr_label = f"{control_qubit}-{target_qubit}"
+        if time_range is None:
+            time_range = np.array(DEFAULT_CR_TIME_RANGE, dtype=float)
+        else:
+            time_range = np.array(time_range, dtype=float)
+        if ramptime is None:
+            ramptime = DEFAULT_CR_RAMPTIME
+        if cr_amplitude is None:
+            cr_amplitude = 1.0
+        if cr_phase is None:
+            cr_phase = 0.0
+        if cancel_amplitude is None:
+            cancel_amplitude = 0.0
+        if cancel_phase is None:
+            cancel_phase = 0.0
+        if x180_margin is None:
+            x180_margin = 0.0
+        if x90 is None:
+            x90 = {
+                control_qubit: self.x90(control_qubit),
+                target_qubit: self.x90(target_qubit),
+            }
+
+
+        if x180 is None:
+            x180 = {
+                control_qubit: self.x180(control_qubit),
+            }
+
+        if reset_awg_and_capunits:
+            self.reset_awg_and_capunits(qubits=[control_qubit, target_qubit])
+
+        control_states = []
+        target_states = []
+        for T in time_range:
+            result = self.state_tomography(
+                CrossResonance(
+                    control_qubit=control_qubit,
+                    target_qubit=target_qubit,
+                    cr_amplitude=cr_amplitude,
+                    cr_duration=T + ramptime * 2,
+                    cr_ramptime=ramptime,
+                    cr_phase=cr_phase,
+                    cancel_amplitude=cancel_amplitude,
+                    cancel_phase=cancel_phase,
+                    echo=echo,
+                    pi_pulse=x180[control_qubit],
+                    pi_margin=x180_margin,
+                    ramp_type=ramp_type,
+                ),
+                x90=x90,
+                initial_state={control_qubit: control_state},
+                shots=shots,
+                interval=interval,
+                reset_awg_and_capunits=False,
+                plot=False,
+            )
+            control_states.append(np.array(result[control_qubit]))
+            target_states.append(np.array(result[target_qubit]))
+
+        control_states = np.array(control_states)
+        target_states = np.array(target_states)
+
+        effective_drive_range = time_range + ramptime
+
+        fit_result = fitting.fit_rotation(
+            effective_drive_range,
+            target_states,
+            plot=False,
+            title=f"Target qubit dynamics of {cr_label} : |{control_state}〉",
+            xlabel="Drive time (ns)",
+            ylabel=f"Target qubit : {target_qubit}",
+        )
+
+        if plot:
+            viz.plot_bloch_vectors(
+                effective_drive_range,
+                control_states,
+                title=f"Control qubit dynamics of {cr_label} : |{control_state}〉",
+                xlabel="Drive time (ns)",
+                ylabel=f"Control qubit : {control_qubit}",
+            )
+            viz.display_bloch_sphere(control_states)
+
+            fit_result["fig"].show()
+            fit_result["fig3d"].show()
+            viz.display_bloch_sphere(target_states)
+
+        return Result(
+            data={
+                "time_range": time_range,
+                "effective_drive_range": effective_drive_range,
+                "control_states": control_states,
+                "target_states": target_states,
+                "fit_result": fit_result,
+                "cr_amplitude": cr_amplitude,
+                "ramptime": ramptime,
+            }
+        )
