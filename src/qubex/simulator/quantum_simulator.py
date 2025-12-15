@@ -235,6 +235,7 @@ class SimulationResult:
         self,
         label: str,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
     ) -> npt.NDArray:
         """
         Extract the substates of a qubit from the states.
@@ -243,13 +244,16 @@ class SimulationResult:
         ----------
         label : str
             The label of the qubit.
+        frame : FrameType | None, optional
+            The frame of the substates, by default "qubit"
+        frame_frequency : float | None, optional
+            The frequency of the frame, by default None.
+            If specified, this takes precedence over `frame`.
 
         Returns
         -------
         list[qt.Qobj]
             The substates of the qubit.
-        frame : FrameType | None, optional
-            The frame of the substates, by default "qubit"
         """
         if frame is None:
             frame = "qubit"
@@ -257,13 +261,17 @@ class SimulationResult:
         index = self.system.get_index(label)
         substates = np.array([state.ptrace(index) for state in self.states])
 
-        if frame == "drive":
-            # rotate the states to the drive frame
+        target_frequency = None
+        if frame_frequency is not None:
+            target_frequency = frame_frequency
+        elif frame == "drive":
+            target_frequency = self.control_frequencies[label]
+
+        if target_frequency is not None:
             times = self.get_times()
             qubit = self.system.get_object(label)
-            f_drive = self.control_frequencies[label]
             f_qubit = qubit.frequency
-            delta = 2 * np.pi * (f_drive - f_qubit)
+            delta = 2 * np.pi * (target_frequency - f_qubit)
             dim = qubit.dimension
             N = qt.num(dim)
             U = lambda t: (-1j * delta * N * t).expm()
@@ -277,6 +285,7 @@ class SimulationResult:
         self,
         label: str,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
     ) -> qt.Qobj:
         """
         Extract the initial substate of a qubit from the states.
@@ -287,18 +296,23 @@ class SimulationResult:
             The label of the qubit.
         frame : FrameType | None, optional
             The frame of the substates, by default "qubit"
+        frame_frequency : float | None, optional
+            The frequency of the frame, by default None.
 
         Returns
         -------
         qt.Qobj
             The initial substate of the qubit.
         """
-        return self.get_substates(label, frame=frame)[0]
+        return self.get_substates(label, frame=frame, frame_frequency=frame_frequency)[
+            0
+        ]
 
     def get_final_substate(
         self,
         label: str,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
     ) -> qt.Qobj:
         """
         Extract the final substate of a qubit from the states.
@@ -309,13 +323,17 @@ class SimulationResult:
             The label of the qubit.
         frame : FrameType | None, optional
             The frame of the substates, by default "qubit"
+        frame_frequency : float | None, optional
+            The frequency of the frame, by default None.
 
         Returns
         -------
         qt.Qobj
             The final substate of the qubit.
         """
-        return self.get_substates(label, frame=frame)[-1]
+        return self.get_substates(label, frame=frame, frame_frequency=frame_frequency)[
+            -1
+        ]
 
     def get_times(
         self,
@@ -339,6 +357,7 @@ class SimulationResult:
         *,
         n_samples: int | None = None,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
         subspace: SubspaceType = "ge",
     ) -> npt.NDArray:
         """
@@ -352,6 +371,8 @@ class SimulationResult:
             The number of samples to return, by default None
         frame : FrameType | None, optional
             The frame of the substates, by default None
+        frame_frequency : float | None, optional
+            The frequency of the frame, by default None.
 
         Returns
         -------
@@ -361,7 +382,9 @@ class SimulationResult:
         X = qt.sigmax()
         Y = qt.sigmay()
         Z = qt.sigmaz()
-        substates = self.get_substates(label, frame=frame)
+        substates = self.get_substates(
+            label, frame=frame, frame_frequency=frame_frequency
+        )
         buffer = []
         level = self._get_subspace_slice(subspace)
         for substate in substates:
@@ -380,6 +403,7 @@ class SimulationResult:
         *,
         n_samples: int | None = None,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
         subspace: SubspaceType = "ge",
     ) -> npt.NDArray:
         """
@@ -395,13 +419,17 @@ class SimulationResult:
             The number of samples to return, by default None
         frame : FrameType | None, optional
             The frame of the substates, by default None
+        frame_frequency : float | None, optional
+            The frequency of the frame, by default None.
 
         Returns
         -------
         list[qt.Qobj]
             The density matrices of the qubit.
         """
-        substates = self.get_substates(label, frame=frame)
+        substates = self.get_substates(
+            label, frame=frame, frame_frequency=frame_frequency
+        )
         level = self._get_subspace_slice(subspace)
         rho = np.array([substate.full() for substate in substates])[:, level, level]
         rho = downsample(rho, n_samples)
@@ -413,12 +441,14 @@ class SimulationResult:
         *,
         n_samples: int | None = None,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
         subspace: SubspaceType = "ge",
     ) -> None:
         vectors = self.get_bloch_vectors(
             label,
             n_samples=n_samples,
             frame=frame,
+            frame_frequency=frame_frequency,
             subspace=subspace,
         )
         times = self.get_times(
@@ -437,6 +467,7 @@ class SimulationResult:
         *,
         n_samples: int | None = None,
         frame: FrameType | None = None,
+        frame_frequency: float | None = None,
         subspace: SubspaceType = "ge",
     ) -> None:
         """
@@ -450,11 +481,14 @@ class SimulationResult:
             The number of samples to return, by default None
         frame : FrameType | None, optional
             The frame of the substates, by default None
+        frame_frequency : float | None, optional
+            The frequency of the frame, by default None.
         """
         rho = self.get_density_matrices(
             label,
             n_samples=n_samples,
             frame=frame,
+            frame_frequency=frame_frequency,
             subspace=subspace,
         )
         qv.display_bloch_sphere_from_density_matrices(rho)
