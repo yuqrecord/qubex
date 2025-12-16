@@ -93,7 +93,9 @@ class Sintegral(Pulse):
             n=power,
         )
         Omega -= sin_pow_integral(0, n=power)
-        scale = amplitude / sin_pow_integral(np.pi, n=power)
+        scale = amplitude / (
+            sin_pow_integral(np.pi, n=power) - sin_pow_integral(0, n=power)
+        )
         Omega *= scale
         if beta is None:
             values = Omega
@@ -110,9 +112,12 @@ class Sintegral(Pulse):
         return np.where(
             (t >= 0) & (t <= duration),
             np.where(
-                (t <= duration // 2),
+                (
+                    t
+                    <= (duration * 0.5) // Pulse.SAMPLING_PERIOD * Pulse.SAMPLING_PERIOD
+                ),
                 values,
-                values if is_odd else 2 - values,
+                values if is_odd else 2 * amplitude - values,
             ),
             0,
         ).astype(np.complex128)
