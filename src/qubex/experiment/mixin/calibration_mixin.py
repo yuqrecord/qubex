@@ -2230,13 +2230,12 @@ class CalibrationMixin(
 
         return Result(data=return_data)
 
-
     def measure_cr_crosstalk(
         self,
         *,
         control_qubit: str,
         target_qubit: str,
-        spectator_qubits:list[str],
+        spectator_qubits: list[str],
         time_range: ArrayLike | None = None,
         ramptime: float | None = None,
         cr_amplitude: float | None = None,
@@ -2259,7 +2258,6 @@ class CalibrationMixin(
         reset_awg_and_capunits: bool = True,
         plot: bool = True,
     ) -> Result:
-
         cr_label = f"{control_qubit}-{target_qubit}"
         if time_range is None:
             time_range = np.array(DEFAULT_CR_TIME_RANGE, dtype=float)
@@ -2283,10 +2281,7 @@ class CalibrationMixin(
                 target_qubit: self.x90(target_qubit),
             }
             x90.update(
-                {
-                    spectator: self.x90(spectator)
-                    for spectator in spectator_qubits
-                }
+                {spectator: self.x90(spectator) for spectator in spectator_qubits}
             )
 
         if x180 is None:
@@ -2295,9 +2290,11 @@ class CalibrationMixin(
             }
 
         if reset_awg_and_capunits:
-            self.reset_awg_and_capunits(qubits=[control_qubit, target_qubit]+spectator_qubits)
+            self.reset_awg_and_capunits(
+                qubits=[control_qubit, target_qubit] + spectator_qubits
+            )
 
-        def cr_sequence(targets:list[str], T:float) -> PulseSchedule:
+        def cr_sequence(targets: list[str], T: float) -> PulseSchedule:
             cr = CrossResonance(
                 control_qubit=control_qubit,
                 target_qubit=target_qubit,
@@ -2312,24 +2309,25 @@ class CalibrationMixin(
                 pi_margin=x180_margin,
                 ramp_type=ramp_type,
             )
-            with PulseSchedule(targets) as ps: 
+            with PulseSchedule(targets) as ps:
                 ps.call(cr)
-            
+
             return ps
 
         control_states = []
         target_states = []
         spectators_states = defaultdict(list)
 
-        with self.modified_frequencies(frequencies={
-            spectator_qubit : self.targets[cr_label].frequency 
-            for spectator_qubit in spectator_qubits
-        }):
+        with self.modified_frequencies(
+            frequencies={
+                spectator_qubit: self.targets[cr_label].frequency
+                for spectator_qubit in spectator_qubits
+            }
+        ):
             for T in time_range:
                 result = self.state_tomography(
                     sequence=cr_sequence(
-                        targets=[control_qubit, target_qubit]+spectator_qubits, 
-                        T=T
+                        targets=[control_qubit, target_qubit] + spectator_qubits, T=T
                     ),
                     x90=x90,
                     initial_state={control_qubit: control_state},
@@ -2346,8 +2344,10 @@ class CalibrationMixin(
 
         control_states = np.array(control_states)
         target_states = np.array(target_states)
-        spectators_states = {spectator: np.array(states) for spectator, states in spectators_states.items()}
-
+        spectators_states = {
+            spectator: np.array(states)
+            for spectator, states in spectators_states.items()
+        }
 
         effective_drive_range = time_range + ramptime
 
@@ -2404,13 +2404,13 @@ class CalibrationMixin(
                 "ramptime": ramptime,
             }
         )
-    
+
     def cr_crosstalk_hamiltonian_tomography(
         self,
         *,
         control_qubit: str,
         target_qubit: str,
-        spectator_qubits:list[str]|None = None,
+        spectator_qubits: list[str] | None = None,
         time_range: ArrayLike | None = None,
         ramptime: float | None = None,
         cr_amplitude: float | None = None,
@@ -2430,16 +2430,16 @@ class CalibrationMixin(
         reset_awg_and_capunits: bool = True,
         plot: bool = True,
     ) -> Result:
-        
-
         cr_label = f"{control_qubit}-{target_qubit}"
 
         if spectator_qubits is None:
             spectator_qubits = []
             for spectator in self.get_spectators(control_qubit):
-                if spectator.label in self.qubit_labels and spectator.label != target_qubit:
+                if (
+                    spectator.label in self.qubit_labels
+                    and spectator.label != target_qubit
+                ):
                     spectator_qubits.append(spectator.label)
-        
 
         if cr_amplitude is None:
             cr_amplitude = 1.0
@@ -2448,7 +2448,9 @@ class CalibrationMixin(
             ramptime = self._ramptime(control_qubit, target_qubit)
 
         if reset_awg_and_capunits:
-            self.reset_awg_and_capunits(qubits=[control_qubit, target_qubit]+spectator_qubits)
+            self.reset_awg_and_capunits(
+                qubits=[control_qubit, target_qubit] + spectator_qubits
+            )
 
         result_0 = self.measure_cr_crosstalk(
             time_range=time_range,
@@ -2723,23 +2725,27 @@ class CalibrationMixin(
             margin=dict(t=90, b=10, l=10, r=10),
         )
 
-
         spectators_fit_results_0 = result_0["spectators_fit_result"]
         spectators_fit_results_1 = result_1["spectators_fit_result"]
         figs_s = {}
         figs_s_3d = {}
         for label in spectators_fit_results_0.keys():
-            f_delta = self.qubits[control_qubit].frequency - self.qubits[target_qubit].frequency
-            f_delta_st = self.qubits[label].frequency - self.qubits[target_qubit].frequency
-            
+            f_delta = (
+                self.qubits[control_qubit].frequency
+                - self.qubits[target_qubit].frequency
+            )
+            f_delta_st = (
+                self.qubits[label].frequency - self.qubits[target_qubit].frequency
+            )
+
             fig_s_0: go.Figure = spectators_fit_results_0[label]["fig"]
             fig_s_1: go.Figure = spectators_fit_results_1[label]["fig"]
 
             fig_s = make_subplots(
-            rows=2,
-            cols=1,      
-            shared_xaxes=True,
-            vertical_spacing=0.1,
+                rows=2,
+                cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.1,
             )
 
             for data in fig_s_0.data:
@@ -2757,7 +2763,7 @@ class CalibrationMixin(
                     row=1,
                     col=1,
                 )
-            
+
             for data in fig_s_1.data:
                 data: go.Scatter
                 fig_s.add_trace(
@@ -2812,7 +2818,7 @@ class CalibrationMixin(
                 rows=1,
                 cols=2,
                 subplot_titles=[
-                    "Control |0〉",  
+                    "Control |0〉",
                     "Control |1〉",
                 ],
                 specs=[[{"type": "scatter3d"}, {"type": "scatter3d"}]],
@@ -2824,10 +2830,10 @@ class CalibrationMixin(
                 incoming_fig: go.Figure,
                 row: int,
                 col: int,
-                name:str|None=None,
+                name: str | None = None,
             ) -> None:
                 for ddx, data in enumerate(incoming_fig.data):
-                    if ddx%2==0:
+                    if ddx % 2 == 0:
                         name_suffix = "data"
                     else:
                         name_suffix = "fit"
@@ -2844,26 +2850,22 @@ class CalibrationMixin(
                         if name is not None:
                             fig.data[-1].name = f"{name_suffix} ({name})"
                             fig.data[-1].showlegend = True
-                
 
             add_trace_with_color(
-                fig = fig_s_3d,
-                incoming_fig = fig_s_3d_0,
-                row = 1,
-                col = 1,
+                fig=fig_s_3d,
+                incoming_fig=fig_s_3d_0,
+                row=1,
+                col=1,
             )
 
             add_trace_with_color(
-                fig = fig_s_3d,
-                incoming_fig = fig_s_3d_1,
-                row = 1,
-                col = 2,
+                fig=fig_s_3d,
+                incoming_fig=fig_s_3d_1,
+                row=1,
+                col=2,
                 name="raw",
             )
 
-
-            
-            
             fig_s_3d.update_layout(
                 title=dict(
                     text=f"Spectator qubit dynamics : {label} of {cr_label}",
@@ -2878,7 +2880,7 @@ class CalibrationMixin(
             )
 
             figs_s[label] = fig_s
-            figs_s_3d[label] = fig_s_3d        
+            figs_s_3d[label] = fig_s_3d
 
         if viz.plot:
             fig_c.show()
@@ -2888,7 +2890,7 @@ class CalibrationMixin(
                 fig_s_.show()
             for _, fig_s_3d in figs_s_3d.items():
                 fig_s_3d.show()
-            
+
             print("Qubit frequencies:")
             print(f"  ω_c ({control_qubit}) : {f_control * 1e3:.3f} MHz")
             print(f"  ω_t ({target_qubit}) : {f_target * 1e3:.3f} MHz")
@@ -2928,11 +2930,17 @@ class CalibrationMixin(
                 print("")
                 print(f"  ω_s ({spectator}) : {f_s * 1e3:.3f} MHz")
                 print(f"  ω_t ({target_qubit}) : {f_target * 1e3:.3f} MHz")
-                print(f"  Δ_st ({spectator}-{target_qubit}) : {(f_s - f_target) * 1e3:.3f} MHz")
-                
-                spectator_Omega_0 = result_0["spectators_fit_result"][spectator]["Omega"]
-                spectator_Omega_1 = result_1["spectators_fit_result"][spectator]["Omega"]
-                
+                print(
+                    f"  Δ_st ({spectator}-{target_qubit}) : {(f_s - f_target) * 1e3:.3f} MHz"
+                )
+
+                spectator_Omega_0 = result_0["spectators_fit_result"][spectator][
+                    "Omega"
+                ]
+                spectator_Omega_1 = result_1["spectators_fit_result"][spectator][
+                    "Omega"
+                ]
+
                 spectator_Omega = np.concatenate(
                     [
                         0.5 * (spectator_Omega_0 + spectator_Omega_1),
@@ -2952,10 +2960,14 @@ class CalibrationMixin(
                 for key, value in spectator_coeffs.items():
                     print(f"  {key} : {value * 1e3:+.4f} MHz")
                 print("")
-                print(f" r2 (control |0〉): {spectators_fit_results_0[spectator]['r2']:.4f}")
-                print(f" r2 (control |1〉): {spectators_fit_results_1[spectator]['r2']:.4f}")
+                print(
+                    f" r2 (control |0〉): {spectators_fit_results_0[spectator]['r2']:.4f}"
+                )
+                print(
+                    f" r2 (control |1〉): {spectators_fit_results_1[spectator]['r2']:.4f}"
+                )
                 print("")
-        
+
         coeffs_[target_qubit] = coeffs
         return Result(
             data={
