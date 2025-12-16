@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Final
 
 import numpy as np
+from matplotlib.pylab import beta
 from numpy.typing import ArrayLike, NDArray
 from scipy.special import comb
 
@@ -183,3 +184,117 @@ def sin_pow_derivative(
     for coeff, s_pow, c_pow in terms:
         result += coeff * (np.sin(x) ** s_pow) * (np.cos(x) ** c_pow)
     return result
+
+
+class MultiDerivativeSintegral(Pulse):
+    """
+    A class representing a sine integral pulse.
+
+    Parameters
+    ----------
+    duration : float
+        Duration of the pulse in ns.
+    amplitude : float
+        Amplitude of the pulse.
+    power : int
+        Power of the sine integral function.
+    betas : float, optional
+        multi-Derivative pulse correction coefficients. Default is None.
+
+    Examples
+    --------
+    >>> pulse = Sintegral(
+    ...     duration=100,
+    ...     amplitude=1.0,
+    ...     power=2,
+    ... )
+    """
+
+    def __init__(
+        self,
+        *,
+        duration: float,
+        amplitude: float,
+        power: int = 2,
+        betas: dict[int, float] | None = None,
+        **kwargs,
+    ):
+        self.amplitude: Final = amplitude
+        self.power: Final = power
+        self.betas: Final = betas
+
+        if duration == 0:
+            values = np.array([], dtype=np.complex128)
+        else:
+            values = self.func(
+                t=self._sampling_points(duration),
+                duration=duration,
+                amplitude=amplitude,
+                power=power,
+                betas=betas,
+            )
+
+        super().__init__(values, **kwargs)
+
+    @staticmethod
+    def func(
+        t: ArrayLike,
+        *,
+        duration: float,
+        amplitude: float,
+        power: int,
+        betas: float | None = None,
+    ) -> NDArray:
+        """
+        Evaluate the sine integral function.
+
+        Parameters
+        ----------
+        t : ArrayLike
+            Time points at which to evaluate the pulse.
+        duration : float
+            Duration of the pulse in ns.
+        amplitude : float
+            Amplitude of the pulse.
+        power : int
+            Power of the sine integral function.
+        betas : dict[int, float], optional
+            multi-Derivative pulse correction coefficients. Default is None.
+        """
+        if duration == 0:
+            raise ValueError("Duration cannot be zero.")
+        t = np.asarray(t)
+
+        Omega = sin_pow_integral(
+            2 * np.pi * t / duration,
+            n=power,
+        )
+        Omega -= sin_pow_integral(0, n=power)
+        scale = amplitude / (
+            sin_pow_integral(np.pi, n=power) - sin_pow_integral(0, n=power)
+        )
+        Omega *= scale
+        if betas is None:
+            values = Omega
+        else:
+            dOmega = sin_pow_derivative(
+                2 * np.pi * t / duration,
+                n=power,
+                m=0,
+            )
+            dOmega *= scale * 2 * np.pi / duration
+            values = Omega + 1j * betas * dOmega
+
+        is_odd = power % 2 == 1
+        return np.where(
+            (t >= 0) & (t <= duration),
+            np.where(
+                (
+                    t
+                    <= (duration * 0.5) // Pulse.SAMPLING_PERIOD * Pulse.SAMPLING_PERIOD
+                ),
+                values,
+                values if is_odd else 2 * amplitude - values,
+            ),
+            0,
+        ).astype(np.complex128)
