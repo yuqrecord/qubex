@@ -38,8 +38,8 @@ class Sintegral(Pulse):
         *,
         duration: float,
         amplitude: float,
-        beta: float | None = None,
         power: int = 2,
+        beta: float | None = None,
         **kwargs,
     ):
         self.amplitude: Final = amplitude
@@ -65,8 +65,8 @@ class Sintegral(Pulse):
         *,
         duration: float,
         amplitude: float,
+        power: int = 2,
         beta: float | None = None,
-        power: int,
     ) -> NDArray:
         """
         Evaluate the sine integral function.
@@ -195,10 +195,10 @@ class MultiDerivativeSintegral(Pulse):
         Duration of the pulse in ns.
     amplitude : float
         Amplitude of the pulse.
-    power : int
-        Power of the sine integral function.
     betas : float, optional
         multi-Derivative pulse correction coefficients. Default is None.
+    power : int
+        Power of the sine integral function.
 
     Examples
     --------
@@ -214,8 +214,8 @@ class MultiDerivativeSintegral(Pulse):
         *,
         duration: float,
         amplitude: float,
-        power: int = 2,
         betas: dict[int, float] | None = None,
+        power: int = 2,
         **kwargs,
     ):
         self.amplitude: Final = amplitude
@@ -241,8 +241,8 @@ class MultiDerivativeSintegral(Pulse):
         *,
         duration: float,
         amplitude: float,
+        betas: dict[int, float] | None = None,
         power: int,
-        betas: float | None = None,
     ) -> NDArray:
         """
         Evaluate the sine integral function.
@@ -255,10 +255,11 @@ class MultiDerivativeSintegral(Pulse):
             Duration of the pulse in ns.
         amplitude : float
             Amplitude of the pulse.
-        power : int
-            Power of the sine integral function.
         betas : dict[int, float], optional
             multi-Derivative pulse correction coefficients. Default is None.
+        power : int
+            Power of the sine integral function.
+
         """
         if duration == 0:
             raise ValueError("Duration cannot be zero.")

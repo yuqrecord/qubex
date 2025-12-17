@@ -6,10 +6,6 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from ..pulse import Pulse
-from .bump import Bump
-from .gaussian import Gaussian
-from .raised_cosine import RaisedCosine
-from .ramp_type import RampType
 from .sintegral import MultiDerivativeSintegral
 
 
@@ -23,9 +19,11 @@ class MultiDerivative(Pulse):
         Duration of the DRAG pulse in ns.
     amplitude : float
         Amplitude of the DRAG pulse.
+
     betas : dict[int, float] | None
         multi-Derivative pulse correction coefficients.
-
+    power : int
+        Power of the sine integral function.
 
     Examples
     --------
