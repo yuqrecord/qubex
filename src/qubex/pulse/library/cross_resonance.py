@@ -184,7 +184,7 @@ class MultiDerivativeCrossResonance(PulseSchedule):
         cr_betas = cr_betas or {}
         cancel_amplitude = cancel_amplitude or 0.0
         cancel_phase = cancel_phase or 0.0
-        cancel_betas = cancel_betas or 0.0
+        cancel_betas = cancel_betas or {}
         pi_margin = pi_margin or 0.0
 
         cr_label = f"{control_qubit}-{target_qubit}"
