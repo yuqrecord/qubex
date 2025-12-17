@@ -135,7 +135,7 @@ class CrossResonance(PulseSchedule):
 
 class MultiDerivativeCrossResonance(PulseSchedule):
     """
-    A class representing the cross-resonance pulse schedule used in quantum experiments.
+    A class representing the multi-derivative cross-resonance pulse schedule.
 
     Parameters
     ----------
@@ -153,12 +153,16 @@ class MultiDerivativeCrossResonance(PulseSchedule):
         The phase of the cross-resonance pulse in radians.
     cr_betas: dict[int, float]
         The multi-derivative pulse correction coefficients for the cross-resonance pulse.
+    cr_power: int = 2
+        The power of the sine integral for the cross-resonance pulse.
     cancel_amplitude: float = 0.0
         The amplitude of the cancel pulse.
     cancel_phase: float = 0.0
         The phase of the cancel pulse in radians.
     cancel_betas: dict[int, float] = None
         The multi-derivative pulse correction coefficients for the cancel pulse.
+    cancel_power: int = 2
+        The power of the sine integral for the cancel pulse.
     echo: bool = False
         If True, the echo pulse is added to the schedule.
     """
@@ -172,9 +176,11 @@ class MultiDerivativeCrossResonance(PulseSchedule):
         cr_ramptime: float | None = None,
         cr_phase: float | None = None,
         cr_betas: dict[int, float] | None = None,
+        cr_power: int = 2,
         cancel_amplitude: float | None = None,
         cancel_phase: float | None = None,
         cancel_betas: dict[int, float] | None = None,
+        cancel_power: int = 2,
         echo: bool = False,
         pi_pulse: Waveform | None = None,
         pi_margin: float | None = None,
@@ -195,6 +201,7 @@ class MultiDerivativeCrossResonance(PulseSchedule):
             tau=cr_ramptime,
             phase=cr_phase,
             betas=cr_betas,
+            power=cr_power,
         )
 
         cancel_waveform = MultiDerivativeFlatTop(
@@ -203,6 +210,7 @@ class MultiDerivativeCrossResonance(PulseSchedule):
             tau=cr_ramptime,
             phase=cancel_phase,
             betas=cancel_betas,
+            power=cancel_power,
         )
 
         self.control_qubit = control_qubit
@@ -212,9 +220,11 @@ class MultiDerivativeCrossResonance(PulseSchedule):
         self.cr_ramptime = cr_ramptime
         self.cr_phase = cr_phase
         self.cr_betas = cr_betas
+        self.cr_power = cr_power
         self.cancel_amplitude = cancel_amplitude
         self.cancel_phase = cancel_phase
         self.cancel_betas = cancel_betas
+        self.cancel_power = cancel_power
         self.echo = echo
         self.pi_pulse = pi_pulse
         self.cr_label = cr_label
