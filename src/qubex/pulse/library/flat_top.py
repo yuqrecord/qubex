@@ -8,6 +8,7 @@ from numpy.typing import ArrayLike, NDArray
 from ..pulse import Pulse
 from .bump import Bump
 from .gaussian import Gaussian
+from .multi_derivative import MultiDerivative
 from .raised_cosine import RaisedCosine
 from .ramp_type import RampType
 from .sintegral import Sintegral
@@ -246,3 +247,130 @@ def _ramp_func(
         )
     else:
         raise ValueError(f"Unknown ramp type: {type}")
+
+
+class MultiDerivativeFlatTop(Pulse):
+    """
+    A class to represent a raised cosine flat-top pulse.
+
+    Parameters
+    ----------
+    duration : float
+        Duration of the pulse in ns.
+    amplitude : float
+        Amplitude of the pulse.
+    tau : float
+        Rise and fall time of the pulse in ns.
+    betas : dict[int, float], optional
+        multi-Derivative pulse correction coefficients. Default is None.
+
+    Examples
+    --------
+    >>> pulse = FlatTop(
+    ...     duration=100,
+    ...     amplitude=1.0,
+    ...     tau=10,
+    ... )
+
+    Notes
+    -----
+    flat-top period = duration - 2 * tau
+    """
+
+    def __init__(
+        self,
+        *,
+        duration: float,
+        amplitude: float,
+        tau: float,
+        betas: dict[int, float] | None = None,
+        power: int = 2,
+        **kwargs,
+    ):
+        self.amplitude: Final = amplitude
+        self.tau: Final = tau
+        self.betas: Final = betas
+        self.power: Final = power
+
+        if duration == 0:
+            values = np.array([], dtype=np.complex128)
+        else:
+            values = self.func(
+                t=self._sampling_points(duration),
+                duration=duration,
+                amplitude=amplitude,
+                tau=tau,
+                betas=betas,
+                power=power,
+            )
+
+        super().__init__(values, **kwargs)
+
+    @staticmethod
+    def func(
+        t: ArrayLike,
+        *,
+        duration: float,
+        amplitude: float,
+        tau: float,
+        betas: dict[int, float] | None = None,
+        power: int = 2,
+    ) -> NDArray:
+        """
+            Flat-top pulse function.
+
+        Parameters
+        ----------
+        t : ArrayLike
+            Time points at which to evaluate the pulse.
+        duration : float
+            Duration of the pulse in ns.
+        amplitude : float
+            Amplitude of the pulse.
+        tau : float
+            Rise and fall time of the pulse in ns.
+        betas : dict[int, float], optional
+            multi-Derivative pulse correction coefficients. Default is None.
+        power : int
+            Power of the sine integral function.
+
+        Returns
+        -------
+        NDArray
+            Flat-top pulse values.
+        """
+        t = np.asarray(t)
+        T = 2 * tau
+        flattime = duration - T
+
+        if flattime < 0:
+            raise ValueError("duration must be greater than `2 * tau`.")
+
+        v_rise = MultiDerivative.func(
+            t=t,
+            duration=T,
+            amplitude=amplitude,
+            betas=betas,
+            power=power,
+        )
+        v_flat = amplitude * np.ones_like(t)
+        v_fall = MultiDerivative.func(
+            t=t - flattime,
+            duration=T,
+            amplitude=amplitude,
+            betas=betas,
+            power=power,
+        )
+        return np.where(
+            (t >= 0) & (t <= duration),
+            np.where(
+                (t >= tau) & (t <= duration - tau),
+                v_flat,
+                np.where(
+                    (t < tau),
+                    v_rise,
+                    v_fall,
+                ),
+            ),
+            0,
+        ).astype(np.complex128)

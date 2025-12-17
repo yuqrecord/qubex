@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Final
 
 import numpy as np
-from matplotlib.pylab import beta
 from numpy.typing import ArrayLike, NDArray
 from scipy.special import comb
 
@@ -20,10 +19,10 @@ class Sintegral(Pulse):
         Duration of the pulse in ns.
     amplitude : float
         Amplitude of the pulse.
-    power : int
-        Power of the sine integral function.
     beta : float, optional
         DRAG correction coefficient. Default is None.
+    power : int
+        Power of the sine integral function.
 
     Examples
     --------
@@ -39,8 +38,8 @@ class Sintegral(Pulse):
         *,
         duration: float,
         amplitude: float,
-        power: int = 2,
         beta: float | None = None,
+        power: int = 2,
         **kwargs,
     ):
         self.amplitude: Final = amplitude
@@ -54,8 +53,8 @@ class Sintegral(Pulse):
                 t=self._sampling_points(duration),
                 duration=duration,
                 amplitude=amplitude,
-                power=power,
                 beta=beta,
+                power=power,
             )
 
         super().__init__(values, **kwargs)
@@ -66,8 +65,8 @@ class Sintegral(Pulse):
         *,
         duration: float,
         amplitude: float,
-        power: int,
         beta: float | None = None,
+        power: int,
     ) -> NDArray:
         """
         Evaluate the sine integral function.
@@ -263,6 +262,10 @@ class MultiDerivativeSintegral(Pulse):
         """
         if duration == 0:
             raise ValueError("Duration cannot be zero.")
+
+        if betas is None:
+            betas = {}
+
         t = np.asarray(t)
 
         Omega = sin_pow_integral(
@@ -274,16 +277,26 @@ class MultiDerivativeSintegral(Pulse):
             sin_pow_integral(np.pi, n=power) - sin_pow_integral(0, n=power)
         )
         Omega *= scale
-        if betas is None:
-            values = Omega
-        else:
+
+        pulse_terms = {}
+        for order, beta in betas.items():
             dOmega = sin_pow_derivative(
                 2 * np.pi * t / duration,
                 n=power,
-                m=0,
+                m=order - 1,
             )
-            dOmega *= scale * 2 * np.pi / duration
-            values = Omega + 1j * betas * dOmega
+            dOmega *= scale * (2 * np.pi / duration) ** order
+            pulse_terms[order] = beta * dOmega
+
+        real_part = Omega
+        imag_part = np.zeros_like(Omega)
+        for pdx, pulse_term in pulse_terms.items():
+            if pdx % 2 == 0:
+                real_part += pulse_term
+            else:
+                imag_part += pulse_term
+
+        values = real_part + 1j * imag_part
 
         is_odd = power % 2 == 1
         return np.where(
