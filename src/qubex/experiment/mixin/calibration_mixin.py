@@ -16,6 +16,7 @@ from ...pulse import (
     CrossResonance,
     Drag,
     FlatTop,
+    MultiDerivativeCrossResonance,
     PulseArray,
     PulseSchedule,
     Waveform,
@@ -2240,8 +2241,12 @@ class CalibrationMixin(
         ramptime: float | None = None,
         cr_amplitude: float | None = None,
         cr_phase: float | None = None,
+        cr_betas: dict[int, float] | None = None,
+        cr_power: int | None = None,
         cancel_amplitude: float | None = None,
         cancel_phase: float | None = None,
+        cancel_betas: dict[int, float] | None = None,
+        cancel_power: int | None = None,
         echo: bool = False,
         control_state: str = "0",
         x90: TargetMap[Waveform] | None = None,
@@ -2251,6 +2256,7 @@ class CalibrationMixin(
             "RaisedCosine",
             "Sintegral",
             "Bump",
+            "MultiDerivativeSintegral",
         ] = "RaisedCosine",
         x180_margin: float | None = None,
         shots: int = DEFAULT_SHOTS,
@@ -2269,10 +2275,18 @@ class CalibrationMixin(
             cr_amplitude = 1.0
         if cr_phase is None:
             cr_phase = 0.0
+        if cr_betas is None:
+            cr_betas = {}
+        if cr_power is None:
+            cr_power = 2
         if cancel_amplitude is None:
             cancel_amplitude = 0.0
         if cancel_phase is None:
             cancel_phase = 0.0
+        if cancel_betas is None:
+            cancel_betas = {}
+        if cancel_power is None:
+            cancel_power = 2
         if x180_margin is None:
             x180_margin = 0.0
         if x90 is None:
@@ -2314,6 +2328,32 @@ class CalibrationMixin(
 
             return ps
 
+        def multi_derivative_cr_sequence(targets: list[str], T: float) -> PulseSchedule:
+            cr = MultiDerivativeCrossResonance(
+                control_qubit=control_qubit,
+                target_qubit=target_qubit,
+                cr_amplitude=cr_amplitude,
+                cr_duration=T + ramptime * 2,
+                cr_ramptime=ramptime,
+                cr_phase=cr_phase,
+                cr_betas=cr_betas,
+                cancel_amplitude=cancel_amplitude,
+                cancel_phase=cancel_phase,
+                cancel_betas=cancel_betas,
+                echo=echo,
+                pi_pulse=x180[control_qubit],
+                pi_margin=x180_margin,
+            )
+            with PulseSchedule(targets) as ps:
+                ps.call(cr)
+
+            return ps
+
+        if ramp_type == "MultiDerivativeSintegral":
+            sequence_fn = multi_derivative_cr_sequence
+        else:
+            sequence_fn = cr_sequence
+
         control_states = []
         target_states = []
         spectators_states = defaultdict(list)
@@ -2326,7 +2366,7 @@ class CalibrationMixin(
         ):
             for T in time_range:
                 result = self.state_tomography(
-                    sequence=cr_sequence(
+                    sequence=sequence_fn(
                         targets=[control_qubit, target_qubit] + spectator_qubits, T=T
                     ),
                     x90=x90,
@@ -2415,13 +2455,18 @@ class CalibrationMixin(
         ramptime: float | None = None,
         cr_amplitude: float | None = None,
         cr_phase: float | None = None,
+        cr_betas: dict[int, float] | None = None,
+        cr_power: int | None = None,
         cancel_amplitude: float | None = None,
         cancel_phase: float | None = None,
+        cancel_betas: dict[int, float] | None = None,
+        cancel_power: int | None = None,
         ramp_type: Literal[
             "Gaussian",
             "RaisedCosine",
             "Sintegral",
             "Bump",
+            "MultiDerivativeSintegral",
         ] = "RaisedCosine",
         x90: TargetMap[Waveform] | None = None,
         x180_margin: float | None = None,
@@ -2460,8 +2505,12 @@ class CalibrationMixin(
             spectator_qubits=spectator_qubits,
             cr_amplitude=cr_amplitude,
             cr_phase=cr_phase,
+            cr_betas=cr_betas,
+            cr_power=cr_power,
             cancel_amplitude=cancel_amplitude,
             cancel_phase=cancel_phase,
+            cancel_betas=cancel_betas,
+            cancel_power=cancel_power,
             echo=False,
             control_state="0",
             x90=x90,
@@ -2481,8 +2530,12 @@ class CalibrationMixin(
             spectator_qubits=spectator_qubits,
             cr_amplitude=cr_amplitude,
             cr_phase=cr_phase,
+            cr_betas=cr_betas,
+            cr_power=cr_power,
             cancel_amplitude=cancel_amplitude,
             cancel_phase=cancel_phase,
+            cancel_betas=cancel_betas,
+            cancel_power=cancel_power,
             echo=False,
             control_state="1",
             x90=x90,
