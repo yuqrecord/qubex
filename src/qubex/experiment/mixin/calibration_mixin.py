@@ -2350,9 +2350,9 @@ class CalibrationMixin(
             return ps
 
         if ramp_type == "MultiDerivativeSintegral":
-            sequence_fn = multi_derivative_cr_sequence
+            sequence_func = multi_derivative_cr_sequence
         else:
-            sequence_fn = cr_sequence
+            sequence_func = cr_sequence
 
         control_states = []
         target_states = []
@@ -2366,7 +2366,7 @@ class CalibrationMixin(
         ):
             for T in time_range:
                 result = self.state_tomography(
-                    sequence=sequence_fn(
+                    sequence=sequence_func(
                         targets=[control_qubit, target_qubit] + spectator_qubits, T=T
                     ),
                     x90=x90,
