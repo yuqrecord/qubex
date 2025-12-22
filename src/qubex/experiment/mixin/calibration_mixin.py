@@ -3013,6 +3013,20 @@ class CalibrationMixin(
                 for key, value in spectator_coeffs.items():
                     print(f"  {key} : {value * 1e3:+.4f} MHz")
                 print("")
+
+                print(
+                    f"  |IX + 1j * IY| : {np.abs(spectator_coeffs['IX'] + 1j * spectator_coeffs['IY']) * 1e3:.4f} MHz"
+                )
+                print(
+                    f"  |ZX + 1j * ZY| : {np.abs(spectator_coeffs['ZX'] + 1j * spectator_coeffs['ZY']) * 1e3:.4f} MHz"
+                )
+                print(
+                    f"  √ (|IX + 1j * IY|² + IZ²) : {np.sqrt(spectator_coeffs['IX'] ** 2 + spectator_coeffs['IY'] ** 2 + spectator_coeffs['IZ'] ** 2) * 1e3:.4f} MHz"
+                )
+                print(
+                    f"  √ (|ZX + 1j * ZY|² + ZZ²) : {np.sqrt(spectator_coeffs['ZX'] ** 2 + spectator_coeffs['ZY'] ** 2 + spectator_coeffs['ZZ'] ** 2) * 1e3:.4f} MHz"
+                )
+
                 print(
                     f" r2 (control |0〉): {spectators_fit_results_0[spectator]['r2']:.4f}"
                 )
