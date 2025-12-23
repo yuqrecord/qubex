@@ -2935,105 +2935,100 @@ class CalibrationMixin(
             figs_s[label] = fig_s
             figs_s_3d[label] = fig_s_3d
 
-        if viz.plot:
-            fig_c.show()
-            fig_t.show()
-            fig_t_3d.show()
-            for _, fig_s_ in figs_s.items():
-                fig_s_.show()
-            for _, fig_s_3d in figs_s_3d.items():
-                fig_s_3d.show()
+        fig_c.show()
+        fig_t.show()
+        fig_t_3d.show()
+        for _, fig_s_ in figs_s.items():
+            fig_s_.show()
+        for _, fig_s_3d in figs_s_3d.items():
+            fig_s_3d.show()
 
-            print("Qubit frequencies:")
-            print(f"  ω_c ({control_qubit}) : {f_control * 1e3:.3f} MHz")
+        print("Qubit frequencies:")
+        print(f"  ω_c ({control_qubit}) : {f_control * 1e3:.3f} MHz")
+        print(f"  ω_t ({target_qubit}) : {f_target * 1e3:.3f} MHz")
+        print(f"  Δ ({cr_label}) : {f_delta * 1e3:.3f} MHz")
+
+        print("CR drive:")
+        print(f"  Ω : {cr_rabi_rate * 1e3:.3f} MHz ({cr_amplitude:.4f})")
+
+        print("Rotation rates:")
+        for key, value in coeffs.items():
+            print(f"  {key} : {value * 1e3:+.4f} MHz")
+
+        print("XT (crosstalk) rotation:")
+        print(
+            f"  rate  : {xt_rotation_amplitude * 1e3:.4f} MHz ({xt_rotation_amplitude_hw:.6f})"
+        )
+        print(
+            f"  phase : {xt_rotation_phase:.4f} rad ({xt_rotation_phase_deg:.1f} deg)"
+        )
+
+        print("CR (cross-resonance) rotation:")
+        print(
+            f"  rate  : {cr_rotation_amplitude * 1e3:.4f} MHz ({cr_rotation_amplitude_hw:.6f})"
+        )
+        print(
+            f"  phase : {cr_rotation_phase:.4f} rad ({cr_rotation_phase_deg:.1f} deg)"
+        )
+
+        print(f"Estimated ZX90 gate length : {zx90_duration:.1f} ns")
+
+        coeffs_ = {}
+        for spectator in spectator_qubits:
+            print(f" Spectator qubit: {spectator}")
+
+            f_s = self.qubits[spectator].frequency
+
+            print("")
+            print(f"  ω_s ({spectator}) : {f_s * 1e3:.3f} MHz")
             print(f"  ω_t ({target_qubit}) : {f_target * 1e3:.3f} MHz")
-            print(f"  Δ ({cr_label}) : {f_delta * 1e3:.3f} MHz")
+            print(
+                f"  Δ_st ({spectator}-{target_qubit}) : {(f_s - f_target) * 1e3:.3f} MHz"
+            )
 
-            print("CR drive:")
-            print(f"  Ω : {cr_rabi_rate * 1e3:.3f} MHz ({cr_amplitude:.4f})")
+            spectator_Omega_0 = result_0["spectators_fit_result"][spectator]["Omega"]
+            spectator_Omega_1 = result_1["spectators_fit_result"][spectator]["Omega"]
 
-            print("Rotation rates:")
-            for key, value in coeffs.items():
+            spectator_Omega = np.concatenate(
+                [
+                    0.5 * (spectator_Omega_0 + spectator_Omega_1),
+                    0.5 * (spectator_Omega_0 - spectator_Omega_1),
+                ]
+            )
+            spectator_coeffs = dict(
+                zip(
+                    ["IX", "IY", "IZ", "ZX", "ZY", "ZZ"],
+                    spectator_Omega / (2 * np.pi),  # GHz
+                )
+            )
+
+            coeffs_[spectator] = spectator_coeffs
+
+            print("")
+            for key, value in spectator_coeffs.items():
                 print(f"  {key} : {value * 1e3:+.4f} MHz")
+            print("")
 
-            print("XT (crosstalk) rotation:")
             print(
-                f"  rate  : {xt_rotation_amplitude * 1e3:.4f} MHz ({xt_rotation_amplitude_hw:.6f})"
+                f"  |IX + 1j * IY| : {np.abs(spectator_coeffs['IX'] + 1j * spectator_coeffs['IY']) * 1e3:.4f} MHz"
             )
             print(
-                f"  phase : {xt_rotation_phase:.4f} rad ({xt_rotation_phase_deg:.1f} deg)"
-            )
-
-            print("CR (cross-resonance) rotation:")
-            print(
-                f"  rate  : {cr_rotation_amplitude * 1e3:.4f} MHz ({cr_rotation_amplitude_hw:.6f})"
+                f"  |ZX + 1j * ZY| : {np.abs(spectator_coeffs['ZX'] + 1j * spectator_coeffs['ZY']) * 1e3:.4f} MHz"
             )
             print(
-                f"  phase : {cr_rotation_phase:.4f} rad ({cr_rotation_phase_deg:.1f} deg)"
+                f"  √ (|IX + 1j * IY|² + IZ²) : {np.sqrt(spectator_coeffs['IX'] ** 2 + spectator_coeffs['IY'] ** 2 + spectator_coeffs['IZ'] ** 2) * 1e3:.4f} MHz"
+            )
+            print(
+                f"  √ (|ZX + 1j * ZY|² + ZZ²) : {np.sqrt(spectator_coeffs['ZX'] ** 2 + spectator_coeffs['ZY'] ** 2 + spectator_coeffs['ZZ'] ** 2) * 1e3:.4f} MHz"
             )
 
-            print(f"Estimated ZX90 gate length : {zx90_duration:.1f} ns")
-
-            coeffs_ = {}
-            for spectator in spectator_qubits:
-                print(f" Spectator qubit: {spectator}")
-
-                f_s = self.qubits[spectator].frequency
-
-                print("")
-                print(f"  ω_s ({spectator}) : {f_s * 1e3:.3f} MHz")
-                print(f"  ω_t ({target_qubit}) : {f_target * 1e3:.3f} MHz")
-                print(
-                    f"  Δ_st ({spectator}-{target_qubit}) : {(f_s - f_target) * 1e3:.3f} MHz"
-                )
-
-                spectator_Omega_0 = result_0["spectators_fit_result"][spectator][
-                    "Omega"
-                ]
-                spectator_Omega_1 = result_1["spectators_fit_result"][spectator][
-                    "Omega"
-                ]
-
-                spectator_Omega = np.concatenate(
-                    [
-                        0.5 * (spectator_Omega_0 + spectator_Omega_1),
-                        0.5 * (spectator_Omega_0 - spectator_Omega_1),
-                    ]
-                )
-                spectator_coeffs = dict(
-                    zip(
-                        ["IX", "IY", "IZ", "ZX", "ZY", "ZZ"],
-                        spectator_Omega / (2 * np.pi),  # GHz
-                    )
-                )
-
-                coeffs_[spectator] = spectator_coeffs
-
-                print("")
-                for key, value in spectator_coeffs.items():
-                    print(f"  {key} : {value * 1e3:+.4f} MHz")
-                print("")
-
-                print(
-                    f"  |IX + 1j * IY| : {np.abs(spectator_coeffs['IX'] + 1j * spectator_coeffs['IY']) * 1e3:.4f} MHz"
-                )
-                print(
-                    f"  |ZX + 1j * ZY| : {np.abs(spectator_coeffs['ZX'] + 1j * spectator_coeffs['ZY']) * 1e3:.4f} MHz"
-                )
-                print(
-                    f"  √ (|IX + 1j * IY|² + IZ²) : {np.sqrt(spectator_coeffs['IX'] ** 2 + spectator_coeffs['IY'] ** 2 + spectator_coeffs['IZ'] ** 2) * 1e3:.4f} MHz"
-                )
-                print(
-                    f"  √ (|ZX + 1j * ZY|² + ZZ²) : {np.sqrt(spectator_coeffs['ZX'] ** 2 + spectator_coeffs['ZY'] ** 2 + spectator_coeffs['ZZ'] ** 2) * 1e3:.4f} MHz"
-                )
-
-                print(
-                    f" r2 (control |0〉): {spectators_fit_results_0[spectator]['r2']:.4f}"
-                )
-                print(
-                    f" r2 (control |1〉): {spectators_fit_results_1[spectator]['r2']:.4f}"
-                )
-                print("")
+            print(
+                f" r2 (control |0〉): {spectators_fit_results_0[spectator]['r2']:.4f}"
+            )
+            print(
+                f" r2 (control |1〉): {spectators_fit_results_1[spectator]['r2']:.4f}"
+            )
+            print("")
 
         coeffs_[target_qubit] = coeffs
         return Result(
