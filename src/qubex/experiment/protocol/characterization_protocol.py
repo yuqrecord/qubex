@@ -322,6 +322,8 @@ class CharacterizationProtocol(Protocol):
             Whether to plot the measured signals. Defaults to True.
         save_image : bool, optional
             Whether to save the images. Defaults to False.
+        xaxis_type : Literal["linear", "log"], optional
+            Type of x-axis scale for plotting. Defaults to "log".
 
         Returns
         -------
@@ -349,6 +351,7 @@ class CharacterizationProtocol(Protocol):
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
         save_image: bool = False,
+        xaxis_type: Literal["linear", "log"] = "log",
     ) -> ExperimentResult[T2Data]:
         """
         Conducts a T2 experiment in series.
@@ -371,6 +374,8 @@ class CharacterizationProtocol(Protocol):
             Whether to plot the measured signals. Defaults to True.
         save_image : bool, optional
             Whether to save the images. Defaults to False.
+        xaxis_type : Literal["linear", "log"], optional
+            Type of x-axis scale for plotting. Defaults to "log".
 
         Returns
         -------

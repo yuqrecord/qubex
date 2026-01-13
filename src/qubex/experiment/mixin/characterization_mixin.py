@@ -939,6 +939,7 @@ class CharacterizationMixin(
         interval: float = DEFAULT_INTERVAL,
         plot: bool = True,
         save_image: bool = False,
+        xaxis_type: Literal["linear", "log"] = "log",
     ) -> ExperimentResult[T2Data]:
         if targets is None:
             targets = self.qubit_labels
@@ -1026,6 +1027,7 @@ class CharacterizationMixin(
                 shots=shots,
                 interval=interval,
                 plot=plot,
+                xaxis_type=xaxis_type,
             )
 
             for target, sweep_data in sweep_result.data.items():
@@ -1037,6 +1039,8 @@ class CharacterizationMixin(
                     title="T2 echo",
                     xlabel="Time (μs)",
                     ylabel="Normalized signal",
+                    xaxis_type=xaxis_type,
+                    yaxis_type="linear",
                 )
                 if fit_result["status"] == "success":
                     t2 = fit_result["tau"]
