@@ -31,8 +31,8 @@ from ...pulse import (
     PulseSchedule,
     RampType,
     Rect,
-    Waveform,
     VirtualZ,
+    Waveform,
 )
 from ...style import COLORS
 from ...typing import TargetMap
@@ -391,6 +391,7 @@ class CharacterizationMixin(
 
         print(f"Targets : {targets}")
         subgroups = self.util.create_qubit_subgroups(targets)
+        figs = {}
         for idx, subgroup in enumerate(subgroups):
             if len(subgroup) == 0:
                 continue
@@ -460,6 +461,7 @@ class CharacterizationMixin(
                     height=400,
                     margin=dict(t=80),
                 )
+                figs[target] = fig
                 if plot:
                     fig.show()
 
@@ -499,6 +501,7 @@ class CharacterizationMixin(
                 "chevron_data": chevron_data,
                 "rabi_rates": rabi_rates,
                 "resonant_frequencies": resonant_frequencies,
+                "fig": figs,
             }
         )
 
