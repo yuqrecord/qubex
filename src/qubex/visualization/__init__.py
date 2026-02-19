@@ -21,7 +21,6 @@ from .figure_factory import (
     show_figure,
 )
 from .plotting import (
-    display_bloch_sphere,
     make_bloch_vectors_figure,
     make_cdf_figure,
     make_fft_figure,
@@ -62,7 +61,6 @@ __all__ = [
     "SEQUENCER_TIMELINE_LANE_HEIGHT",
     "SEQUENCER_TIMELINE_MIN_HEIGHT",
     "FigureSize",
-    "display_bloch_sphere",
     "get_colors",
     "get_config",
     "make_bloch_vectors_figure",
