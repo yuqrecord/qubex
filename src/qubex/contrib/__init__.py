@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from .crosstalk_cross_resonance import (
+from .experiment.crosstalk_cross_resonance import (
     cr_crosstalk_hamiltonian_tomography,
     measure_cr_crosstalk,
 )
-from .multipartite_entanglement import (
+from .experiment.multipartite_entanglement import (
     create_1d_cluster_sequence,
     create_connected_graphs,
     create_cz_rounds,
@@ -31,7 +31,7 @@ from .multipartite_entanglement import (
     partial_transpose,
     visualize_graph,
 )
-from .purity_benchmarking import (
+from .experiment.purity_benchmarking import (
     interleaved_purity_benchmarking,
     ipb_experiment,
     pb_experiment_1q,
@@ -40,9 +40,14 @@ from .purity_benchmarking import (
     purity_sequence_1q,
     purity_sequence_2q,
 )
-from .rzx_gate import rzx, rzx_gate_property
-from .simultaneous_coherence_measurement import simultaneous_coherence_measurement
-from .stark_characterization import stark_ramsey_experiment, stark_t1_experiment
+from .experiment.rzx_gate import rzx, rzx_gate_property
+from .experiment.simultaneous_coherence_measurement import (
+    simultaneous_coherence_measurement,
+)
+from .experiment.stark_characterization import (
+    stark_ramsey_experiment,
+    stark_t1_experiment,
+)
 
 __all__ = [
     "cr_crosstalk_hamiltonian_tomography",
