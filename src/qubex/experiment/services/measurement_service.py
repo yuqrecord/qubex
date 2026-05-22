@@ -2086,6 +2086,8 @@ class MeasurementService:
         else:
             fidelities = {}
             average_fidelities = {}
+            centers = {}
+            stds = {}
             data = {}
             classifiers = {}
             figures: dict[str, go.Figure] = {}
@@ -2108,6 +2110,8 @@ class MeasurementService:
                 )
                 fidelities[target] = result["readout_fidelities"][target]
                 average_fidelities[target] = result["average_readout_fidelity"][target]
+                centers[target] = result["centers"][target]
+                stds[target] = result["stddevs"][target]
                 data[target] = result["data"]
                 classifiers[target] = result["classifiers"][target]
                 if figure is None:
@@ -2120,6 +2124,8 @@ class MeasurementService:
                     "readout_fidelities": fidelities,
                     "average_readout_fidelity": average_fidelities,
                     "data": data,
+                    "centers": centers,
+                    "stddevs": stds,
                     "classifiers": classifiers,
                 },
                 figure=figure,
@@ -2218,6 +2224,8 @@ class MeasurementService:
 
         fidelities = {}
         average_fidelities = {}
+        centers = {}
+        stds = {}
         figures: dict[str, go.Figure] = {}
         for target in targets:
             clf = classifiers[target]
@@ -2246,6 +2254,10 @@ class MeasurementService:
             ]
             fidelities[target] = fidelity
             average_fidelities[target] = np.mean(fidelity)
+            centers[target] = clf.centers
+            stds[target] = _get_classifier_stddevs(clf)
+            # PS edit
+
 
             if plot:
                 print(f"{target}:")
@@ -2274,6 +2286,8 @@ class MeasurementService:
             data={
                 "readout_fidelities": fidelities,
                 "average_readout_fidelity": average_fidelities,
+                "centers": centers,
+                "stddevs": stds,
                 "data": data,
                 "classifiers": classifiers,
             },
