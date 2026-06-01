@@ -62,6 +62,7 @@ def check_skew(
     config_dir: str | None = None,
     skew_file: str | None = None,
     box_file: str | None = None,
+    confirm: bool = True,
 ) -> Result:
     """Check the skew of the boxes."""
     if estimate is None:
@@ -90,15 +91,18 @@ def check_skew(
         config = yaml.safe_load(file)
     ref_port = config["reference_port"].split("-")[0]
 
-    confirmed = Confirm.ask(
-        f"""
+    if confirm:
+        confirmed = Confirm.ask(
+            f"""
 You are going to check the skew of the following boxes using [bold bright_green]'{ref_port}'[/bold bright_green] as the reference.
 
 [bold bright_green]{box_ids}[/bold bright_green]
 
 Do you want to continue?
 """
-    )
+        )
+    else:
+        confirmed = True
     if not confirmed:
         logger.info("Operation cancelled.")
         return Result()
