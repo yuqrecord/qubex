@@ -28,6 +28,7 @@ from .gf_calibration import (
     gf_ramsey_experiment,
     obtain_gf_rabi_params,
 )
+from .measurement_induced_decay import measurement_induced_decay_experiment
 from .multipartite_entanglement import (
     create_1d_cluster_sequence,
     create_connected_graphs,
@@ -70,8 +71,10 @@ from .quantum_efficiency_measurement import (
     sweep_readout_snr,
 )
 from .readout_parameters_characterization import characterize_readout_parameters
+from .repeated_coherence_measurement import repeated_coherence_measurement
 from .rzx_gate import rzx, rzx_gate_property
 from .simultaneous_coherence_measurement import simultaneous_coherence_measurement
+from .simultaneous_qubit_spectroscopy import simultaneous_qubit_spectroscopy
 from .stark_characterization import stark_ramsey_experiment, stark_t1_experiment
 from .superconducting_gap import get_resistance_charge, get_superconducting_gap
 from .thermal_excitation_characterization import (
@@ -119,6 +122,7 @@ __all__ = [
     "measure_cr_crosstalk",
     "measure_ghz_state",
     "measure_graph_state",
+    "measurement_induced_decay_experiment",
     "measurement_induced_dephasing",
     "measurement_induced_dephasing_experiment",
     "mqc_experiment",
@@ -133,9 +137,11 @@ __all__ = [
     "purity_sequence_2q",
     "quantum_efficiency_measurement",
     "readout_snr",
+    "repeated_coherence_measurement",
     "rzx",
     "rzx_gate_property",
     "simultaneous_coherence_measurement",
+    "simultaneous_qubit_spectroscopy",
     "stark_ramsey_experiment",
     "stark_t1_experiment",
     "sweep_readout_snr",
