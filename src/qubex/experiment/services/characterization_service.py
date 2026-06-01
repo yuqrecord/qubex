@@ -2784,7 +2784,8 @@ class CharacterizationService:
 
         self.ctx.reset_awg_and_capunits(qubits=[qubit_label])
 
-        for freq in freq_range:
+        from tqdm.auto import tqdm
+        for freq in tqdm(freq_range):
             with self.ctx.modified_frequencies({read_label: freq}):
                 result = self._measurement_service.measure(
                     {qubit_label: initialize_pulse},
@@ -3244,6 +3245,7 @@ class CharacterizationService:
         control_amplitude: float | None = None,
         readout_amplitude: float | None = None,
         target_rabi_rate: float | None = None,
+        simultaneous_drive: bool | None = None,
         shots: int | None = None,
         interval: float | None = None,
         plot: bool | None = None,
@@ -3293,6 +3295,7 @@ class CharacterizationService:
             frequency_range=frequency_range,
             control_amplitude=control_amplitude,
             readout_amplitude=readout_amplitude,
+            simultaneous_drive=simultaneous_drive,
             shots=shots,
             interval=interval,
             plot=plot,
@@ -3368,6 +3371,7 @@ class CharacterizationService:
         power_range: ArrayLike | None = None,
         readout_amplitude: float | None = None,
         readout_frequency: float | None = None,
+        simultaneous_drive: bool | None = None,
         shots: int | None = None,
         interval: float | None = None,
         plot: bool | None = None,
@@ -3407,6 +3411,7 @@ class CharacterizationService:
                 control_amplitude=amplitude,
                 readout_amplitude=readout_amplitude,
                 readout_frequency=readout_frequency,
+                simultaneous_drive=simultaneous_drive,
                 shots=shots,
                 interval=interval,
                 plot=False,
