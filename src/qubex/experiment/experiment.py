@@ -5146,6 +5146,7 @@ class Experiment:
         xaxis_type: Literal["linear", "log"] | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
+        time_integration: bool | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
     ) -> Result:
@@ -5162,6 +5163,7 @@ class Experiment:
             xaxis_type=xaxis_type,
             shots=n_shots,
             interval=shot_interval,
+            time_integration=time_integration,
             plot=plot,
             save_image=save_image,
         )
@@ -5183,6 +5185,7 @@ class Experiment:
         in_parallel: bool | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
+        time_integration: bool | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
     ) -> Result:
@@ -5200,6 +5203,7 @@ class Experiment:
             in_parallel=in_parallel,
             shots=n_shots,
             interval=shot_interval,
+            time_integration=time_integration,
             plot=plot,
             save_image=save_image,
         )

@@ -61,6 +61,7 @@ plugins:
                 - インストール: user-guide/getting-started/installation.md
                 - 始め方を選ぶ: user-guide/getting-started/choose-where-to-start.md
                 - システム設定: user-guide/getting-started/system-configuration.md
+                - パラメータファイル: user-guide/getting-started/params-configuration.md
             - パルスシーケンス:
                 - パルスシーケンスの組み方: user-guide/pulse-sequences/index.md
             - 実験インタフェース:
@@ -78,6 +79,7 @@ plugins:
                 - system モジュール: user-guide/system/index.md
                 - system サンプルワークフロー: user-guide/system/examples.md
                 - backend モジュール: user-guide/backend/index.md
+                - QuEL-1 連続波出力: user-guide/backend/continuous-wave.md
                 - backend サンプルワークフロー: user-guide/backend/examples.md
             - リリースノート:
                 - 概要: release-notes/index.md
@@ -126,6 +128,7 @@ nav:
       - Installation: user-guide/getting-started/installation.md
       - Choose where to start: user-guide/getting-started/choose-where-to-start.md
       - System configuration: user-guide/getting-started/system-configuration.md
+      - Parameter files: user-guide/getting-started/params-configuration.md
   - Pulse sequences:
       - Build pulse sequences with PulseSchedule: user-guide/pulse-sequences/index.md
   - Experiment interface:
@@ -143,6 +146,7 @@ nav:
       - system module: user-guide/system/index.md
       - system example workflows: user-guide/system/examples.md
       - backend module: user-guide/backend/index.md
+      - QuEL-1 continuous-wave output: user-guide/backend/continuous-wave.md
       - backend example workflows: user-guide/backend/examples.md
   - Release notes:
       - Overview: release-notes/index.md
