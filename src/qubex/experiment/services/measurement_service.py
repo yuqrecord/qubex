@@ -2234,7 +2234,7 @@ class MeasurementService:
                 if save_dir is not None:
                     path = Path(save_dir) / self.ctx.chip_id / f"{label}.pkl"
                 else:
-                    path = Path(CLASSIFIER_DIR) / self.ctx.chip_id / f"{label}.pkl"
+                    path = self.ctx.classifier_dir / self.ctx.chip_id / f"{label}.pkl"
                 if not path.parent.exists():
                     path.parent.mkdir(parents=True, exist_ok=True)
                 classifier.save(path)
