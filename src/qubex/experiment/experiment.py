@@ -4796,6 +4796,7 @@ class Experiment:
         shot_interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """Scan qubit frequencies to locate resonances."""
         return self.characterization_service.scan_qubit_frequencies(
@@ -4811,6 +4812,7 @@ class Experiment:
             interval=shot_interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
 
     def estimate_control_amplitude(
@@ -4851,6 +4853,7 @@ class Experiment:
         shot_interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """Measure qubit resonance over a frequency sweep."""
         return self.characterization_service.measure_qubit_resonance(
@@ -4863,6 +4866,7 @@ class Experiment:
             interval=shot_interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
 
     def qubit_spectroscopy(
@@ -4876,6 +4880,7 @@ class Experiment:
         shot_interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """Run qubit spectroscopy over frequency and power."""
         return self.characterization_service.qubit_spectroscopy(
@@ -4888,6 +4893,7 @@ class Experiment:
             interval=shot_interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
 
     def measure_dispersive_shift(
