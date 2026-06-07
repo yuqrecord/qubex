@@ -2983,6 +2983,7 @@ class CharacterizationService:
         interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """
         Scan control frequencies to locate qubit resonances.
@@ -3002,6 +3003,8 @@ class CharacterizationService:
             plot = True
         if save_image is None:
             save_image = False
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
         # control and readout pulses
         qubit = self.ctx.resolve_qubit_label(target)
         resonator = self.ctx.resolve_read_label(target)
@@ -3045,6 +3048,8 @@ class CharacterizationService:
         ssb = ctrl_box.traits.ctrl_ssb
         cnco_center = CNCO_CENTER_CTRL_HZ
 
+        pulse_schedule_is_plotted = False
+
         # measure the phase and amplitude
         idx = 0
         for subrange in subranges:
@@ -3087,6 +3092,9 @@ class CharacterizationService:
                                     tau=DEFAULT_QUBIT_FREQUENCY_SCAN_READOUT_RAMPTIME,
                                 ),
                             )
+                        if plot_pulse_schedule and not pulse_schedule_is_plotted:
+                            ps.plot()
+                            pulse_schedule_is_plotted = True
                         result = self.measurement_service.execute(
                             schedule=ps,
                             mode="avg",
@@ -3375,6 +3383,7 @@ class CharacterizationService:
         interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """
         Measure qubit resonance and estimate control amplitude.
@@ -3398,6 +3407,8 @@ class CharacterizationService:
             plot = True
         if save_image is None:
             save_image = True
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
         qubit_label = self.ctx.resolve_qubit_label(target)
         qubit_frequency = self.ctx.qubits[qubit_label].frequency
 
@@ -3425,6 +3436,7 @@ class CharacterizationService:
             interval=interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
         data = np.unwrap(data["phases"])
 
@@ -3501,6 +3513,7 @@ class CharacterizationService:
         interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """
         Perform qubit spectroscopy over frequency and power.
@@ -3524,6 +3537,10 @@ class CharacterizationService:
                 DEFAULT_QUBIT_SPECTROSCOPY_POWER_STOP_DB,
                 DEFAULT_QUBIT_SPECTROSCOPY_POWER_STEP_DB,
             )
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
+
+        pulse_schedule_is_plotted = False
 
         power_range = np.array(power_range)
         result2d = []
@@ -3540,7 +3557,9 @@ class CharacterizationService:
                 shots=shots,
                 interval=interval,
                 plot=False,
+                plot_pulse_schedule=plot_pulse_schedule and not pulse_schedule_is_plotted,
             )
+            pulse_schedule_is_plotted = True
             phases = result1d["phases"]
             result2d.append(phases)
 
