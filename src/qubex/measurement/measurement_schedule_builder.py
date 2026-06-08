@@ -130,6 +130,7 @@ class MeasurementScheduleBuilder:
         capture_placement: CapturePlacement | None = None,
         capture_targets: list[str] | None = None,
         plot: bool | None = None,
+        plot_title: str | None = None,
     ) -> MeasurementSchedule:
         """Build an execution-ready measurement schedule from user inputs."""
         if readout_amplification is None:
@@ -265,7 +266,10 @@ class MeasurementScheduleBuilder:
         self._apply_frequency_overrides(schedule=schedule, frequencies=frequencies)
 
         if plot:
-            schedule.plot()
+            if plot_title is not None:
+                schedule.plot(title=str(plot_title))
+            else:
+                schedule.plot()
 
         capture_schedule = self._build_capture_schedule(
             schedule=schedule,

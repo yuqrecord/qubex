@@ -737,6 +737,8 @@ class MeasurementService:
         classification_line_param1: tuple[float, float, float] | None = None,
         reset_awg_and_capunits: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
+        plot_pulse_schedule_title: str | None = None,
         **deprecated_options: Any,
     ) -> MeasureResult:
         """
@@ -782,6 +784,8 @@ class MeasurementService:
             Whether to reset AWGs/capture units before measurement.
         plot
             Whether to plot the result.
+        plot_pulse_schedule
+            Whether to plot the measurement pulse schedule.
         **deprecated_options
             Deprecated aliases forwarded to the measurement layer.
         """
@@ -789,6 +793,8 @@ class MeasurementService:
             reset_awg_and_capunits = False
         if plot is None:
             plot = False
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         waveforms: dict[str, NDArray[np.complex128]] = {}
 
@@ -869,6 +875,8 @@ class MeasurementService:
                 readout_amplification=readout_amplification,
                 classification_line_param0=classification_line_param0,
                 classification_line_param1=classification_line_param1,
+                plot=plot_pulse_schedule,
+                plot_title=plot_pulse_schedule_title,
                 **deprecated_options,
             )
         if plot:
@@ -1064,6 +1072,9 @@ class MeasurementService:
         ylabel: str | None = None,
         xaxis_type: Literal["linear", "log"] | None = None,
         yaxis_type: Literal["linear", "log"] | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[SweepData]:
         """
@@ -1096,6 +1107,12 @@ class MeasurementService:
             xaxis_type = "linear"
         if yaxis_type is None:
             yaxis_type = "linear"
+        if plot_initial_pulse_schedule is None:
+            plot_initial_pulse_schedule = False
+        if plot_middle_pulse_schedule is None:
+            plot_middle_pulse_schedule = False
+        if plot_final_pulse_schedule is None:
+            plot_final_pulse_schedule = False
 
         sweep_range = np.array(sweep_range)
 
@@ -1139,11 +1156,23 @@ class MeasurementService:
         self.ctx.reset_awg_and_capunits(qubits=set(ordered_qubits))
 
         with self.ctx.modified_frequencies(frequencies):
+            i_seq = 0
+            plot_pulse_schedule = False
+            plot_pulse_schedule_title = None
             for seq in tqdm(
                 sequences,
                 desc="Sweeping parameters",
                 disable=not enable_tqdm,
             ):
+                if i_seq == 0 and plot_initial_pulse_schedule:
+                    plot_pulse_schedule = True
+                    plot_pulse_schedule_title = "Initial pulse schedule"
+                elif i_seq == len(sequences) // 2 and plot_middle_pulse_schedule:
+                    plot_pulse_schedule = True
+                    plot_pulse_schedule_title = "Middle pulse schedule"
+                elif i_seq == len(sequences) - 1 and plot_final_pulse_schedule:
+                    plot_pulse_schedule = True
+                    plot_pulse_schedule_title = "Final pulse schedule"
                 result = self.measure(
                     seq,
                     initial_states=initial_states,
@@ -1155,8 +1184,12 @@ class MeasurementService:
                     readout_pre_margin=readout_pre_margin,
                     readout_post_margin=readout_post_margin,
                     reset_awg_and_capunits=False,
+                    plot_pulse_schedule=plot_pulse_schedule,
+                    plot_pulse_schedule_title=plot_pulse_schedule_title,
                     **deprecated_options,
                 )
+                plot_pulse_schedule = False
+                plot_pulse_schedule_title = None
                 for target in ordered_qubits:
                     if target in result.data:
                         signals[target].append(result.data[target].kerneled)
@@ -1172,6 +1205,7 @@ class MeasurementService:
                             if values
                         }
                     )
+                i_seq += 1
 
         if plot:
             plotter.show()
@@ -1288,6 +1322,9 @@ class MeasurementService:
         plot: bool | None = None,
         store_params: bool | None = None,
         simultaneous: bool | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[RabiData]:
         """
@@ -1321,6 +1358,12 @@ class MeasurementService:
             store_params = True
         if simultaneous is None:
             simultaneous = False
+        if plot_initial_pulse_schedule is None:
+            plot_initial_pulse_schedule = False
+        if plot_middle_pulse_schedule is None:
+            plot_middle_pulse_schedule = False
+        if plot_final_pulse_schedule is None:
+            plot_final_pulse_schedule = False
 
         if targets is None:
             targets = self.ctx.qubit_labels
@@ -1350,11 +1393,15 @@ class MeasurementService:
                 shot_interval=shot_interval,
                 plot=plot,
                 store_params=store_params,
+                plot_initial_pulse_schedule=plot_initial_pulse_schedule,
+                plot_middle_pulse_schedule=plot_middle_pulse_schedule,
+                plot_final_pulse_schedule=plot_final_pulse_schedule,
                 **deprecated_options,
             )
         else:
             rabi_data = {}
             rabi_params = {}
+            pulse_schedule_is_plotted = False
             for target in targets:
                 data = self.rabi_experiment(
                     amplitudes={target: amplitudes[target]},
@@ -1367,10 +1414,14 @@ class MeasurementService:
                     shot_interval=shot_interval,
                     store_params=store_params,
                     plot=plot,
+                    plot_initial_pulse_schedule=(plot_initial_pulse_schedule and not pulse_schedule_is_plotted),
+                    plot_middle_pulse_schedule=(plot_middle_pulse_schedule and not pulse_schedule_is_plotted),
+                    plot_final_pulse_schedule=(plot_final_pulse_schedule and not pulse_schedule_is_plotted),
                     **deprecated_options,
                 ).data[target]
                 rabi_data[target] = data
                 rabi_params[target] = data.rabi_param
+            pulse_schedule_is_plotted = True
             result = ExperimentResult(
                 data=rabi_data,
                 rabi_params=rabi_params,
@@ -1679,6 +1730,9 @@ class MeasurementService:
         shot_interval: float | None = None,
         plot: bool | None = None,
         store_params: bool | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[RabiData]:
         """
@@ -1710,6 +1764,12 @@ class MeasurementService:
             plot = True
         if store_params is None:
             store_params = False
+        if plot_initial_pulse_schedule is None:
+            plot_initial_pulse_schedule = False
+        if plot_middle_pulse_schedule is None:
+            plot_middle_pulse_schedule = False
+        if plot_final_pulse_schedule is None:
+            plot_final_pulse_schedule = False
 
         # target labels
         targets = list(amplitudes.keys())
@@ -1768,6 +1828,9 @@ class MeasurementService:
             n_shots=n_shots,
             shot_interval=shot_interval,
             plot=plot,
+            plot_initial_pulse_schedule=plot_initial_pulse_schedule,
+            plot_middle_pulse_schedule=plot_middle_pulse_schedule,
+            plot_final_pulse_schedule=plot_final_pulse_schedule,
             **deprecated_options,
         )
 

@@ -2394,6 +2394,9 @@ class Experiment:
         plot: bool | None = None,
         store_params: bool | None = None,
         simultaneous: bool | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[RabiData]:
         """Obtain Rabi parameters for target qubits."""
@@ -2409,6 +2412,9 @@ class Experiment:
             plot=plot,
             store_params=store_params,
             simultaneous=simultaneous,
+            plot_initial_pulse_schedule=plot_initial_pulse_schedule,
+            plot_middle_pulse_schedule=plot_middle_pulse_schedule,
+            plot_final_pulse_schedule=plot_final_pulse_schedule,
             **deprecated_options,
         )
 
