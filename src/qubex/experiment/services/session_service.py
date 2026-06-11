@@ -175,6 +175,7 @@ class SessionService:
             confirm=confirm,
             box_ids=resolved_box_ids,
             target_labels=list(self.ctx.targets),
+            confirm=confirm,
         )
         self._sync_pulse_sampling_period()
 
