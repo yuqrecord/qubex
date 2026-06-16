@@ -1410,9 +1410,9 @@ def estimate_filtered_ckp_initial_params(
     x = x[order]
     delta = delta[order]
 
-    M0 = np.trapezoid(delta, x)
-    M1 = np.trapezoid(x * delta, x)
-    M2 = np.trapezoid((x**2) * delta, x)
+    M0 = np.trapz(delta, x)
+    M1 = np.trapz(x * delta, x)
+    M2 = np.trapz((x**2) * delta, x)
 
     if np.abs(M0) < 1e-18:
         raise ValueError("Moment M0 is too small.")
