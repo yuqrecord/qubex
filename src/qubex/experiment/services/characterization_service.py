@@ -23,7 +23,7 @@ from qxpulse import (
     Waveform,
 )
 from rich.prompt import Confirm
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from typing_extensions import deprecated
 
 import qubex.visualization as viz

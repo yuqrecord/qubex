@@ -14,7 +14,7 @@ import networkx as nx
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import ArrayLike, NDArray
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import qubex.visualization as viz
 from qubex.analysis.state_tomography import (
