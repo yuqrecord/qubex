@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import qxvisualizer as viz
 from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import curve_fit
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from qubex.analysis import FitResult, FitStatus
 from qubex.experiment.experiment import Experiment
