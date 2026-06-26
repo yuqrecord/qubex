@@ -41,7 +41,7 @@ from qxpulse import (
     Waveform,
 )
 from scipy.optimize import least_squares
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import qubex.visualization as viz
 from qubex.analysis import fitting
