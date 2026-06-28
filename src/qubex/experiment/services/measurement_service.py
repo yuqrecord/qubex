@@ -898,6 +898,7 @@ class MeasurementService:
         readout_post_margin: float | None = None,
         readout_amplification: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> MeasureResult:
         """Prepare given states and measure readout results."""
@@ -905,6 +906,8 @@ class MeasurementService:
             mode = "single"
         if plot is None:
             plot = False
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         targets = []
 
@@ -938,6 +941,7 @@ class MeasurementService:
             readout_post_margin=readout_post_margin,
             readout_amplification=readout_amplification,
             plot=plot,
+            plot_pulse_schedule=plot_pulse_schedule,
             **deprecated_options,
         )
 
@@ -2053,6 +2057,7 @@ class MeasurementService:
         readout_post_margin: float | None = None,
         readout_amplification: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> list[MeasureResult]:
         """
@@ -2077,6 +2082,8 @@ class MeasurementService:
             targets = [targets]
         else:
             targets = list(targets)
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         states = ["g", "e", "f"][:n_states]
         result = {
@@ -2089,6 +2096,7 @@ class MeasurementService:
                 readout_pre_margin=readout_pre_margin,
                 readout_post_margin=readout_post_margin,
                 readout_amplification=readout_amplification,
+                plot_pulse_schedule=plot_pulse_schedule,
                 **deprecated_options,
             )
             for state in states
@@ -2120,6 +2128,7 @@ class MeasurementService:
         readout_amplification: bool | None = None,
         simultaneous: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
         """
@@ -2146,6 +2155,8 @@ class MeasurementService:
             targets = [targets]
         else:
             targets = list(targets)
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         if simultaneous:
             return self._build_classifier(
@@ -2161,6 +2172,7 @@ class MeasurementService:
                 readout_post_margin=readout_post_margin,
                 readout_amplification=readout_amplification,
                 plot=plot,
+                plot_pulse_schedule=plot_pulse_schedule,
                 **deprecated_options,
             )
         else:
@@ -2184,6 +2196,7 @@ class MeasurementService:
                     readout_post_margin=readout_post_margin,
                     readout_amplification=readout_amplification,
                     plot=plot,
+                    plot_pulse_schedule=plot_pulse_schedule,
                     **deprecated_options,
                 )
                 fidelities[target] = result["readout_fidelities"][target]
@@ -2221,6 +2234,7 @@ class MeasurementService:
         readout_post_margin: float | None = None,
         readout_amplification: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
         if save_classifier is None:
@@ -2235,6 +2249,8 @@ class MeasurementService:
             targets = list(targets)
         if n_states is None:
             n_states = 2
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
         normalized_options, deprecated_options = partition_deprecated_options(
             values={"n_shots": n_shots},
             deprecated_options=deprecated_options,
@@ -2258,6 +2274,7 @@ class MeasurementService:
             readout_amplitudes=readout_amplitudes,
             readout_amplification=readout_amplification,
             plot=False,
+            plot_pulse_schedule=plot_pulse_schedule,
             **deprecated_options,
         )
 

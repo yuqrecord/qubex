@@ -2542,6 +2542,7 @@ class Experiment:
         add_pump_pulses: bool | None = None,
         simultaneous: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
         """Build state classifiers from measurement data."""
@@ -2559,6 +2560,7 @@ class Experiment:
             add_pump_pulses=add_pump_pulses,
             simultaneous=simultaneous,
             plot=plot,
+            plot_pulse_schedule=plot_pulse_schedule,
             **deprecated_options,
         )
 
