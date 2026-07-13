@@ -88,6 +88,10 @@ from .thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
 
+from .single_shot_measurement_with_post_selection import (
+    single_shot_measurement_with_post_selection,
+)
+
 __all__ = [
     "analyze_chevron_matched_transform",
     "calibrate_cr_pi_pulse",
@@ -157,4 +161,5 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
+    "single_shot_measurement_with_post_selection",
 ]
