@@ -232,10 +232,12 @@ def plot_single_shot_measurement_with_post_selection(
             posterior_averaged_iq[w][s] = dict()
             for d in ["train", "test"]:
                 if w == "before_post_selection":
-                    posterior_averaged_iq[w][s][d] = iq_data[s]["posterior"][d].mean(axis=0)
+                    posterior_averaged_iq[w][s][d] = iq_data[s]["posterior"][d].mean(
+                        axis=0
+                    )
                 else:
                     posterior_averaged_iq[w][s][d] = iq_data[s]["posterior"][d][
-                            post_selection[s][d], :
+                        post_selection[s][d], :
                     ].mean(axis=0)
     posterior_signal = dict()
     for w in ["before_post_selection", "after_post_selection"]:
@@ -257,14 +259,14 @@ def plot_single_shot_measurement_with_post_selection(
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
                 ax.scatter(
-                    np.arange(len(posterior_averaged_iq[w][s][d]))*8.0,
+                    np.arange(len(posterior_averaged_iq[w][s][d])) * 8.0,
                     np.real(posterior_averaged_iq[w][s][d]),
                     color=colors[s],
                     label=f"I_{labels[s]}",
                     marker="o",
                 )
                 ax.scatter(
-                    np.arange(len(posterior_averaged_iq[w][s][d]))*8.0,
+                    np.arange(len(posterior_averaged_iq[w][s][d])) * 8.0,
                     np.imag(posterior_averaged_iq[w][s][d]),
                     color=colors[s],
                     label=f"Q_{labels[s]}",
@@ -288,14 +290,16 @@ def plot_single_shot_measurement_with_post_selection(
                 posterior_averaged_iq[w]["e"][d] - posterior_averaged_iq[w]["g"][d]
             )
             ax.scatter(
-                np.arange(len(separation))*8.0,
+                np.arange(len(separation)) * 8.0,
                 np.abs(separation),
                 color="black",
             )
             ax.set_xlabel("Time (ns)")
             ax.set_ylabel("Amplitude (a.u.)")
             ax.grid()
-            title = f"Time-domain averaged IQ separation {w.replace('_', ' ')} ({d} set)"
+            title = (
+                f"Time-domain averaged IQ separation {w.replace('_', ' ')} ({d} set)"
+            )
             ax.set_title(title)
             plt.close(fig)
             figures["td_separation"][w][d] = {"figure": fig, "ax": ax}
@@ -524,7 +528,7 @@ def display_result(result: Result, plot: bool = True):
                 print(f"  |{s}>: {result.data['assignment_fidelity'][w][s][d]:.4f}")
             print(f"  avg: {result.data['assignment_fidelity'][w]['avg'][d]:.4f}")
             print(f"SNR: {result.data['snr'][w][d]:.4f}")
-            print(f"1-erfc(SNR/2)/2: {1-erfc(result.data['snr'][w][d]/2)/2:.4f}")
+            print(f"1-erfc(SNR/2)/2: {1 - erfc(result.data['snr'][w][d] / 2) / 2:.4f}")
 
 
 def single_shot_measurement_with_post_selection(
