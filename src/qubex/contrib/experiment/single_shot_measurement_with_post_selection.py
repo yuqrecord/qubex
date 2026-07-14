@@ -162,6 +162,7 @@ def run_single_shot_measurement_with_post_selection(
     top2_duration: float,
     fall2_duration: float,
     waittime: float,
+    buffer_after_pi_pulse: float,
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
@@ -194,6 +195,9 @@ def run_single_shot_measurement_with_post_selection(
             s.add(qubit, qx.pulse.Blank(waittime))
             if state == "e":
                 s.add(qubit, exp.drag_pi_pulse[qubit])
+            else:
+                s.add(qubit, qx.pulse.Blank(exp.drag_pi_pulse[qubit].duration))
+            s.add(qubit, qx.pulse.Blank(buffer_after_pi_pulse))
             s.barrier()
             s.add(resonator, readout_pulse)
         if plot_pulse_schedule:
@@ -535,6 +539,7 @@ def single_shot_measurement_with_post_selection(
     top2_duration: float,
     fall2_duration: float,
     waittime: float,
+    buffer_after_pi_pulse: float,
     shot_interval: float,
     n_train: int,
     n_test: int,
@@ -552,6 +557,7 @@ def single_shot_measurement_with_post_selection(
         top2_duration=top2_duration,
         fall2_duration=fall2_duration,
         waittime=waittime,
+        buffer_after_pi_pulse=buffer_after_pi_pulse,
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
