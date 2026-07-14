@@ -210,101 +210,195 @@ def run_single_shot_measurement_with_post_selection(
 
 def plot_single_shot_measurement_with_post_selection(
     *,
+    iq_data,
     signal,
     post_selection,
+    assignment_fidelity,
     alpha_scatter=0.01,
     alpha_hist=0.5,
     colors={"g": "blue", "e": "red"},
     labels={"g": "|g>", "e": "|e>"},
     n_bins=100,
-    plot: bool = True,
 ):
     figures = dict()
-    gaussian_params = dict()
-    snr = dict()
+    posterior_averaged_iq = dict()
     for w in ["before_post_selection", "after_post_selection"]:
-        figures[w] = dict()
-        gaussian_params[w] = dict()
-        snr[w] = dict()
+        posterior_averaged_iq[w] = dict()
+        for s in ["g", "e"]:
+            posterior_averaged_iq[w][s] = dict()
+            for d in ["train", "test"]:
+                if w == "before_post_selection":
+                    posterior_averaged_iq[w][s][d] = iq_data[s]["posterior"][d].mean(axis=0)
+                else:
+                    posterior_averaged_iq[w][s][d] = iq_data[s]["posterior"][d][
+                            post_selection[s][d], :
+                    ].mean(axis=0)
+    posterior_signal = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        posterior_signal[w] = dict()
+        for s in ["g", "e"]:
+            posterior_signal[w][s] = dict()
+            for d in ["train", "test"]:
+                if w == "before_post_selection":
+                    posterior_signal[w][s][d] = signal[s]["posterior"][d]
+                else:
+                    posterior_signal[w][s][d] = signal[s]["posterior"][d][
+                        post_selection[s][d]
+                    ]
+    # TD averaged iq data
+    figures["td_iq"] = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        figures["td_iq"][w] = dict()
         for d in ["train", "test"]:
-            figures[w][d] = dict()
-            gaussian_params[w][d] = dict()
-            # Plot IQ data
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
-                if w == "before_post_selection":
-                    ax.scatter(
-                        np.real(signal[s]["posterior"][d]),
-                        np.imag(signal[s]["posterior"][d]),
-                        color=colors[s],
-                        label=labels[s],
-                        alpha=alpha_scatter,
-                    )
-                else:
-                    ax.scatter(
-                        np.real(signal[s]["posterior"][d][post_selection[s][d]]),
-                        np.imag(signal[s]["posterior"][d][post_selection[s][d]]),
-                        color=colors[s],
-                        label=labels[s],
-                        alpha=alpha_scatter,
-                    )
+                ax.scatter(
+                    np.arange(len(posterior_averaged_iq[w][s][d]))*8.0,
+                    np.real(posterior_averaged_iq[w][s][d]),
+                    color=colors[s],
+                    label=f"I_{labels[s]}",
+                    marker="o",
+                )
+                ax.scatter(
+                    np.arange(len(posterior_averaged_iq[w][s][d]))*8.0,
+                    np.imag(posterior_averaged_iq[w][s][d]),
+                    color=colors[s],
+                    label=f"Q_{labels[s]}",
+                    marker="x",
+                )
+            ax.set_xlabel("Time (ns)")
+            ax.set_ylabel("Amplitude (a.u.)")
+            ax.grid()
+            title = f"Time-domain averaged IQ data {w.replace('_', ' ')} ({d} set)"
+            ax.set_title(title)
+            ax.legend()
+            plt.close(fig)
+            figures["td_iq"][w][d] = {"figure": fig, "ax": ax}
+    # IQ averaged separation
+    figures["td_separation"] = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        figures["td_separation"][w] = dict()
+        for d in ["train", "test"]:
+            fig, ax = plt.subplots()
+            separation = (
+                posterior_averaged_iq[w]["e"][d] - posterior_averaged_iq[w]["g"][d]
+            )
+            ax.scatter(
+                np.arange(len(separation))*8.0,
+                np.abs(separation),
+                color="black",
+            )
+            ax.set_xlabel("Time (ns)")
+            ax.set_ylabel("Amplitude (a.u.)")
+            ax.grid()
+            title = f"Time-domain averaged IQ separation {w.replace('_', ' ')} ({d} set)"
+            ax.set_title(title)
+            plt.close(fig)
+            figures["td_separation"][w][d] = {"figure": fig, "ax": ax}
+    # Plot IQ data
+    figures["iq_scatter"] = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        figures["iq_scatter"][w] = dict()
+        for d in ["train", "test"]:
+            fig, ax = plt.subplots()
+            for s in ["g", "e"]:
+                ax.scatter(
+                    np.real(posterior_signal[w][s][d]),
+                    np.imag(posterior_signal[w][s][d]),
+                    color=colors[s],
+                    label=labels[s],
+                    alpha=alpha_scatter,
+                )
             ax.set_xlabel("I")
             ax.set_ylabel("Q")
+            ax.grid()
             ax.set_aspect("equal", adjustable="box")
             title = f"IQ data {w.replace('_', ' ')} ({d} set)"
             ax.set_title(title)
             ax.legend()
-            ax.grid()
-            figures[w][d]["scatter"] = {"figure": fig, "ax": ax}
-            if plot:
-                plt.show()
-            # Plot histograms
+            plt.close(fig)
+            figures["iq_scatter"][w][d] = {"figure": fig, "ax": ax}
+    # Plot histograms
+    figures["iq_histogram"] = dict()
+    gaussian_params = dict()
+    snr = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        figures["iq_histogram"][w] = dict()
+        gaussian_params[w] = {"g": dict(), "e": dict()}
+        snr[w] = dict()
+        for d in ["train", "test"]:
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
-                if w == "before_post_selection":
-                    counts, bin_edges, _ = ax.hist(
-                        np.real(signal[s]["posterior"][d]),
-                        bins=n_bins,
-                        color=colors[s],
-                        alpha=alpha_hist,
-                        label=labels[s],
-                    )
-                else:
-                    counts, bin_edges, _ = ax.hist(
-                        np.real(signal[s]["posterior"][d][post_selection[s][d]]),
-                        bins=n_bins,
-                        color=colors[s],
-                        alpha=alpha_hist,
-                        label=labels[s],
-                    )
+                counts, bin_edges, _ = ax.hist(
+                    np.real(posterior_signal[w][s][d]),
+                    bins=n_bins,
+                    color=colors[s],
+                    alpha=alpha_hist,
+                    label=labels[s],
+                )
                 bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
-                gaussian_params[w][d][s] = gaussian_fit(bin_centers, counts)
+                gaussian_params[w][s][d] = gaussian_fit(bin_centers, counts)
                 x_fit = np.linspace(bin_edges[0], bin_edges[-1], 1000)
-                y_fit = gaussian(x_fit, **gaussian_params[w][d][s])
+                y_fit = gaussian(x_fit, **gaussian_params[w][s][d])
                 ax.plot(x_fit, y_fit, color=colors[s], linestyle="--")
             snr[w][d] = np.sqrt(
-                (gaussian_params[w][d]["g"]["mu"] - gaussian_params[w][d]["e"]["mu"])
+                (gaussian_params[w]["g"][d]["mu"] - gaussian_params[w]["e"][d]["mu"])
                 ** 2
                 / (
-                    gaussian_params[w][d]["g"]["sigma"] ** 2
-                    + gaussian_params[w][d]["e"]["sigma"] ** 2
+                    gaussian_params[w]["g"][d]["sigma"] ** 2
+                    + gaussian_params[w]["e"][d]["sigma"] ** 2
                 )
             )
             ax.set_xlabel("I")
             ax.set_ylabel("Counts")
             ax.set_yscale("log")
             ax.set_ylim(bottom=0.5)
+            ax.grid()
             title = f"Histogram of I {w.replace('_', ' ')} ({d} set)"
             ax.set_title(title)
             ax.legend()
-            ax.grid()
-            figures[w][d]["histogram"] = {"figure": fig, "ax": ax}
-            if plot:
-                plt.show()
-            print(f"SNR {w.replace('_', ' ')} ({d} set): {snr[w][d]:.4f}")
-            print(
-                f"1 - erfc(SNR/2)/2 {w.replace('_', ' ')} ({d} set): {1 - erfc(snr[w][d] / 2) / 2:.4f}"
+            plt.close(fig)
+            figures["iq_histogram"][w][d] = {"figure": fig, "ax": ax}
+    # Plot Assignment Fidelity matrix
+    figures["assignment_fidelity"] = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        figures["assignment_fidelity"][w] = dict()
+        for d in ["train", "test"]:
+            fig, ax = plt.subplots()
+            matrix = np.array(
+                [
+                    [
+                        assignment_fidelity[w]["g"][d],
+                        1 - assignment_fidelity[w]["g"][d],
+                    ],
+                    [
+                        1 - assignment_fidelity[w]["e"][d],
+                        assignment_fidelity[w]["e"][d],
+                    ],
+                ]
             )
+            im = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=1)
+            for i in range(2):
+                for j in range(2):
+                    text = ax.text(
+                        j,
+                        i,
+                        f"{matrix[i, j]:.4f}",
+                        ha="center",
+                        va="center",
+                        color="black",
+                    )
+            ax.set_xticks([0, 1])
+            ax.set_yticks([0, 1])
+            ax.set_xticklabels(["|g>", "|e>"])
+            ax.set_yticklabels(["|g>", "|e>"])
+            ax.set_xlabel("Prepared State")
+            ax.set_ylabel("Observed State")
+            title = f"Assignment Fidelity Matrix {w.replace('_', ' ')} ({d} set)"
+            ax.set_title(title)
+            fig.colorbar(im, ax=ax)
+            plt.close(fig)
+            figures["assignment_fidelity"][w][d] = {"figure": fig, "ax": ax}
     return {
         "figures": figures,
         "gaussian_params": gaussian_params,
@@ -398,12 +492,6 @@ def analyze_single_shot_measurement_with_post_selection(
             assignment_fidelity[w]["avg"][d] = (
                 assignment_fidelity[w]["g"][d] + assignment_fidelity[w]["e"][d]
             ) / 2
-    for w in ["before_post_selection", "after_post_selection"]:
-        print(f"Assignment fidelity {w.replace('_', ' ')}:")
-        for d in ["train", "test"]:
-            print(f"  {d} set:")
-            for s in ["g", "e", "avg"]:
-                print(f"    f_{s}: {assignment_fidelity[w][s][d]:.4f}")
     return {
         "weight": weight,
         "signal": signal,
@@ -411,6 +499,28 @@ def analyze_single_shot_measurement_with_post_selection(
         "post_selection": post_selection,
         "assignment_fidelity": assignment_fidelity,
     }
+
+
+def display_result(result: Result, plot: bool = True):
+    for w in ["before_post_selection", "after_post_selection"]:
+        for d in ["train", "test"]:
+            if plot:
+                try:
+                    from IPython.display import display
+                except ImportError:
+                    display = lambda x: None
+                display(result.figures["td_iq"][w][d]["figure"])
+                display(result.figures["td_separation"][w][d]["figure"])
+                display(result.figures["iq_scatter"][w][d]["figure"])
+                display(result.figures["iq_histogram"][w][d]["figure"])
+                display(result.figures["assignment_fidelity"][w][d]["figure"])
+            print(f"{w.replace('_', ' ')} ({d} set):")
+            print(f"Assinment fidelity")
+            for s in ["g", "e"]:
+                print(f"  |{s}>: {result.data['assignment_fidelity'][w][s][d]:.4f}")
+            print(f"  avg: {result.data['assignment_fidelity'][w]['avg'][d]:.4f}")
+            print(f"SNR: {result.data['snr'][w][d]:.4f}")
+            print(f"1-erfc(SNR/2)/2: {1-erfc(result.data['snr'][w][d]/2)/2:.4f}")
 
 
 def single_shot_measurement_with_post_selection(
@@ -431,7 +541,7 @@ def single_shot_measurement_with_post_selection(
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ) -> Result:
-    result = run_single_shot_measurement_with_post_selection(
+    run_result = run_single_shot_measurement_with_post_selection(
         exp,
         target=target,
         height1=height1,
@@ -446,7 +556,7 @@ def single_shot_measurement_with_post_selection(
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
     )
-    iq_data = create_iq_data(result, target, n_train)
+    iq_data = create_iq_data(run_result, target, n_train)
     analyze_result = analyze_single_shot_measurement_with_post_selection(
         iq_data=iq_data, n_train=n_train, n_test=n_test, n_max_epoch=10
     )
@@ -456,19 +566,20 @@ def single_shot_measurement_with_post_selection(
     post_selection = analyze_result["post_selection"]
     assignment_fidelity = analyze_result["assignment_fidelity"]
     plot_result = plot_single_shot_measurement_with_post_selection(
+        iq_data=iq_data,
         signal=signal,
         post_selection=post_selection,
+        assignment_fidelity=assignment_fidelity,
         alpha_scatter=0.05,
         alpha_hist=0.5,
         colors={"g": "blue", "e": "red"},
         labels={"g": "|g>", "e": "|e>"},
         n_bins=100,
-        plot=plot,
     )
     figures = plot_result["figures"]
     gaussian_params = plot_result["gaussian_params"]
     snr = plot_result["snr"]
-    return Result(
+    result = Result(
         data={
             "target": target,
             "iq_data": iq_data,
@@ -483,3 +594,5 @@ def single_shot_measurement_with_post_selection(
         figure=None,
         figures=figures,
     )
+    display_result(result, plot)
+    return result
