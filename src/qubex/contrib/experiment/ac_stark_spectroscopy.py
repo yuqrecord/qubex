@@ -366,13 +366,15 @@ def _extract_readout_iq(
             "capture is the readout data; a different count indicates that "
             "the schedule was compiled differently than assumed."
         )
-    return complex(np.mean(np.asarray(captures[1].kerneled)))
+    return complex(captures[1].kerneled)
 
 
-def _get_rabi_param(exp: Experiment, target: str) -> RabiParam | None:
+def _get_rabi_param(exp: Experiment, target: str) -> RabiParam:
     rabi_param = exp.pulse.ge_rabi_params.get(target)
     if rabi_param is None:
         rabi_param = exp.pulse.rabi_params.get(target)
+    if rabi_param is None:
+        raise ValueError(f"`{target}` does not have a RabiParam.")
     return rabi_param
 
 
@@ -547,15 +549,6 @@ def run_ac_stark_spectroscopy(
     }
 
 
-def _principal_axis(iq: NDArray) -> complex:
-    centered = iq - iq.mean()
-    points = np.column_stack([centered.real, centered.imag])
-    covariance = points.T @ points
-    _, eigenvectors = np.linalg.eigh(covariance)
-    axis = eigenvectors[:, -1]
-    return complex(axis[0], axis[1])
-
-
 def _smooth_for_initial_guess(signal: NDArray[np.float64]) -> NDArray[np.float64]:
     kernel = np.array([1, 2, 3, 2, 1], dtype=float)
     kernel /= kernel.sum()
@@ -604,16 +597,15 @@ def analyze_ac_stark_spectroscopy(
     qubit_frequency: float,
     qubit_initial_state: Literal["g", "e"],
     qubit_drive_duration: float,
-    rabi_param: RabiParam | None,
+    rabi_param: RabiParam,
 ) -> dict[str, Any]:
     """
     Fit one spectroscopy trace and extract the AC Stark shift.
 
-    The complex IQ trace is projected to a real signal (Rabi
-    normalization when available, otherwise a principal-axis projection),
-    then fitted with a Lorentzian over the absolute qubit drive
-    frequency. The fit is retried with the opposite line polarity when
-    the first attempt does not pass the quality gates.
+    The complex IQ trace is normalized with the calibrated Rabi
+    parameters, then fitted with a Lorentzian over the absolute qubit
+    drive frequency. The fit is retried with the opposite line polarity
+    when the first attempt does not pass the quality gates.
 
     Parameters
     ----------
@@ -628,17 +620,15 @@ def analyze_ac_stark_spectroscopy(
         Prepared qubit state (recorded in the output).
     qubit_drive_duration : float
         Qubit drive duration in ns, used for the linewidth initial guess.
-    rabi_param : RabiParam | None
-        Calibrated Rabi parameters for normalization, or None to fall
-        back to a principal-axis projection.
+    rabi_param : RabiParam
+        Calibrated Rabi parameters used to normalize the IQ data.
 
     Returns
     -------
     dict[str, Any]
-        Fit results with keys ``normalized``, ``normalization_method``,
-        ``pca_axis``, ``fit_result``, ``f0``, ``f0_err``, ``gamma``,
-        ``r2``, ``valid`` and ``ac_stark_shift`` (calibrated reference;
-        NaN when the fit is invalid).
+        Fit results with keys ``normalized``, ``fit_result``, ``f0``,
+        ``f0_err``, ``gamma``, ``r2``, ``valid`` and ``ac_stark_shift``
+        (calibrated reference; NaN when the fit is invalid).
     """
     detuning_range = np.asarray(detuning_range, dtype=float)
     iq_array = np.asarray(iq, dtype=complex)
@@ -648,18 +638,7 @@ def analyze_ac_stark_spectroscopy(
             f"{detuning_range.shape} and {iq_array.shape}."
         )
 
-    if rabi_param is not None:
-        normalized = np.asarray(rabi_param.normalize(iq_array), dtype=float)
-        normalization_method = "rabi"
-        pca_axis = None
-    else:
-        print(
-            "[WARN] Rabi parameters are not available; projecting the IQ data "
-            "onto its principal axis (arbitrary sign)."
-        )
-        pca_axis = _principal_axis(iq_array)
-        normalized = ((iq_array - iq_array.mean()) * np.conj(pca_axis)).real
-        normalization_method = "pca"
+    normalized = np.asarray(rabi_param.normalize(iq_array), dtype=float)
 
     order = np.argsort(detuning_range)
     x = qubit_frequency + detuning_range[order]
@@ -732,8 +711,6 @@ def analyze_ac_stark_spectroscopy(
         "detuning_range": detuning_range,
         "frequency_range": qubit_frequency + detuning_range,
         "normalized": normalized,
-        "normalization_method": normalization_method,
-        "pca_axis": pca_axis,
         "fit_result": fit_result,
         "f0": f0,
         "f0_err": f0_err,
@@ -882,8 +859,6 @@ def ac_stark_spectroscopy(
         (n_states, n_amplitudes, n_offsets, n_detunings), np.nan, dtype=complex
     )
     normalized = np.full((n_states, n_amplitudes, n_offsets, n_detunings), np.nan)
-    normalization_method = np.empty((n_states, n_amplitudes, n_offsets), dtype=object)
-    pca_axis = np.full((n_states, n_amplitudes, n_offsets), np.nan, dtype=complex)
     f0 = np.full((n_states, n_amplitudes, n_offsets), np.nan)
     f0_err = np.full((n_states, n_amplitudes, n_offsets), np.nan)
     gamma = np.full((n_states, n_amplitudes, n_offsets), np.nan)
@@ -933,9 +908,6 @@ def ac_stark_spectroscopy(
                 point = (state_index, amplitude_index, offset_index)
                 iq[point] = run_result["iq"]
                 normalized[point] = analysis["normalized"]
-                normalization_method[point] = analysis["normalization_method"]
-                if analysis["pca_axis"] is not None:
-                    pca_axis[point] = analysis["pca_axis"]
                 f0[point] = analysis["f0"]
                 f0_err[point] = analysis["f0_err"]
                 gamma[point] = analysis["gamma"]
@@ -1027,8 +999,6 @@ def ac_stark_spectroscopy(
         "spectroscopy": {
             "iq": iq,
             "normalized": normalized,
-            "normalization_method": normalization_method,
-            "pca_axis": pca_axis,
         },
         "fit": {
             "f0": f0,
