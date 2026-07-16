@@ -94,32 +94,28 @@ def _sampling_period() -> float:
     return float(Waveform.SAMPLING_PERIOD)
 
 
-def _validate_finite_scalar(name: str, value: float) -> float:
+def _validate_finite_scalar(name: str, value: float) -> None:
     if isinstance(value, bool) or not isinstance(
         value, (int, float, np.integer, np.floating)
     ):
         raise TypeError(f"`{name}` must be a real number, got {value!r}.")
-    value = float(value)
     if not np.isfinite(value):
         raise ValueError(f"`{name}` must be finite, got {value!r}.")
-    return value
 
 
-def _validate_time_on_grid(name: str, value: float) -> float:
-    value = _validate_finite_scalar(name, value)
+def _validate_time_on_grid(name: str, value: float) -> None:
+    _validate_finite_scalar(name, value)
     dt = _sampling_period()
     if abs(value - round(value / dt) * dt) > TIME_GRID_TOLERANCE:
         raise ValueError(
             f"`{name}` ({value} ns) must be a multiple of the {dt} ns sampling period."
         )
-    return value
 
 
-def _validate_amplitude(name: str, value: float) -> float:
-    value = _validate_finite_scalar(name, value)
+def _validate_amplitude(name: str, value: float) -> None:
+    _validate_finite_scalar(name, value)
     if not 0.0 <= value <= 1.0:
         raise ValueError(f"`{name}` must be within [0, 1], got {value}.")
-    return value
 
 
 def _validate_flat_top(
@@ -139,13 +135,12 @@ def _validate_flat_top(
         )
 
 
-def _validate_state(name: str, value: str) -> str:
+def _validate_state(name: str, value: str) -> None:
     if value not in STATE_LABELS:
         raise ValueError(f"`{name}` must be one of {STATE_LABELS}, got {value!r}.")
-    return value
 
 
-def _validate_axis(name: str, values: float | ArrayLike) -> NDArray[np.float64]:
+def _validate_axis(name: str, values: float | ArrayLike) -> None:
     array = np.atleast_1d(np.asarray(values, dtype=float))
     if array.ndim != 1:
         raise ValueError(f"`{name}` must be a scalar or a 1D sequence.")
@@ -155,15 +150,13 @@ def _validate_axis(name: str, values: float | ArrayLike) -> NDArray[np.float64]:
         raise ValueError(f"`{name}` must contain only finite values.")
     if np.unique(array).size != array.size:
         raise ValueError(f"`{name}` must not contain duplicate values.")
-    return array
 
 
-def _validate_n_shots(n_shots: int) -> int:
+def _validate_n_shots(n_shots: int) -> None:
     if isinstance(n_shots, bool) or not isinstance(n_shots, (int, np.integer)):
         raise TypeError(f"`n_shots` must be an integer, got {n_shots!r}.")
     if n_shots <= 0:
         raise ValueError(f"`n_shots` must be positive, got {n_shots}.")
-    return int(n_shots)
 
 
 def _validate_timing_constraint(
@@ -202,7 +195,7 @@ def _validate_run_parameters(
     waittime: float,
     shot_interval: float,
     n_shots: int,
-) -> NDArray[np.float64]:
+) -> None:
     _validate_state("qubit_initial_state", qubit_initial_state)
     _validate_amplitude("qubit_drive_amplitude", qubit_drive_amplitude)
     _validate_amplitude("resonator_drive_amplitude", resonator_drive_amplitude)
@@ -231,22 +224,22 @@ def _validate_run_parameters(
         waittime=waittime,
     )
     _validate_finite_scalar("resonator_drive_detuning", resonator_drive_detuning)
-    shot_interval = _validate_finite_scalar("shot_interval", shot_interval)
+    _validate_finite_scalar("shot_interval", shot_interval)
     if shot_interval <= 0:
         raise ValueError(f"`shot_interval` must be positive, got {shot_interval}.")
     _validate_n_shots(n_shots)
 
-    detuning_range = _validate_axis(
-        "qubit_drive_detuning_range", qubit_drive_detuning_range
-    )
-    if detuning_range.size < MIN_QUBIT_DETUNING_POINTS:
+    _validate_axis("qubit_drive_detuning_range", qubit_drive_detuning_range)
+    n_detuning_points = np.atleast_1d(
+        np.asarray(qubit_drive_detuning_range, dtype=float)
+    ).size
+    if n_detuning_points < MIN_QUBIT_DETUNING_POINTS:
         raise ValueError(
             "`qubit_drive_detuning_range` must be a sweep with at least "
             f"{MIN_QUBIT_DETUNING_POINTS} distinct points to fit a Lorentzian, "
-            f"got {detuning_range.size} point(s). The AC Stark shift cannot be "
+            f"got {n_detuning_points} point(s). The AC Stark shift cannot be "
             "measured without sweeping the qubit drive detuning."
         )
-    return detuning_range
 
 
 def ac_stark_spectroscopy_sequence(
@@ -457,7 +450,7 @@ def run_ac_stark_spectroscopy(
         ``frequency_range``, ``iq``, labels, the calibrated frequencies,
         and an echo of the drive parameters.
     """
-    detuning_range = _validate_run_parameters(
+    _validate_run_parameters(
         qubit_initial_state=qubit_initial_state,
         qubit_drive_amplitude=qubit_drive_amplitude,
         qubit_drive_duration=qubit_drive_duration,
@@ -472,6 +465,7 @@ def run_ac_stark_spectroscopy(
         shot_interval=shot_interval,
         n_shots=n_shots,
     )
+    detuning_range = np.atleast_1d(np.asarray(qubit_drive_detuning_range, dtype=float))
     reset_first = (
         bool(reset_awg_and_capunits) if reset_awg_and_capunits is not None else False
     )
@@ -850,12 +844,12 @@ def ac_stark_spectroscopy(
     for state in states:
         _validate_state("qubit_initial_states", state)
 
-    amplitude_range = _validate_axis(
-        "resonator_drive_amplitude_range", resonator_drive_amplitude_range
+    _validate_axis("resonator_drive_amplitude_range", resonator_drive_amplitude_range)
+    _validate_axis("qubit_drive_time_offset_range", qubit_drive_time_offset_range)
+    amplitude_range = np.atleast_1d(
+        np.asarray(resonator_drive_amplitude_range, dtype=float)
     )
-    offset_range = _validate_axis(
-        "qubit_drive_time_offset_range", qubit_drive_time_offset_range
-    )
+    offset_range = np.atleast_1d(np.asarray(qubit_drive_time_offset_range, dtype=float))
     for amplitude in amplitude_range:
         _validate_amplitude("resonator_drive_amplitude_range", float(amplitude))
     for offset in offset_range:
@@ -866,7 +860,7 @@ def ac_stark_spectroscopy(
             resonator_drive_duration=resonator_drive_duration,
             waittime=waittime,
         )
-    detuning_range = _validate_run_parameters(
+    _validate_run_parameters(
         qubit_initial_state=states[0],
         qubit_drive_amplitude=qubit_drive_amplitude,
         qubit_drive_duration=qubit_drive_duration,
@@ -881,10 +875,12 @@ def ac_stark_spectroscopy(
         shot_interval=shot_interval,
         n_shots=n_shots,
     )
+    detuning_range = np.atleast_1d(np.asarray(qubit_drive_detuning_range, dtype=float))
     if dispersive_shift is not None:
-        dispersive_shift = _validate_finite_scalar("dispersive_shift", dispersive_shift)
+        _validate_finite_scalar("dispersive_shift", dispersive_shift)
         if dispersive_shift == 0.0:
             raise ValueError("`dispersive_shift` must be nonzero (signed chi in GHz).")
+        dispersive_shift = float(dispersive_shift)
 
     qubit_label = exp.ctx.resolve_qubit_label(target)
     read_label = exp.ctx.resolve_read_label(target)
