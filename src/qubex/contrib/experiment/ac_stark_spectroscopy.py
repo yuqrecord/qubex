@@ -860,21 +860,6 @@ def ac_stark_spectroscopy(
             resonator_drive_duration=resonator_drive_duration,
             waittime=waittime,
         )
-    _validate_run_parameters(
-        qubit_initial_state=states[0],
-        qubit_drive_amplitude=qubit_drive_amplitude,
-        qubit_drive_duration=qubit_drive_duration,
-        qubit_drive_ramptime=qubit_drive_ramptime,
-        qubit_drive_detuning_range=qubit_drive_detuning_range,
-        qubit_drive_time_offset=float(offset_range[0]),
-        resonator_drive_amplitude=float(amplitude_range[0]),
-        resonator_drive_duration=resonator_drive_duration,
-        resonator_drive_ramptime=resonator_drive_ramptime,
-        resonator_drive_detuning=resonator_drive_detuning,
-        waittime=waittime,
-        shot_interval=shot_interval,
-        n_shots=n_shots,
-    )
     detuning_range = np.atleast_1d(np.asarray(qubit_drive_detuning_range, dtype=float))
     if dispersive_shift is not None:
         _validate_finite_scalar("dispersive_shift", dispersive_shift)
