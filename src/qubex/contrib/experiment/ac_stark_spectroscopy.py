@@ -827,7 +827,8 @@ def ac_stark_spectroscopy(
     plot : bool, optional
         If True, display the result figures.
     plot_pulse_schedule : bool, optional
-        If True, plot the pulse schedule of the first acquired point.
+        If True, plot the pulse schedule of the first acquired point of
+        each preparation state.
     reset_awg_and_capunits : bool | None, optional
         If True, reset the AWGs and capture units once before the first
         execution. Defaults to off (no implicit hardware operation).
@@ -917,6 +918,7 @@ def ac_stark_spectroscopy(
     for state_index, state in enumerate(states):
         for amplitude_index, amplitude in enumerate(amplitude_range):
             for offset_index, offset in enumerate(offset_range):
+                is_first_point_of_state = amplitude_index == 0 and offset_index == 0
                 run_result = run_ac_stark_spectroscopy(
                     exp,
                     target=target,
@@ -933,7 +935,7 @@ def ac_stark_spectroscopy(
                     waittime=waittime,
                     shot_interval=shot_interval,
                     n_shots=n_shots,
-                    plot_pulse_schedule=plot_pulse_schedule and is_first_point,
+                    plot_pulse_schedule=plot_pulse_schedule and is_first_point_of_state,
                     reset_awg_and_capunits=(
                         reset_awg_and_capunits if is_first_point else False
                     ),
