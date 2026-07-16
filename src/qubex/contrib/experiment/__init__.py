@@ -87,6 +87,7 @@ from .superconducting_gap import get_resistance_charge, get_superconducting_gap
 from .thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
+from .ac_stark_spectroscopy import ac_stark_spectroscopy
 
 __all__ = [
     "analyze_chevron_matched_transform",
@@ -157,4 +158,5 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
+    "ac_stark_spectroscopy",
 ]
