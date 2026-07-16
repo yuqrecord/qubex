@@ -35,12 +35,12 @@ validated at runtime.
 
 The readout signal versus qubit drive frequency is fitted with a
 Lorentzian to extract the (shifted) qubit resonance ``f0``. The AC Stark
-shift is reported against two references:
+shift is referenced to the calibrated qubit frequency:
 
-- calibrated reference: ``shift = f0 - f_qubit_calibrated``
-- zero-amplitude reference (drift resistant): when the resonator drive
-  amplitude sweep contains ``0.0``, ``shift = f0(A_r) - f0(A_r = 0)``
-  per preparation state and time offset.
+    shift = f0 - f_qubit_calibrated
+
+The resonator drive amplitude must be positive; a zero-amplitude
+reference point is not supported.
 
 Photon number conversion
 ------------------------
@@ -112,10 +112,12 @@ def _validate_time_on_grid(name: str, value: float) -> None:
         )
 
 
-def _validate_amplitude(name: str, value: float) -> None:
+def _validate_amplitude(name: str, value: float, *, allow_zero: bool) -> None:
     _validate_finite_scalar(name, value)
     if not 0.0 <= value <= 1.0:
         raise ValueError(f"`{name}` must be within [0, 1], got {value}.")
+    if not allow_zero and value == 0.0:
+        raise ValueError(f"`{name}` must be positive, got {value}.")
 
 
 def _validate_flat_top(
@@ -197,8 +199,10 @@ def _validate_run_parameters(
     n_shots: int,
 ) -> None:
     _validate_state("qubit_initial_state", qubit_initial_state)
-    _validate_amplitude("qubit_drive_amplitude", qubit_drive_amplitude)
-    _validate_amplitude("resonator_drive_amplitude", resonator_drive_amplitude)
+    _validate_amplitude("qubit_drive_amplitude", qubit_drive_amplitude, allow_zero=True)
+    _validate_amplitude(
+        "resonator_drive_amplitude", resonator_drive_amplitude, allow_zero=False
+    )
     _validate_time_on_grid("qubit_drive_duration", qubit_drive_duration)
     _validate_time_on_grid("qubit_drive_ramptime", qubit_drive_ramptime)
     _validate_time_on_grid("resonator_drive_duration", resonator_drive_duration)
@@ -749,9 +753,7 @@ def ac_stark_spectroscopy(
     For every combination of preparation state, resonator drive amplitude
     and qubit drive time offset, a qubit spectroscopy trace (versus
     ``qubit_drive_detuning_range``) is acquired and fitted. The AC Stark shift
-    is referenced to the fitted zero-amplitude spectrum when the
-    amplitude sweep contains ``0.0`` (recommended, drift resistant),
-    otherwise to the calibrated qubit frequency. With ``dispersive_shift``
+    is referenced to the calibrated qubit frequency. With ``dispersive_shift``
     (signed chi, GHz) given, the shift is converted to the mean
     intracavity photon number ``n = shift / (2 * chi)``.
 
@@ -776,8 +778,8 @@ def ac_stark_spectroscopy(
         Sweep axis: qubit drive start relative to the resonator drive
         start (ns). A scalar or a list; negative values are allowed.
     resonator_drive_amplitude_range : float | ArrayLike
-        Sweep axis: resonator drive amplitude. A scalar or a list.
-        Include ``0.0`` to obtain a drift-resistant shift reference.
+        Sweep axis: resonator drive amplitude. A scalar or a list;
+        every value must be positive.
     resonator_drive_duration : float
         Duration of the resonator drive in ns.
     resonator_drive_ramptime : float
@@ -828,7 +830,9 @@ def ac_stark_spectroscopy(
     )
     offset_range = np.atleast_1d(np.asarray(qubit_drive_time_offset_range, dtype=float))
     for amplitude in amplitude_range:
-        _validate_amplitude("resonator_drive_amplitude_range", float(amplitude))
+        _validate_amplitude(
+            "resonator_drive_amplitude_range", float(amplitude), allow_zero=False
+        )
     for offset in offset_range:
         _validate_time_on_grid("qubit_drive_time_offset_range", float(offset))
         _validate_timing_constraint(
@@ -917,43 +921,12 @@ def ac_stark_spectroscopy(
                 progress.update(1)
     progress.close()
 
-    shift_calibrated = np.where(fit_valid, f0 - qubit_frequency, np.nan)
-    shift_calibrated_error = np.where(fit_valid, f0_err, np.nan)
-
-    zero_indices = np.flatnonzero(amplitude_range == 0.0)
-    if zero_indices.size > 0:
-        zero_index = int(zero_indices[0])
-        reference = "zero_amplitude"
-        reference_valid = fit_valid[:, zero_index, :]
-        reference_f0 = np.where(reference_valid, f0[:, zero_index, :], np.nan)
-        reference_f0_err = np.where(reference_valid, f0_err[:, zero_index, :], np.nan)
-        shift_zero_amplitude = np.where(
-            fit_valid, f0 - reference_f0[:, np.newaxis, :], np.nan
-        )
-        shift_zero_amplitude_error = np.where(
-            fit_valid,
-            np.sqrt(f0_err**2 + reference_f0_err[:, np.newaxis, :] ** 2),
-            np.nan,
-        )
-        primary_shift = shift_zero_amplitude
-        primary_shift_error = shift_zero_amplitude_error
-        if not np.all(reference_valid):
-            print(
-                "[WARN] the zero-amplitude reference fit is invalid for some "
-                "(state, offset) points; the zero-referenced shift is NaN "
-                "there (see `shift_calibrated` for the calibrated reference)."
-            )
-    else:
-        reference = "calibrated"
-        reference_valid = np.ones((n_states, n_offsets), dtype=bool)
-        shift_zero_amplitude = None
-        shift_zero_amplitude_error = None
-        primary_shift = shift_calibrated
-        primary_shift_error = shift_calibrated_error
+    ac_stark_shift = np.where(fit_valid, f0 - qubit_frequency, np.nan)
+    ac_stark_shift_error = np.where(fit_valid, f0_err, np.nan)
 
     if dispersive_shift is not None:
-        photon_number = primary_shift / (2 * dispersive_shift)
-        photon_number_error = primary_shift_error / (2 * abs(dispersive_shift))
+        photon_number = ac_stark_shift / (2 * dispersive_shift)
+        photon_number_error = ac_stark_shift_error / (2 * abs(dispersive_shift))
         photon_number_valid = (
             fit_valid
             & np.isfinite(photon_number)
@@ -963,8 +936,7 @@ def ac_stark_spectroscopy(
             print(
                 "[WARN] some inferred photon numbers are significantly "
                 "negative; check the sign convention of `dispersive_shift` "
-                "(signed chi with delta_f = 2 * chi * n) and the shift "
-                "reference."
+                "(signed chi with delta_f = 2 * chi * n)."
             )
     else:
         photon_number = None
@@ -1009,14 +981,8 @@ def ac_stark_spectroscopy(
             "result": fit_results,
         },
         "derived": {
-            "reference": reference,
-            "reference_valid": reference_valid,
-            "shift_calibrated": shift_calibrated,
-            "shift_calibrated_error": shift_calibrated_error,
-            "shift_zero_amplitude": shift_zero_amplitude,
-            "shift_zero_amplitude_error": shift_zero_amplitude_error,
-            "primary_shift": primary_shift,
-            "primary_shift_error": primary_shift_error,
+            "ac_stark_shift": ac_stark_shift,
+            "ac_stark_shift_error": ac_stark_shift_error,
             "photon_number": photon_number,
             "photon_number_error": photon_number_error,
             "photon_number_valid": photon_number_valid,
@@ -1229,8 +1195,8 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     normalized = data["spectroscopy"]["normalized"]
     f0 = data["fit"]["f0"]
     fit_valid = data["fit"]["valid"]
-    primary_shift = data["derived"]["primary_shift"]
-    primary_shift_error = data["derived"]["primary_shift_error"]
+    ac_stark_shift = data["derived"]["ac_stark_shift"]
+    ac_stark_shift_error = data["derived"]["ac_stark_shift_error"]
     photon_number = data["derived"]["photon_number"]
     dispersive_shift = data["calibration"]["dispersive_shift"]
 
@@ -1289,11 +1255,11 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 x_values=offset_range,
                 x_title="Qubit drive time offset (ns)",
                 shift_traces=[
-                    primary_shift[state_index, amplitude_index, :]
+                    ac_stark_shift[state_index, amplitude_index, :]
                     for amplitude_index in range(n_amplitudes)
                 ],
                 shift_error_traces=[
-                    primary_shift_error[state_index, amplitude_index, :]
+                    ac_stark_shift_error[state_index, amplitude_index, :]
                     for amplitude_index in range(n_amplitudes)
                 ],
                 trace_names=[f"A_r={amplitude:g}" for amplitude in amplitude_range],
@@ -1303,7 +1269,7 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 title=f"AC Stark shift (GHz) : {target} : |{state}>",
                 x_values=offset_range,
                 y_values=amplitude_range,
-                z_values=primary_shift[state_index],
+                z_values=ac_stark_shift[state_index],
                 z_title="Shift (GHz)",
             )
             if photon_number is not None:
@@ -1318,13 +1284,13 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
             if n_offsets > 1:
                 x_values = offset_range
                 x_title = "Qubit drive time offset (ns)"
-                shift_trace = primary_shift[state_index, 0, :]
-                shift_error_trace = primary_shift_error[state_index, 0, :]
+                shift_trace = ac_stark_shift[state_index, 0, :]
+                shift_error_trace = ac_stark_shift_error[state_index, 0, :]
             else:
                 x_values = amplitude_range
                 x_title = "Resonator drive amplitude"
-                shift_trace = primary_shift[state_index, :, 0]
-                shift_error_trace = primary_shift_error[state_index, :, 0]
+                shift_trace = ac_stark_shift[state_index, :, 0]
+                shift_error_trace = ac_stark_shift_error[state_index, :, 0]
             figures[f"summary_{state}"] = _summary_figure(
                 target=target,
                 state=state,
@@ -1379,14 +1345,13 @@ def display_ac_stark_spectroscopy(result: Result, *, plot: bool = True) -> None:
     offset_range = data["axes"]["qubit_drive_time_offset_range"]
     fit_valid = data["fit"]["valid"]
     r2 = data["fit"]["r2"]
-    primary_shift = data["derived"]["primary_shift"]
-    primary_shift_error = data["derived"]["primary_shift_error"]
+    ac_stark_shift = data["derived"]["ac_stark_shift"]
+    ac_stark_shift_error = data["derived"]["ac_stark_shift_error"]
     photon_number = data["derived"]["photon_number"]
     dispersive_shift = data["calibration"]["dispersive_shift"]
 
     print(f"=== AC Stark spectroscopy : {data['target']} ===")
     print(f"qubit frequency    : {data['calibration']['qubit_frequency']:.6f} GHz")
-    print(f"shift reference    : {data['derived']['reference']}")
     if dispersive_shift is not None:
         print(f"dispersive shift   : {1000 * dispersive_shift:+.3f} MHz (chi)")
     header = f"{'state':>5} {'A_r':>10} {'offset (ns)':>12} {'shift (MHz)':>16}"
@@ -1398,8 +1363,8 @@ def display_ac_stark_spectroscopy(result: Result, *, plot: bool = True) -> None:
         for amplitude_index, amplitude in enumerate(amplitude_range):
             for offset_index, offset in enumerate(offset_range):
                 point = (state_index, amplitude_index, offset_index)
-                shift = primary_shift[point]
-                shift_error = primary_shift_error[point]
+                shift = ac_stark_shift[point]
+                shift_error = ac_stark_shift_error[point]
                 if np.isfinite(shift):
                     shift_text = f"{1000 * shift:+.3f}±{1000 * shift_error:.3f}"
                 else:
