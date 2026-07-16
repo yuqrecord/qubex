@@ -25,7 +25,7 @@ Pulse sequence
 
 Measurement and analysis
 ------------------------
-``qubit_drive_detuning`` is always swept. For each sweep point the
+``qubit_drive_detuning_range`` is always swept. For each sweep point the
 schedule is executed with ``Experiment.execute`` using shot averaging
 (``mode="avg"``) and hardware time integration
 (``time_integration=True``). Any pulse on the read channel produces a
@@ -73,7 +73,7 @@ from typing import Any, Literal
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import ArrayLike, NDArray
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import qubex.visualization as viz
 from qubex.analysis import FitStatus, fitting
@@ -193,7 +193,7 @@ def _validate_run_parameters(
     qubit_drive_amplitude: float,
     qubit_drive_duration: float,
     qubit_drive_ramptime: float,
-    qubit_drive_detuning: ArrayLike,
+    qubit_drive_detuning_range: ArrayLike,
     qubit_drive_time_offset: float,
     resonator_drive_amplitude: float,
     resonator_drive_duration: float,
@@ -236,10 +236,12 @@ def _validate_run_parameters(
         raise ValueError(f"`shot_interval` must be positive, got {shot_interval}.")
     _validate_n_shots(n_shots)
 
-    detuning_range = _validate_axis("qubit_drive_detuning", qubit_drive_detuning)
+    detuning_range = _validate_axis(
+        "qubit_drive_detuning_range", qubit_drive_detuning_range
+    )
     if detuning_range.size < MIN_QUBIT_DETUNING_POINTS:
         raise ValueError(
-            "`qubit_drive_detuning` must be a sweep with at least "
+            "`qubit_drive_detuning_range` must be a sweep with at least "
             f"{MIN_QUBIT_DETUNING_POINTS} distinct points to fit a Lorentzian, "
             f"got {detuning_range.size} point(s). The AC Stark shift cannot be "
             "measured without sweeping the qubit drive detuning."
@@ -389,7 +391,7 @@ def run_ac_stark_spectroscopy(
     qubit_drive_amplitude: float,
     qubit_drive_duration: float,
     qubit_drive_ramptime: float,
-    qubit_drive_detuning: ArrayLike,
+    qubit_drive_detuning_range: ArrayLike,
     qubit_drive_time_offset: float,
     resonator_drive_amplitude: float,
     resonator_drive_duration: float,
@@ -404,7 +406,7 @@ def run_ac_stark_spectroscopy(
     """
     Acquire one qubit spectroscopy trace for a single parameter set.
 
-    Sweeps ``qubit_drive_detuning`` and measures the averaged,
+    Sweeps ``qubit_drive_detuning_range`` and measures the averaged,
     time-integrated readout IQ value for each point using
     ``Experiment.execute``.
 
@@ -422,7 +424,7 @@ def run_ac_stark_spectroscopy(
         Duration of the qubit drive in ns.
     qubit_drive_ramptime : float
         Ramp time of the qubit drive in ns.
-    qubit_drive_detuning : ArrayLike
+    qubit_drive_detuning_range : ArrayLike
         Sweep values of the qubit drive detuning (GHz). At least
         5 distinct points are required.
     qubit_drive_time_offset : float
@@ -460,7 +462,7 @@ def run_ac_stark_spectroscopy(
         qubit_drive_amplitude=qubit_drive_amplitude,
         qubit_drive_duration=qubit_drive_duration,
         qubit_drive_ramptime=qubit_drive_ramptime,
-        qubit_drive_detuning=qubit_drive_detuning,
+        qubit_drive_detuning_range=qubit_drive_detuning_range,
         qubit_drive_time_offset=qubit_drive_time_offset,
         resonator_drive_amplitude=resonator_drive_amplitude,
         resonator_drive_duration=resonator_drive_duration,
@@ -756,9 +758,9 @@ def ac_stark_spectroscopy(
     qubit_drive_amplitude: float,
     qubit_drive_duration: float,
     qubit_drive_ramptime: float,
-    qubit_drive_detuning: ArrayLike,
-    qubit_drive_time_offset: float | ArrayLike,
-    resonator_drive_amplitude: float | ArrayLike,
+    qubit_drive_detuning_range: ArrayLike,
+    qubit_drive_time_offset_range: float | ArrayLike,
+    resonator_drive_amplitude_range: float | ArrayLike,
     resonator_drive_duration: float,
     resonator_drive_ramptime: float,
     resonator_drive_detuning: float,
@@ -775,7 +777,7 @@ def ac_stark_spectroscopy(
 
     For every combination of preparation state, resonator drive amplitude
     and qubit drive time offset, a qubit spectroscopy trace (versus
-    ``qubit_drive_detuning``) is acquired and fitted. The AC Stark shift
+    ``qubit_drive_detuning_range``) is acquired and fitted. The AC Stark shift
     is referenced to the fitted zero-amplitude spectrum when the
     amplitude sweep contains ``0.0`` (recommended, drift resistant),
     otherwise to the calibrated qubit frequency. With ``dispersive_shift``
@@ -796,13 +798,13 @@ def ac_stark_spectroscopy(
         Duration of the qubit drive in ns.
     qubit_drive_ramptime : float
         Ramp time (flat-top tau) of the qubit drive in ns.
-    qubit_drive_detuning : ArrayLike
+    qubit_drive_detuning_range : ArrayLike
         Sweep values of the qubit drive detuning (GHz). Always swept; at
         least 5 distinct points are required.
-    qubit_drive_time_offset : float | ArrayLike
+    qubit_drive_time_offset_range : float | ArrayLike
         Sweep axis: qubit drive start relative to the resonator drive
         start (ns). A scalar or a list; negative values are allowed.
-    resonator_drive_amplitude : float | ArrayLike
+    resonator_drive_amplitude_range : float | ArrayLike
         Sweep axis: resonator drive amplitude. A scalar or a list.
         Include ``0.0`` to obtain a drift-resistant shift reference.
     resonator_drive_duration : float
@@ -848,13 +850,15 @@ def ac_stark_spectroscopy(
         _validate_state("qubit_initial_states", state)
 
     amplitude_range = _validate_axis(
-        "resonator_drive_amplitude", resonator_drive_amplitude
+        "resonator_drive_amplitude_range", resonator_drive_amplitude_range
     )
-    offset_range = _validate_axis("qubit_drive_time_offset", qubit_drive_time_offset)
+    offset_range = _validate_axis(
+        "qubit_drive_time_offset_range", qubit_drive_time_offset_range
+    )
     for amplitude in amplitude_range:
-        _validate_amplitude("resonator_drive_amplitude", float(amplitude))
+        _validate_amplitude("resonator_drive_amplitude_range", float(amplitude))
     for offset in offset_range:
-        _validate_time_on_grid("qubit_drive_time_offset", float(offset))
+        _validate_time_on_grid("qubit_drive_time_offset_range", float(offset))
         _validate_timing_constraint(
             qubit_drive_duration=qubit_drive_duration,
             qubit_drive_time_offset=float(offset),
@@ -866,7 +870,7 @@ def ac_stark_spectroscopy(
         qubit_drive_amplitude=qubit_drive_amplitude,
         qubit_drive_duration=qubit_drive_duration,
         qubit_drive_ramptime=qubit_drive_ramptime,
-        qubit_drive_detuning=qubit_drive_detuning,
+        qubit_drive_detuning_range=qubit_drive_detuning_range,
         qubit_drive_time_offset=float(offset_range[0]),
         resonator_drive_amplitude=float(amplitude_range[0]),
         resonator_drive_duration=resonator_drive_duration,
@@ -920,7 +924,7 @@ def ac_stark_spectroscopy(
                     qubit_drive_amplitude=qubit_drive_amplitude,
                     qubit_drive_duration=qubit_drive_duration,
                     qubit_drive_ramptime=qubit_drive_ramptime,
-                    qubit_drive_detuning=detuning_range,
+                    qubit_drive_detuning_range=detuning_range,
                     qubit_drive_time_offset=float(offset),
                     resonator_drive_amplitude=float(amplitude),
                     resonator_drive_duration=resonator_drive_duration,
@@ -1016,10 +1020,10 @@ def ac_stark_spectroscopy(
         "target": target,
         "axes": {
             "state": tuple(states),
-            "resonator_drive_amplitude": amplitude_range,
-            "qubit_drive_time_offset": offset_range,
-            "qubit_drive_detuning": detuning_range,
-            "qubit_frequency": qubit_frequency + detuning_range,
+            "resonator_drive_amplitude_range": amplitude_range,
+            "qubit_drive_time_offset_range": offset_range,
+            "qubit_drive_detuning_range": detuning_range,
+            "qubit_frequency_range": qubit_frequency + detuning_range,
         },
         "calibration": {
             "qubit_frequency": qubit_frequency,
@@ -1266,9 +1270,9 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     """
     target = data["target"]
     states = data["axes"]["state"]
-    amplitude_range = data["axes"]["resonator_drive_amplitude"]
-    offset_range = data["axes"]["qubit_drive_time_offset"]
-    frequency_range = data["axes"]["qubit_frequency"]
+    amplitude_range = data["axes"]["resonator_drive_amplitude_range"]
+    offset_range = data["axes"]["qubit_drive_time_offset_range"]
+    frequency_range = data["axes"]["qubit_frequency_range"]
     normalized = data["spectroscopy"]["normalized"]
     f0 = data["fit"]["f0"]
     fit_valid = data["fit"]["valid"]
@@ -1418,8 +1422,8 @@ def display_ac_stark_spectroscopy(result: Result, *, plot: bool = True) -> None:
             fig.show()
 
     states = data["axes"]["state"]
-    amplitude_range = data["axes"]["resonator_drive_amplitude"]
-    offset_range = data["axes"]["qubit_drive_time_offset"]
+    amplitude_range = data["axes"]["resonator_drive_amplitude_range"]
+    offset_range = data["axes"]["qubit_drive_time_offset_range"]
     fit_valid = data["fit"]["valid"]
     r2 = data["fit"]["r2"]
     primary_shift = data["derived"]["primary_shift"]
