@@ -10,16 +10,21 @@ Pulse sequence
 --------------
 ::
 
-    qubit     : [pi or blank] | [Blank(max(0, +offset))][qubit drive]
-    resonator : [   blank   ] | [Blank(max(0, -offset))][resonator drive][Blank(waittime)][readout]
+    qubit     : [pi or blank][wait] | [Blank(max(0, +offset))][qubit drive]
+    resonator : [     blank      ] | [Blank(max(0, -offset))][resonator drive][Blank(waittime_before_readout)][readout]
 
 - ``qubit_drive_time_offset = (qubit drive start) - (resonator drive start)``.
   Negative values start the qubit drive before the resonator drive.
+- ``waittime_after_pi_pulse`` is inserted between the state-preparation
+  slot and the drive section. It is applied for both preparation states
+  (the "g" schedule reserves the same slot with blanks) so that the
+  "g" and "e" schedules keep identical timing.
 - The readout pulse always starts at
-  ``(resonator drive end) + waittime``, independent of the qubit drive
-  offset, so the measurement conditions are constant across an offset
-  sweep. ``waittime`` ends at the beginning of the readout pulse object
-  (which includes the calibrated readout pre-margin).
+  ``(resonator drive end) + waittime_before_readout``, independent of
+  the qubit drive offset, so the measurement conditions are constant
+  across an offset sweep. ``waittime_before_readout`` ends at the
+  beginning of the readout pulse object (which includes the calibrated
+  readout pre-margin).
 - The qubit drive must end no later than the readout start; this is
   validated and rejected otherwise.
 
@@ -173,19 +178,19 @@ def _validate_timing_constraint(
     qubit_drive_duration: float,
     qubit_drive_time_offset: float,
     resonator_drive_duration: float,
-    waittime: float,
+    waittime_before_readout: float,
 ) -> None:
     qubit_start = max(0.0, qubit_drive_time_offset)
     resonator_start = max(0.0, -qubit_drive_time_offset)
     qubit_end = qubit_start + qubit_drive_duration
-    readout_start = resonator_start + resonator_drive_duration + waittime
+    readout_start = resonator_start + resonator_drive_duration + waittime_before_readout
     if qubit_end > readout_start + TIME_GRID_TOLERANCE:
         raise ValueError(
             "The qubit drive must end no later than the readout start: "
             f"qubit drive ends at {qubit_end} ns but the readout starts at "
             f"{readout_start} ns for qubit_drive_time_offset="
             f"{qubit_drive_time_offset} ns. Reduce the offset or the qubit "
-            "drive duration, or increase waittime."
+            "drive duration, or increase waittime_before_readout."
         )
 
 
@@ -201,7 +206,8 @@ def _validate_run_parameters(
     resonator_drive_duration: float,
     resonator_drive_ramptime: float,
     resonator_drive_detuning: float,
-    waittime: float,
+    waittime_after_pi_pulse: float,
+    waittime_before_readout: float,
     shot_interval: float,
     n_shots: int,
 ) -> None:
@@ -215,7 +221,8 @@ def _validate_run_parameters(
     _validate_time_on_grid("resonator_drive_duration", resonator_drive_duration)
     _validate_time_on_grid("resonator_drive_ramptime", resonator_drive_ramptime)
     _validate_time_on_grid("qubit_drive_time_offset", qubit_drive_time_offset)
-    _validate_time_on_grid("waittime", waittime)
+    _validate_time_on_grid("waittime_after_pi_pulse", waittime_after_pi_pulse)
+    _validate_time_on_grid("waittime_before_readout", waittime_before_readout)
     _validate_flat_top(
         "qubit_drive",
         duration=qubit_drive_duration,
@@ -226,13 +233,21 @@ def _validate_run_parameters(
         duration=resonator_drive_duration,
         ramptime=resonator_drive_ramptime,
     )
-    if waittime < 0:
-        raise ValueError(f"`waittime` must be nonnegative, got {waittime}.")
+    if waittime_after_pi_pulse < 0:
+        raise ValueError(
+            "`waittime_after_pi_pulse` must be nonnegative, "
+            f"got {waittime_after_pi_pulse}."
+        )
+    if waittime_before_readout < 0:
+        raise ValueError(
+            "`waittime_before_readout` must be nonnegative, "
+            f"got {waittime_before_readout}."
+        )
     _validate_timing_constraint(
         qubit_drive_duration=qubit_drive_duration,
         qubit_drive_time_offset=qubit_drive_time_offset,
         resonator_drive_duration=resonator_drive_duration,
-        waittime=waittime,
+        waittime_before_readout=waittime_before_readout,
     )
     _validate_finite_scalar("resonator_drive_detuning", resonator_drive_detuning)
     _validate_finite_scalar("shot_interval", shot_interval)
@@ -267,15 +282,16 @@ def ac_stark_spectroscopy_sequence(
     resonator_drive_duration: float,
     resonator_drive_ramptime: float,
     resonator_drive_detuning: float,
-    waittime: float,
+    waittime_after_pi_pulse: float,
+    waittime_before_readout: float,
 ) -> PulseSchedule:
     """
     Build the AC Stark spectroscopy pulse schedule for one sweep point.
 
     Sequence: state preparation (pi pulse for "e", duration-matched blank
-    for "g"), then a resonator drive and a qubit drive with relative time
-    offset, then the standard readout starting at
-    ``(resonator drive end) + waittime``.
+    for "g") followed by ``waittime_after_pi_pulse``, then a resonator
+    drive and a qubit drive with relative time offset, then the standard
+    readout starting at ``(resonator drive end) + waittime_before_readout``.
 
     Parameters
     ----------
@@ -309,7 +325,11 @@ def ac_stark_spectroscopy_sequence(
     resonator_drive_detuning : float
         Detuning of the resonator drive from the calibrated readout
         frequency (GHz).
-    waittime : float
+    waittime_after_pi_pulse : float
+        Delay between the state-preparation slot and the drive section
+        (ns). Applied for both preparation states to keep identical
+        timing.
+    waittime_before_readout : float
         Delay between the resonator drive end and the readout pulse
         object start (ns).
 
@@ -346,12 +366,14 @@ def ac_stark_spectroscopy_sequence(
             ps.add(qubit, pi_pulse)
         else:
             ps.add(qubit, Blank(pi_pulse.duration))
+        if waittime_after_pi_pulse > 0:
+            ps.add(qubit, Blank(waittime_after_pi_pulse))
         ps.barrier()
         if resonator_delay > 0:
             ps.add(resonator, Blank(resonator_delay))
         ps.add(resonator, resonator_drive_pulse)
-        if waittime > 0:
-            ps.add(resonator, Blank(waittime))
+        if waittime_before_readout > 0:
+            ps.add(resonator, Blank(waittime_before_readout))
         ps.add(resonator, exp.pulse.readout(target))
         if qubit_delay > 0:
             ps.add(drive_label, Blank(qubit_delay))
@@ -409,7 +431,8 @@ def run_ac_stark_spectroscopy(
     resonator_drive_duration: float,
     resonator_drive_ramptime: float,
     resonator_drive_detuning: float,
-    waittime: float,
+    waittime_after_pi_pulse: float,
+    waittime_before_readout: float,
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
@@ -453,7 +476,11 @@ def run_ac_stark_spectroscopy(
     resonator_drive_detuning : float
         Detuning of the resonator drive from the calibrated readout
         frequency (GHz).
-    waittime : float
+    waittime_after_pi_pulse : float
+        Delay between the state-preparation slot and the drive section
+        (ns). Applied for both preparation states to keep identical
+        timing.
+    waittime_before_readout : float
         Delay between the resonator drive end and the readout start (ns).
     shot_interval : float
         Interval between shots in ns.
@@ -484,7 +511,8 @@ def run_ac_stark_spectroscopy(
         resonator_drive_duration=resonator_drive_duration,
         resonator_drive_ramptime=resonator_drive_ramptime,
         resonator_drive_detuning=resonator_drive_detuning,
-        waittime=waittime,
+        waittime_after_pi_pulse=waittime_after_pi_pulse,
+        waittime_before_readout=waittime_before_readout,
         shot_interval=shot_interval,
         n_shots=n_shots,
     )
@@ -522,7 +550,8 @@ def run_ac_stark_spectroscopy(
             resonator_drive_duration=resonator_drive_duration,
             resonator_drive_ramptime=resonator_drive_ramptime,
             resonator_drive_detuning=resonator_drive_detuning,
-            waittime=waittime,
+            waittime_after_pi_pulse=waittime_after_pi_pulse,
+            waittime_before_readout=waittime_before_readout,
         )
         if plot_pulse_schedule and index == 0:
             schedule.plot(
@@ -567,7 +596,8 @@ def run_ac_stark_spectroscopy(
         "resonator_drive_duration": resonator_drive_duration,
         "resonator_drive_ramptime": resonator_drive_ramptime,
         "resonator_drive_detuning": resonator_drive_detuning,
-        "waittime": waittime,
+        "waittime_after_pi_pulse": waittime_after_pi_pulse,
+        "waittime_before_readout": waittime_before_readout,
         "shot_interval": shot_interval,
         "n_shots": n_shots,
     }
@@ -760,7 +790,8 @@ def ac_stark_spectroscopy(
     resonator_drive_duration: float,
     resonator_drive_ramptime: float,
     resonator_drive_detuning: float,
-    waittime: float,
+    waittime_after_pi_pulse: float,
+    waittime_before_readout: float,
     dispersive_shift: float | None,
     shot_interval: float,
     n_shots: int,
@@ -813,7 +844,11 @@ def ac_stark_spectroscopy(
     resonator_drive_detuning : float
         Detuning of the resonator drive from the calibrated readout
         frequency (GHz).
-    waittime : float
+    waittime_after_pi_pulse : float
+        Delay between the state-preparation slot and the drive section
+        (ns). Applied for both preparation states to keep identical
+        timing.
+    waittime_before_readout : float
         Delay between the resonator drive end and the readout start (ns).
     dispersive_shift : float | None
         Signed dispersive shift chi in GHz, in the convention
@@ -865,7 +900,7 @@ def ac_stark_spectroscopy(
             qubit_drive_duration=qubit_drive_duration,
             qubit_drive_time_offset=float(offset),
             resonator_drive_duration=resonator_drive_duration,
-            waittime=waittime,
+            waittime_before_readout=waittime_before_readout,
         )
     detuning_range = np.atleast_1d(np.asarray(qubit_drive_detuning_range, dtype=float))
     if dispersive_shift is not None:
@@ -922,7 +957,8 @@ def ac_stark_spectroscopy(
                     resonator_drive_duration=resonator_drive_duration,
                     resonator_drive_ramptime=resonator_drive_ramptime,
                     resonator_drive_detuning=resonator_drive_detuning,
-                    waittime=waittime,
+                    waittime_after_pi_pulse=waittime_after_pi_pulse,
+                    waittime_before_readout=waittime_before_readout,
                     shot_interval=shot_interval,
                     n_shots=n_shots,
                     plot_pulse_schedule=plot_pulse_schedule and is_first_point_of_state,
@@ -1000,7 +1036,8 @@ def ac_stark_spectroscopy(
             "resonator_drive_duration": resonator_drive_duration,
             "resonator_drive_ramptime": resonator_drive_ramptime,
             "resonator_drive_detuning": resonator_drive_detuning,
-            "waittime": waittime,
+            "waittime_after_pi_pulse": waittime_after_pi_pulse,
+            "waittime_before_readout": waittime_before_readout,
             "shot_interval": shot_interval,
             "n_shots": n_shots,
         },
