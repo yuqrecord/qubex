@@ -36,20 +36,31 @@ schedule is executed with ``Experiment.execute`` using shot averaging
 (``time_integration=True``). Any pulse on the read channel produces a
 capture window, so the resonator drive produces capture #1 (discarded)
 and the readout produces capture #2 (the data); the capture count is
-validated at runtime.
+validated at runtime. For the internal no-drive reference the check is
+relaxed to "at least one capture, use the last" in case a
+zero-amplitude pulse is elided by the backend.
+
+Both preparation states probe the same ge transition, with the
+spectroscopy drive always applied on the ge control channel
+(CKP convention, see ``ckp_characterization``):
+
+- state "g": ge absorption |g> -> |e>, observed as a dip
+- state "e": a ge pi pulse prepares |e>, then ge stimulated emission
+  |e> -> |g> is observed as a peak
 
 The readout signal versus qubit drive frequency is fitted with a
-Lorentzian to extract the (shifted) resonance ``f0``. The probed
-transition and the shift reference depend on the preparation state:
+Lorentzian to extract the resonance ``f0``. The AC Stark shift is
+referenced to a state- and offset-resolved *no-drive* measurement: for
+every (state, time offset) a spectroscopy trace is acquired with the
+resonator drive amplitude set to zero but otherwise identical timing,
+and
 
-- state "g": the spectroscopy drive is applied on the ge control channel
-  and ``shift = f0 - f_ge_calibrated``
-- state "e": the spectroscopy drive is applied on the ef control channel
-  and ``shift = f0 - f_ef_calibrated``
-  (``Qubit.control_frequency_ef``)
+    shift = f0_driven - f0_no_drive
 
-The resonator drive amplitude must be positive; a zero-amplitude
-reference point is not supported.
+This removes calibration offsets and offset-dependent effects (e.g.
+T1 decay of the |e> preparation) from the shift. The public
+``resonator_drive_amplitude_range`` must contain only positive values;
+the zero-amplitude reference is acquired internally.
 
 Photon number conversion
 ------------------------
@@ -63,9 +74,8 @@ intracavity photon:
 If the resonator drive overlaps the qubit probe only partially (time
 offset sweep), the inferred photon number is an effective value averaged
 over the qubit probe envelope, not an instantaneous photon number.
-For state "e" the measured shift is that of the ef transition, whose
-per-photon shift coefficient generally differs from the ge one; supply
-the chi appropriate for the probed transition.
+Both preparation states measure the shift of the same ge transition, so
+the same ge chi applies to both.
 
 Assumptions and caveats
 -----------------------
@@ -98,6 +108,10 @@ STATE_LABELS = ("g", "e")
 MIN_QUBIT_DETUNING_POINTS = 5
 # FWHM of the power spectrum of a flat-top probe of duration D is ~0.443/D.
 LORENTZIAN_TIME_BANDWIDTH = 0.443
+# Kept at 0.5 to match the ckp_characterization gating (r2 > 0.5); the
+# polarity check makes a stricter threshold unnecessary for rejecting
+# noise-only traces, and raising it without hardware data would risk
+# rejecting genuinely broadened lines at high photon number.
 FIT_R2_THRESHOLD = 0.5
 TIME_GRID_TOLERANCE = 1e-6
 
@@ -210,11 +224,14 @@ def _validate_run_parameters(
     waittime_before_readout: float,
     shot_interval: float,
     n_shots: int,
+    allow_zero_resonator_drive: bool,
 ) -> None:
     _validate_state("qubit_initial_state", qubit_initial_state)
     _validate_amplitude("qubit_drive_amplitude", qubit_drive_amplitude, allow_zero=True)
     _validate_amplitude(
-        "resonator_drive_amplitude", resonator_drive_amplitude, allow_zero=False
+        "resonator_drive_amplitude",
+        resonator_drive_amplitude,
+        allow_zero=allow_zero_resonator_drive,
     )
     _validate_time_on_grid("qubit_drive_duration", qubit_drive_duration)
     _validate_time_on_grid("qubit_drive_ramptime", qubit_drive_ramptime)
@@ -309,10 +326,9 @@ def ac_stark_spectroscopy_sequence(
     qubit_drive_ramptime : float
         Ramp time (flat-top tau) of the qubit drive in ns.
     qubit_drive_detuning : float
-        Detuning of the qubit drive from the reference transition
-        frequency (GHz): the calibrated ge frequency for state "g", the
-        calibrated ef frequency for state "e". For state "e" the drive is
-        applied on the EF control channel.
+        Detuning of the qubit drive from the calibrated ge transition
+        frequency (GHz). The spectroscopy drive is always applied on the
+        ge control channel, for both preparation states.
     qubit_drive_time_offset : float
         Start time of the qubit drive relative to the resonator drive
         start (ns). Negative values start the qubit drive first.
@@ -341,10 +357,6 @@ def ac_stark_spectroscopy_sequence(
     """
     qubit = exp.ctx.resolve_qubit_label(target)
     resonator = exp.ctx.resolve_read_label(target)
-    if qubit_initial_state == "e":
-        drive_label = exp.ctx.resolve_ef_label(target)
-    else:
-        drive_label = qubit
 
     qubit_delay = max(0.0, qubit_drive_time_offset)
     resonator_delay = max(0.0, -qubit_drive_time_offset)
@@ -376,8 +388,8 @@ def ac_stark_spectroscopy_sequence(
             ps.add(resonator, Blank(waittime_before_readout))
         ps.add(resonator, exp.pulse.readout(target))
         if qubit_delay > 0:
-            ps.add(drive_label, Blank(qubit_delay))
-        ps.add(drive_label, qubit_drive_pulse)
+            ps.add(qubit, Blank(qubit_delay))
+        ps.add(qubit, qubit_drive_pulse)
     return ps
 
 
@@ -386,6 +398,7 @@ def _extract_readout_iq(
     *,
     read_label: str,
     target: str,
+    strict_capture_count: bool,
 ) -> complex:
     available = list(measure_result.data)
     if read_label in available:
@@ -398,14 +411,24 @@ def _extract_readout_iq(
             f"result. Available targets: {available}"
         )
     captures = measure_result.data[data_target]
+    if len(captures) == 0:
+        raise RuntimeError(f"No capture windows returned for {data_target}.")
     if len(captures) != 2:
-        raise RuntimeError(
-            f"Expected exactly 2 capture windows for {data_target} "
-            f"(resonator drive + readout), got {len(captures)}. The second "
-            "capture is the readout data; a different count indicates that "
-            "the schedule was compiled differently than assumed."
+        message = (
+            f"Expected 2 capture windows for {data_target} "
+            f"(resonator drive + readout), got {len(captures)}."
         )
-    return complex(captures[1].kerneled)
+        if strict_capture_count:
+            raise RuntimeError(
+                message + " The last capture is the readout data; a "
+                "different count indicates that the schedule was compiled "
+                "differently than assumed."
+            )
+        print(
+            f"[WARN] {message} Using the last capture as the readout data "
+            "(the zero-amplitude resonator pulse may have been elided)."
+        )
+    return complex(captures[-1].kerneled)
 
 
 def _get_rabi_param(exp: Experiment, target: str) -> RabiParam:
@@ -437,9 +460,10 @@ def run_ac_stark_spectroscopy(
     n_shots: int,
     plot_pulse_schedule: bool = True,
     reset_awg_and_capunits: bool | None = None,
+    allow_zero_resonator_drive: bool = False,
 ) -> dict[str, Any]:
     """
-    Acquire one qubit spectroscopy trace for a single parameter set.
+    Acquire one ge spectroscopy trace for a single parameter set.
 
     Sweeps ``qubit_drive_detuning_range`` and measures the averaged,
     time-integrated readout IQ value for each point using
@@ -452,9 +476,9 @@ def run_ac_stark_spectroscopy(
     target : str
         Target qubit name or label.
     qubit_initial_state : {"g", "e"}
-        Qubit state prepared before the drives. For "e" the spectroscopy
-        drive probes the ef transition (applied on the ef control
-        channel).
+        Qubit state prepared before the drives. Both states probe the ge
+        transition on the ge control channel: "g" measures ge absorption,
+        "e" measures ge stimulated emission after a pi pulse.
     qubit_drive_amplitude : float
         Amplitude of the qubit spectroscopy drive.
     qubit_drive_duration : float
@@ -462,9 +486,9 @@ def run_ac_stark_spectroscopy(
     qubit_drive_ramptime : float
         Ramp time of the qubit drive in ns.
     qubit_drive_detuning_range : ArrayLike
-        Sweep values of the qubit drive detuning from the state-dependent
-        reference transition frequency (GHz). At least 5 distinct points
-        are required.
+        Sweep values of the qubit drive detuning from the calibrated ge
+        transition frequency (GHz). At least 5 distinct points are
+        required.
     qubit_drive_time_offset : float
         Qubit drive start time relative to the resonator drive start (ns).
     resonator_drive_amplitude : float
@@ -491,14 +515,19 @@ def run_ac_stark_spectroscopy(
     reset_awg_and_capunits : bool | None, optional
         If True, reset the AWGs and capture units once before the first
         execution. Defaults to off (no implicit hardware operation).
+    allow_zero_resonator_drive : bool, optional
+        If True, accept ``resonator_drive_amplitude == 0.0`` and relax
+        the capture-count check. Intended for the internal no-drive
+        reference measurement; the public amplitude sweep stays
+        positive-only.
 
     Returns
     -------
     dict[str, Any]
         Raw acquisition data with keys ``detuning_range``,
-        ``frequency_range``, ``iq``, labels, ``reference_frequency``
-        (the calibrated frequency of the probed transition), and an echo
-        of the drive parameters.
+        ``frequency_range``, ``iq``, labels, ``nominal_frequency``
+        (the calibrated ge transition frequency), and an echo of the
+        drive parameters.
     """
     _validate_run_parameters(
         qubit_initial_state=qubit_initial_state,
@@ -515,6 +544,7 @@ def run_ac_stark_spectroscopy(
         waittime_before_readout=waittime_before_readout,
         shot_interval=shot_interval,
         n_shots=n_shots,
+        allow_zero_resonator_drive=allow_zero_resonator_drive,
     )
     detuning_range = np.atleast_1d(np.asarray(qubit_drive_detuning_range, dtype=float))
     reset_first = (
@@ -523,10 +553,7 @@ def run_ac_stark_spectroscopy(
 
     qubit_label = exp.ctx.resolve_qubit_label(target)
     read_label = exp.ctx.resolve_read_label(target)
-    if qubit_initial_state == "e":
-        reference_frequency = float(exp.ctx.qubits[qubit_label].control_frequency_ef)
-    else:
-        reference_frequency = float(exp.ctx.targets[qubit_label].frequency)
+    nominal_frequency = float(exp.ctx.targets[qubit_label].frequency)
     resonator_frequency = float(exp.ctx.targets[read_label].frequency)
 
     iq_values: list[complex] = []
@@ -575,6 +602,7 @@ def run_ac_stark_spectroscopy(
                 measure_result,
                 read_label=read_label,
                 target=target,
+                strict_capture_count=not allow_zero_resonator_drive,
             )
         )
 
@@ -583,10 +611,10 @@ def run_ac_stark_spectroscopy(
         "qubit_label": qubit_label,
         "read_label": read_label,
         "qubit_initial_state": qubit_initial_state,
-        "reference_frequency": reference_frequency,
+        "nominal_frequency": nominal_frequency,
         "resonator_frequency": resonator_frequency,
         "detuning_range": detuning_range,
-        "frequency_range": reference_frequency + detuning_range,
+        "frequency_range": nominal_frequency + detuning_range,
         "iq": np.asarray(iq_values, dtype=complex),
         "qubit_drive_amplitude": qubit_drive_amplitude,
         "qubit_drive_duration": qubit_drive_duration,
@@ -615,22 +643,30 @@ def _check_lorentzian_fit(
     fit_result: Any,
     *,
     x: NDArray[np.float64],
+    expected_amplitude_sign: int,
 ) -> tuple[bool, str]:
     if fit_result is None:
         return False, "fit raised an exception"
     if fit_result.status is not FitStatus.SUCCESS:
         return False, "fit did not converge"
+    amplitude = float(fit_result.get("A", np.nan))
     f0 = float(fit_result.get("f0", np.nan))
     f0_err = float(fit_result.get("f0_err", np.nan))
     gamma = float(fit_result.get("gamma", np.nan))
     r2 = float(fit_result.get("r2", np.nan))
     if not (
-        np.isfinite(f0)
+        np.isfinite(amplitude)
+        and np.isfinite(f0)
         and np.isfinite(f0_err)
         and np.isfinite(gamma)
         and np.isfinite(r2)
     ):
         return False, f"non-finite fit parameters (f0={f0}, err={f0_err}, r2={r2})"
+    if amplitude * expected_amplitude_sign <= 0:
+        return False, (
+            f"line polarity mismatch (A={amplitude:.6g}, expected "
+            f"{'positive' if expected_amplitude_sign > 0 else 'negative'})"
+        )
     span = float(np.max(x) - np.min(x))
     spacing = float(np.median(np.diff(x)))
     if r2 <= FIT_R2_THRESHOLD:
@@ -648,18 +684,19 @@ def analyze_ac_stark_spectroscopy(
     *,
     detuning_range: ArrayLike,
     iq: ArrayLike,
-    reference_frequency: float,
+    nominal_frequency: float,
     qubit_initial_state: Literal["g", "e"],
     qubit_drive_duration: float,
     rabi_param: RabiParam,
 ) -> dict[str, Any]:
     """
-    Fit one spectroscopy trace and extract the AC Stark shift.
+    Fit one ge spectroscopy trace and extract the resonance frequency.
 
-    The complex IQ trace is normalized with the calibrated Rabi
+    The complex IQ trace is normalized with the calibrated GE Rabi
     parameters, then fitted with a Lorentzian over the absolute qubit
-    drive frequency. The fit is retried with the opposite line polarity
-    when the first attempt does not pass the quality gates.
+    drive frequency. The line polarity is fixed by the preparation state
+    (CKP convention): an absorption dip for "g" and a
+    stimulated-emission peak for "e".
 
     Parameters
     ----------
@@ -667,23 +704,21 @@ def analyze_ac_stark_spectroscopy(
         Qubit drive detuning sweep (GHz), in acquisition order.
     iq : ArrayLike
         Complex readout IQ values for each detuning point.
-    reference_frequency : float
-        Reference transition frequency (GHz): the calibrated ge frequency
-        for state "g", the calibrated ef frequency for state "e". Used as
-        the frequency axis origin and as the shift reference.
+    nominal_frequency : float
+        Calibrated ge transition frequency (GHz), used as the frequency
+        axis origin for both preparation states.
     qubit_initial_state : {"g", "e"}
-        Prepared qubit state (recorded in the output).
+        Prepared qubit state; fixes the expected line polarity.
     qubit_drive_duration : float
         Qubit drive duration in ns, used for the linewidth initial guess.
     rabi_param : RabiParam
-        Calibrated Rabi parameters used to normalize the IQ data.
+        Calibrated GE Rabi parameters used to normalize the IQ data.
 
     Returns
     -------
     dict[str, Any]
         Fit results with keys ``normalized``, ``fit_result``, ``f0``,
-        ``f0_err``, ``gamma``, ``r2``, ``valid`` and ``ac_stark_shift``
-        (calibrated reference; NaN when the fit is invalid).
+        ``f0_err``, ``gamma``, ``r2`` and ``valid``.
     """
     detuning_range = np.asarray(detuning_range, dtype=float)
     iq_array = np.asarray(iq, dtype=complex)
@@ -696,19 +731,24 @@ def analyze_ac_stark_spectroscopy(
     normalized = np.asarray(rabi_param.normalize(iq_array), dtype=float)
 
     order = np.argsort(detuning_range)
-    x = reference_frequency + detuning_range[order]
+    x = nominal_frequency + detuning_range[order]
     y = normalized[order]
 
     smoothed = _smooth_for_initial_guess(y)
     n_edge = max(1, y.size // 10)
     baseline = float(np.mean(np.concatenate([smoothed[:n_edge], smoothed[-n_edge:]])))
     deviations = smoothed - baseline
-    index_min = int(np.argmin(deviations))
-    index_max = int(np.argmax(deviations))
-    if abs(deviations[index_min]) >= abs(deviations[index_max]):
-        extremum_indices = [index_min, index_max]
+
+    # CKP polarity convention with GE Rabi normalization: the |g> resonance
+    # is an absorption dip, the |e> resonance is a stimulated-emission peak.
+    # The polarity is fixed per state (no opposite-polarity retry) so that
+    # noise or background variations are never adopted as the resonance.
+    if qubit_initial_state == "g":
+        expected_amplitude_sign = -1
+        extremum_index = int(np.argmin(deviations))
     else:
-        extremum_indices = [index_max, index_min]
+        expected_amplitude_sign = 1
+        extremum_index = int(np.argmax(deviations))
 
     span = float(np.max(x) - np.min(x))
     spacing = float(np.median(np.diff(x)))
@@ -716,41 +756,35 @@ def analyze_ac_stark_spectroscopy(
     gamma_guess = float(np.clip(gamma_guess, spacing, span / 2))
     amplitude_scale = 2 * float(np.max(y) - np.min(y)) + 1e-12
 
-    fit_result = None
-    valid = False
-    reason = "no fit attempted"
-    for extremum_index in extremum_indices:
-        amplitude_guess = float(deviations[extremum_index])
-        if amplitude_guess == 0.0:
-            continue
-        if amplitude_guess < 0:
-            amplitude_bounds = (-amplitude_scale, 0.0)
-        else:
-            amplitude_bounds = (0.0, amplitude_scale)
-        p0 = (amplitude_guess, float(x[extremum_index]), gamma_guess, baseline)
-        bounds = (
-            (amplitude_bounds[0], float(np.min(x)), 0.0, -np.inf),
-            (amplitude_bounds[1], float(np.max(x)), np.inf, np.inf),
+    amplitude_guess = float(deviations[extremum_index])
+    if expected_amplitude_sign > 0:
+        amplitude_guess = max(amplitude_guess, 1e-12)
+        amplitude_bounds = (0.0, amplitude_scale)
+    else:
+        amplitude_guess = min(amplitude_guess, -1e-12)
+        amplitude_bounds = (-amplitude_scale, 0.0)
+    p0 = (amplitude_guess, float(x[extremum_index]), gamma_guess, baseline)
+    bounds = (
+        (amplitude_bounds[0], float(np.min(x)), 0.0, -np.inf),
+        (amplitude_bounds[1], float(np.max(x)), np.inf, np.inf),
+    )
+    try:
+        fit_result = fitting.fit_lorentzian(
+            x=x,
+            y=y,
+            p0=p0,
+            bounds=bounds,
+            plot=False,
         )
-        try:
-            candidate = fitting.fit_lorentzian(
-                x=x,
-                y=y,
-                p0=p0,
-                bounds=bounds,
-                plot=False,
-            )
-        except Exception as exc:
-            candidate = None
-            reason = f"fit raised an exception ({exc})"
-        if candidate is not None:
-            candidate_valid, candidate_reason = _check_lorentzian_fit(candidate, x=x)
-            if fit_result is None or candidate_valid:
-                fit_result = candidate
-                valid = candidate_valid
-                reason = candidate_reason
-            if candidate_valid:
-                break
+        valid, reason = _check_lorentzian_fit(
+            fit_result,
+            x=x,
+            expected_amplitude_sign=expected_amplitude_sign,
+        )
+    except Exception as exc:
+        fit_result = None
+        valid = False
+        reason = f"fit raised an exception ({exc})"
 
     if fit_result is not None:
         f0 = float(fit_result.get("f0", np.nan))
@@ -764,7 +798,7 @@ def analyze_ac_stark_spectroscopy(
 
     return {
         "detuning_range": detuning_range,
-        "frequency_range": reference_frequency + detuning_range,
+        "frequency_range": nominal_frequency + detuning_range,
         "normalized": normalized,
         "fit_result": fit_result,
         "f0": f0,
@@ -772,7 +806,6 @@ def analyze_ac_stark_spectroscopy(
         "gamma": gamma,
         "r2": r2,
         "valid": valid,
-        "ac_stark_shift": f0 - reference_frequency if valid else np.nan,
     }
 
 
@@ -803,14 +836,16 @@ def ac_stark_spectroscopy(
     Run an AC Stark spectroscopy sweep and extract shifts and photon numbers.
 
     For every combination of preparation state, resonator drive amplitude
-    and qubit drive time offset, a qubit spectroscopy trace (versus
-    ``qubit_drive_detuning_range``) is acquired and fitted. The AC Stark shift
-    is referenced to the calibrated ge transition frequency for state "g"
-    and to the calibrated ef transition frequency for state "e" (the
-    spectroscopy drive is applied on the corresponding control channel).
-    With ``dispersive_shift``
-    (signed chi, GHz) given, the shift is converted to the mean
-    intracavity photon number ``n = shift / (2 * chi)``.
+    and qubit drive time offset, a ge spectroscopy trace (versus
+    ``qubit_drive_detuning_range``) is acquired and fitted. Both states
+    probe the ge transition on the ge control channel ("g": absorption
+    dip, "e": stimulated-emission peak after a pi pulse). The AC Stark
+    shift is referenced to a no-drive spectroscopy measured once per
+    (state, offset) with zero resonator drive amplitude and otherwise
+    identical timing: ``shift = f0_driven - f0_no_drive``. With
+    ``dispersive_shift`` (signed ge chi, GHz) given, the shift is
+    converted to the mean intracavity photon number
+    ``n = shift / (2 * chi)``.
 
     Parameters
     ----------
@@ -820,7 +855,7 @@ def ac_stark_spectroscopy(
         Target qubit name or label.
     qubit_initial_states : Collection[{"g", "e"}] | str
         Preparation states to measure, e.g. ``["g"]`` or ``["g", "e"]``.
-        State "e" probes the ef transition.
+        Both states probe the ge transition.
     qubit_drive_amplitude : float
         Amplitude of the qubit spectroscopy drive.
     qubit_drive_duration : float
@@ -828,9 +863,9 @@ def ac_stark_spectroscopy(
     qubit_drive_ramptime : float
         Ramp time (flat-top tau) of the qubit drive in ns.
     qubit_drive_detuning_range : ArrayLike
-        Sweep values of the qubit drive detuning from the state-dependent
-        reference transition frequency (GHz). Always swept; at least
-        5 distinct points are required.
+        Sweep values of the qubit drive detuning from the calibrated ge
+        transition frequency (GHz). Always swept; at least 5 distinct
+        points are required.
     qubit_drive_time_offset_range : float | ArrayLike
         Sweep axis: qubit drive start relative to the resonator drive
         start (ns). A scalar or a list; negative values are allowed.
@@ -861,7 +896,7 @@ def ac_stark_spectroscopy(
     plot : bool, optional
         If True, display the result figures.
     plot_pulse_schedule : bool, optional
-        If True, plot the pulse schedule of the first acquired point of
+        If True, plot the pulse schedule of the first driven point of
         each preparation state.
     reset_awg_and_capunits : bool | None, optional
         If True, reset the AWGs and capture units once before the first
@@ -911,11 +946,7 @@ def ac_stark_spectroscopy(
 
     qubit_label = exp.ctx.resolve_qubit_label(target)
     read_label = exp.ctx.resolve_read_label(target)
-    qubit_frequency_ge = float(exp.ctx.targets[qubit_label].frequency)
-    qubit_frequency_ef = float(exp.ctx.qubits[qubit_label].control_frequency_ef)
-    reference_frequencies = np.array(
-        [qubit_frequency_ef if state == "e" else qubit_frequency_ge for state in states]
-    )
+    nominal_qubit_frequency_ge = float(exp.ctx.targets[qubit_label].frequency)
     resonator_frequency = float(exp.ctx.targets[read_label].frequency)
     rabi_param = _get_rabi_param(exp, qubit_label)
 
@@ -934,13 +965,69 @@ def ac_stark_spectroscopy(
     r2 = np.full((n_states, n_amplitudes, n_offsets), np.nan)
     fit_valid = np.zeros((n_states, n_amplitudes, n_offsets), dtype=bool)
     fit_results = np.empty((n_states, n_amplitudes, n_offsets), dtype=object)
+    no_drive_iq = np.full((n_states, n_offsets, n_detunings), np.nan, dtype=complex)
+    no_drive_normalized = np.full((n_states, n_offsets, n_detunings), np.nan)
+    reference_f0 = np.full((n_states, n_offsets), np.nan)
+    reference_f0_err = np.full((n_states, n_offsets), np.nan)
+    reference_valid = np.zeros((n_states, n_offsets), dtype=bool)
+    no_drive_results = np.empty((n_states, n_offsets), dtype=object)
 
     progress = tqdm(
-        total=n_states * n_amplitudes * n_offsets,
+        total=n_states * n_offsets * (1 + n_amplitudes),
         desc=f"AC Stark spectroscopy : {target}",
     )
     is_first_point = True
     for state_index, state in enumerate(states):
+        # No-drive reference: measured once per (state, offset) and reused
+        # for every resonator drive amplitude at that offset. The timing is
+        # identical to the driven measurements; only the resonator drive
+        # amplitude is set to zero.
+        for offset_index, offset in enumerate(offset_range):
+            reference_run = run_ac_stark_spectroscopy(
+                exp,
+                target=target,
+                qubit_initial_state=state,  # type: ignore[arg-type]
+                qubit_drive_amplitude=qubit_drive_amplitude,
+                qubit_drive_duration=qubit_drive_duration,
+                qubit_drive_ramptime=qubit_drive_ramptime,
+                qubit_drive_detuning_range=detuning_range,
+                qubit_drive_time_offset=float(offset),
+                resonator_drive_amplitude=0.0,
+                resonator_drive_duration=resonator_drive_duration,
+                resonator_drive_ramptime=resonator_drive_ramptime,
+                resonator_drive_detuning=resonator_drive_detuning,
+                waittime_after_pi_pulse=waittime_after_pi_pulse,
+                waittime_before_readout=waittime_before_readout,
+                shot_interval=shot_interval,
+                n_shots=n_shots,
+                plot_pulse_schedule=False,
+                reset_awg_and_capunits=(
+                    reset_awg_and_capunits if is_first_point else False
+                ),
+                allow_zero_resonator_drive=True,
+            )
+            is_first_point = False
+            reference_analysis = analyze_ac_stark_spectroscopy(
+                detuning_range=reference_run["detuning_range"],
+                iq=reference_run["iq"],
+                nominal_frequency=reference_run["nominal_frequency"],
+                qubit_initial_state=state,  # type: ignore[arg-type]
+                qubit_drive_duration=qubit_drive_duration,
+                rabi_param=rabi_param,
+            )
+            reference_point = (state_index, offset_index)
+            no_drive_iq[reference_point] = reference_run["iq"]
+            no_drive_normalized[reference_point] = reference_analysis["normalized"]
+            reference_f0[reference_point] = reference_analysis["f0"]
+            reference_f0_err[reference_point] = reference_analysis["f0_err"]
+            reference_valid[reference_point] = reference_analysis["valid"]
+            no_drive_results[reference_point] = reference_analysis["fit_result"]
+            progress.update(1)
+        if not np.all(reference_valid[state_index]):
+            print(
+                f"[WARN] invalid no-drive reference fit for state {state}; "
+                "the AC Stark shift is NaN at the affected offsets."
+            )
         for amplitude_index, amplitude in enumerate(amplitude_range):
             for offset_index, offset in enumerate(offset_range):
                 is_first_point_of_state = amplitude_index == 0 and offset_index == 0
@@ -962,15 +1049,12 @@ def ac_stark_spectroscopy(
                     shot_interval=shot_interval,
                     n_shots=n_shots,
                     plot_pulse_schedule=plot_pulse_schedule and is_first_point_of_state,
-                    reset_awg_and_capunits=(
-                        reset_awg_and_capunits if is_first_point else False
-                    ),
+                    reset_awg_and_capunits=False,
                 )
-                is_first_point = False
                 analysis = analyze_ac_stark_spectroscopy(
                     detuning_range=run_result["detuning_range"],
                     iq=run_result["iq"],
-                    reference_frequency=run_result["reference_frequency"],
+                    nominal_frequency=run_result["nominal_frequency"],
                     qubit_initial_state=state,  # type: ignore[arg-type]
                     qubit_drive_duration=qubit_drive_duration,
                     rabi_param=rabi_param,
@@ -987,20 +1071,23 @@ def ac_stark_spectroscopy(
                 progress.update(1)
     progress.close()
 
-    ac_stark_shift = np.where(
-        fit_valid, f0 - reference_frequencies[:, np.newaxis, np.newaxis], np.nan
+    shift_mask = fit_valid & reference_valid[:, np.newaxis, :]
+    ac_stark_shift = np.where(shift_mask, f0 - reference_f0[:, np.newaxis, :], np.nan)
+    ac_stark_shift_error = np.where(
+        shift_mask,
+        np.sqrt(f0_err**2 + reference_f0_err[:, np.newaxis, :] ** 2),
+        np.nan,
     )
-    ac_stark_shift_error = np.where(fit_valid, f0_err, np.nan)
 
     if dispersive_shift is not None:
         photon_number = ac_stark_shift / (2 * dispersive_shift)
         photon_number_error = ac_stark_shift_error / (2 * abs(dispersive_shift))
         photon_number_valid = (
-            fit_valid
+            shift_mask
             & np.isfinite(photon_number)
             & ~(photon_number + 3 * photon_number_error < 0)
         )
-        if np.any(fit_valid & np.isfinite(photon_number) & ~photon_number_valid):
+        if np.any(shift_mask & np.isfinite(photon_number) & ~photon_number_valid):
             print(
                 "[WARN] some inferred photon numbers are significantly "
                 "negative; check the sign convention of `dispersive_shift` "
@@ -1018,14 +1105,13 @@ def ac_stark_spectroscopy(
             "resonator_drive_amplitude_range": amplitude_range,
             "qubit_drive_time_offset_range": offset_range,
             "qubit_drive_detuning_range": detuning_range,
-            "qubit_frequency_range": (
-                reference_frequencies[:, np.newaxis] + detuning_range[np.newaxis, :]
-            ),
+            "qubit_frequency_range": nominal_qubit_frequency_ge + detuning_range,
         },
         "calibration": {
-            "qubit_frequency_ge": qubit_frequency_ge,
-            "qubit_frequency_ef": qubit_frequency_ef,
-            "reference_frequency": reference_frequencies,
+            "nominal_qubit_frequency_ge": nominal_qubit_frequency_ge,
+            "no_drive_reference_frequency": reference_f0,
+            "no_drive_reference_frequency_error": reference_f0_err,
+            "no_drive_reference_fit_valid": reference_valid,
             "resonator_frequency": resonator_frequency,
             "dispersive_shift": dispersive_shift,
         },
@@ -1044,6 +1130,8 @@ def ac_stark_spectroscopy(
         "spectroscopy": {
             "iq": iq,
             "normalized": normalized,
+            "no_drive_iq": no_drive_iq,
+            "no_drive_normalized": no_drive_normalized,
         },
         "fit": {
             "f0": f0,
@@ -1052,6 +1140,7 @@ def ac_stark_spectroscopy(
             "r2": r2,
             "valid": fit_valid,
             "result": fit_results,
+            "no_drive_result": no_drive_results,
         },
         "derived": {
             "ac_stark_shift": ac_stark_shift,
@@ -1264,7 +1353,7 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     states = data["axes"]["state"]
     amplitude_range = data["axes"]["resonator_drive_amplitude_range"]
     offset_range = data["axes"]["qubit_drive_time_offset_range"]
-    frequency_ranges = data["axes"]["qubit_frequency_range"]
+    frequency_range = data["axes"]["qubit_frequency_range"]
     normalized = data["spectroscopy"]["normalized"]
     f0 = data["fit"]["f0"]
     fit_valid = data["fit"]["valid"]
@@ -1278,15 +1367,20 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     figures: dict[str, go.Figure] = {}
 
     for state_index, state in enumerate(states):
+        # Display-only sign flip for |e> (CKP convention) so both states
+        # show the resonance with the same visual polarity. The Lorentzian
+        # fit and the stored data use the unflipped normalized signal.
+        display_sign = -1.0 if state == "e" else 1.0
+        display_signal = display_sign * normalized[state_index]
         if n_amplitudes > 1:
             figures[f"spectroscopy_vs_amplitude_{state}"] = _spectroscopy_heatmap(
                 target=target,
                 state=state,
                 x_values=amplitude_range,
                 x_title="Resonator drive amplitude",
-                frequency_range=frequency_ranges[state_index],
+                frequency_range=frequency_range,
                 signal_slices=[
-                    normalized[state_index, :, offset_index, :]
+                    display_signal[:, offset_index, :]
                     for offset_index in range(n_offsets)
                 ],
                 f0_slices=[
@@ -1305,9 +1399,9 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 state=state,
                 x_values=offset_range,
                 x_title="Qubit drive time offset (ns)",
-                frequency_range=frequency_ranges[state_index],
+                frequency_range=frequency_range,
                 signal_slices=[
-                    normalized[state_index, amplitude_index, :, :]
+                    display_signal[amplitude_index, :, :]
                     for amplitude_index in range(n_amplitudes)
                 ],
                 f0_slices=[
@@ -1375,12 +1469,11 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 dispersive_shift=dispersive_shift,
             )
         else:
-            frequency_range = frequency_ranges[state_index]
             order = np.argsort(frequency_range)
             fig = viz.make_figure()
             fig.add_scatter(
                 x=frequency_range[order],
-                y=normalized[state_index, 0, 0, order],
+                y=display_signal[0, 0, order],
                 mode="lines+markers",
                 name="data",
             )
@@ -1425,11 +1518,10 @@ def display_ac_stark_spectroscopy(result: Result, *, plot: bool = True) -> None:
     dispersive_shift = data["calibration"]["dispersive_shift"]
 
     print(f"=== AC Stark spectroscopy : {data['target']} ===")
-    print(f"qubit frequency (ge): {data['calibration']['qubit_frequency_ge']:.6f} GHz")
-    if "e" in states:
-        print(
-            f"qubit frequency (ef): {data['calibration']['qubit_frequency_ef']:.6f} GHz"
-        )
+    print(
+        "nominal qubit frequency (ge): "
+        f"{data['calibration']['nominal_qubit_frequency_ge']:.6f} GHz"
+    )
     if dispersive_shift is not None:
         print(f"dispersive shift   : {1000 * dispersive_shift:+.3f} MHz (chi)")
     header = f"{'state':>5} {'A_r':>10} {'offset (ns)':>12} {'shift (MHz)':>16}"
