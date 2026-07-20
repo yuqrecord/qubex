@@ -1245,6 +1245,8 @@ def _summary_figure(
     shift_error_traces: list[NDArray[np.float64]],
     trace_names: list[str],
     dispersive_shift: float | None,
+    secondary_x_shift: float | None = None,
+    secondary_x_title: str = "",
 ) -> go.Figure:
     fig = viz.make_figure()
     for shift, shift_error, name in zip(
@@ -1265,6 +1267,27 @@ def _summary_figure(
         height=400,
         showlegend=True,
     )
+
+    if secondary_x_shift is not None and x_values.size > 0:
+        # Top x-axis: probe start measured from the resonator drive end
+        # (= offset + secondary_x_shift). Positive values are the ring-down
+        # region, where the shift decays to zero as the cavity empties.
+        x_min = float(np.min(x_values))
+        x_max = float(np.max(x_values))
+        pad = 0.02 * (x_max - x_min) if x_max > x_min else 1.0
+        primary_range = [x_min - pad, x_max + pad]
+        fig.update_layout(
+            xaxis=dict(range=primary_range),
+            xaxis2=dict(
+                title=secondary_x_title,
+                overlaying="x",
+                side="top",
+                range=[
+                    primary_range[0] + secondary_x_shift,
+                    primary_range[1] + secondary_x_shift,
+                ],
+            ),
+        )
 
     finite_values = []
     for shift, shift_error in zip(shift_traces, shift_error_traces, strict=True):
@@ -1341,6 +1364,12 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     and, for a 2D sweep, shift and photon-number heatmaps over the
     amplitude/offset grid.
 
+    When the qubit drive time offset is the x axis, a secondary top x
+    axis shows the probe start measured from the resonator drive end
+    (``offset - resonator_drive_duration``); its positive side is the
+    ring-down region, useful for reading off when the intracavity photon
+    number decays to zero.
+
     Parameters
     ----------
     data : dict[str, Any]
@@ -1363,6 +1392,12 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     ac_stark_shift_error = data["derived"]["ac_stark_shift_error"]
     photon_number = data["derived"]["photon_number"]
     dispersive_shift = data["calibration"]["dispersive_shift"]
+    resonator_drive_duration = data["parameters"]["resonator_drive_duration"]
+    # Convert the qubit drive time offset to the probe start measured from
+    # the resonator drive end: probe_start - resonator_drive_end = offset -
+    # resonator_drive_duration.
+    time_from_drive_end_shift = -float(resonator_drive_duration)
+    time_from_drive_end_title = "Time from resonator drive end (ns)"
 
     n_amplitudes = amplitude_range.size
     n_offsets = offset_range.size
@@ -1432,6 +1467,8 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 ],
                 trace_names=[f"A_r={amplitude:g}" for amplitude in amplitude_range],
                 dispersive_shift=dispersive_shift,
+                secondary_x_shift=time_from_drive_end_shift,
+                secondary_x_title=time_from_drive_end_title,
             )
             figures[f"shift_heatmap_{state}"] = _grid_heatmap(
                 title=f"AC Stark shift (GHz) : {target} : |{state}>",
@@ -1454,11 +1491,15 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 x_title = "Qubit drive time offset (ns)"
                 shift_trace = ac_stark_shift[state_index, 0, :]
                 shift_error_trace = ac_stark_shift_error[state_index, 0, :]
+                secondary_x_shift = time_from_drive_end_shift
+                secondary_x_title = time_from_drive_end_title
             else:
                 x_values = amplitude_range
                 x_title = "Resonator drive amplitude"
                 shift_trace = ac_stark_shift[state_index, :, 0]
                 shift_error_trace = ac_stark_shift_error[state_index, :, 0]
+                secondary_x_shift = None
+                secondary_x_title = ""
             figures[f"summary_{state}"] = _summary_figure(
                 title=f"AC Stark shift : {target} : |{state}>",
                 x_values=x_values,
@@ -1467,6 +1508,8 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 shift_error_traces=[shift_error_trace],
                 trace_names=[f"|{state}>"],
                 dispersive_shift=dispersive_shift,
+                secondary_x_shift=secondary_x_shift,
+                secondary_x_title=secondary_x_title,
             )
         else:
             order = np.argsort(frequency_range)
