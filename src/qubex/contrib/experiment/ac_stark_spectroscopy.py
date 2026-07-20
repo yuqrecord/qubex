@@ -1238,8 +1238,7 @@ def _spectroscopy_heatmap(
 
 def _summary_figure(
     *,
-    target: str,
-    state: str,
+    title: str,
     x_values: NDArray[np.float64],
     x_title: str,
     shift_traces: list[NDArray[np.float64]],
@@ -1259,7 +1258,7 @@ def _summary_figure(
             name=name,
         )
     fig.update_layout(
-        title=f"AC Stark shift : {target} : |{state}>",
+        title=title,
         xaxis_title=x_title,
         yaxis_title="AC Stark shift (GHz)",
         width=600,
@@ -1336,8 +1335,11 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
     (versus resonator drive amplitude and versus qubit drive time offset,
     with a slice-selection dropdown when the other axis is also swept), a
     shift summary plot (with a photon-number secondary axis when
-    ``dispersive_shift`` is available) and, for a 2D sweep, shift and
-    photon-number heatmaps over the amplitude/offset grid.
+    ``dispersive_shift`` is available), a shift-versus-drive-power plot
+    (x axis: resonator drive amplitude squared, one trace per offset;
+    linear in the dispersive regime) when the amplitude axis is swept
+    and, for a 2D sweep, shift and photon-number heatmaps over the
+    amplitude/offset grid.
 
     Parameters
     ----------
@@ -1417,8 +1419,7 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
 
         if n_amplitudes > 1 and n_offsets > 1:
             figures[f"summary_{state}"] = _summary_figure(
-                target=target,
-                state=state,
+                title=f"AC Stark shift : {target} : |{state}>",
                 x_values=offset_range,
                 x_title="Qubit drive time offset (ns)",
                 shift_traces=[
@@ -1459,8 +1460,7 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 shift_trace = ac_stark_shift[state_index, :, 0]
                 shift_error_trace = ac_stark_shift_error[state_index, :, 0]
             figures[f"summary_{state}"] = _summary_figure(
-                target=target,
-                state=state,
+                title=f"AC Stark shift : {target} : |{state}>",
                 x_values=x_values,
                 x_title=x_title,
                 shift_traces=[shift_trace],
@@ -1487,6 +1487,29 @@ def plot_ac_stark_spectroscopy(data: dict[str, Any]) -> dict[str, go.Figure]:
                 height=400,
             )
             figures[f"spectrum_{state}"] = fig
+
+        if n_amplitudes > 1:
+            # In the dispersive regime the photon number scales with the
+            # drive power, so the shift is linear in amplitude squared.
+            if n_offsets > 1:
+                power_trace_names = [f"offset={offset:g} ns" for offset in offset_range]
+            else:
+                power_trace_names = [f"|{state}>"]
+            figures[f"summary_vs_amplitude_squared_{state}"] = _summary_figure(
+                title=f"AC Stark shift vs drive power : {target} : |{state}>",
+                x_values=amplitude_range**2,
+                x_title="Resonator drive amplitude squared",
+                shift_traces=[
+                    ac_stark_shift[state_index, :, offset_index]
+                    for offset_index in range(n_offsets)
+                ],
+                shift_error_traces=[
+                    ac_stark_shift_error[state_index, :, offset_index]
+                    for offset_index in range(n_offsets)
+                ],
+                trace_names=power_trace_names,
+                dispersive_shift=dispersive_shift,
+            )
 
     return figures
 
