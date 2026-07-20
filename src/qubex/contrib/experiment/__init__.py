@@ -87,6 +87,7 @@ from .superconducting_gap import get_resistance_charge, get_superconducting_gap
 from .thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
+from .ac_stark_spectroscopy import ac_stark_spectroscopy
 
 from .single_shot_measurement_with_post_selection import (
     single_shot_measurement_with_post_selection,
@@ -162,4 +163,5 @@ __all__ = [
     "thermal_excitation_via_rabi",
     "visualize_graph",
     "single_shot_measurement_with_post_selection",
+    "ac_stark_spectroscopy",
 ]
