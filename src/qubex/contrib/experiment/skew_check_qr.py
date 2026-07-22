@@ -16,13 +16,18 @@ locates the control-vs-readout timing alignment (the skew).
 
 Sequence layout (one sweep point)::
 
-    Qxx  (control) : [Blank(max(0, +offset))]  control_pulse
-    RQxx (readout) : [Blank(max(0, -offset))]  readout_pulse
+    Qxx  (control) : [Blank(pad)]  [Blank(max(0, +offset))]  control_pulse
+    RQxx (readout) : [Blank(pad)]  [Blank(max(0, -offset))]  readout_pulse
 
 Both channels start together, so
 ``control_start - readout_start == time_offset``: a positive offset makes the
 control pulse land during/after the readout, a negative offset delays the
-readout so the control pulse lands before it.
+readout so the control pulse lands before it. Capture windows must start at a
+multiple of the 8 ns capture word, so when a negative offset delays the
+readout to an off-grid start time, the same alignment ``Blank(pad)`` is
+prepended to *both* channels — pushing the readout (and therefore the capture)
+start onto the 8 ns grid while preserving the relative offset (``pad = 0``
+otherwise).
 
 Unlike ``ac_stark_spectroscopy`` (whose drives must precede the readout), this
 experiment deliberately allows the control pulse to overlap the readout — that
@@ -47,12 +52,17 @@ from numpy.typing import ArrayLike
 from tqdm.auto import tqdm
 
 import qubex.visualization as viz
+from qubex.backend.quel1 import WORD_DURATION_NS
 from qubex.experiment import Experiment
 from qubex.experiment.models import Result
 from qubex.measurement.models.measure_result import MultipleMeasureResult
 from qubex.pulse import Blank, FlatTop, PulseSchedule, Waveform
 
 TIME_GRID_TOLERANCE = 1e-6
+
+# Capture windows must start at a multiple of the capture word (8 ns on
+# QuEL-1); enforced by qubex.measurement.adapters.quel1_backend_adapter.
+CAPTURE_WORD_DURATION = WORD_DURATION_NS
 
 
 def _sampling_period() -> float:
@@ -182,7 +192,10 @@ def skew_check_qr_sequence(
     -------
     PulseSchedule
         Schedule with the readout pulse on the read channel and, unless it is
-        the reference, the control pulse on the drive channel.
+        the reference, the control pulse on the drive channel. When a negative
+        offset delays the readout to a start time off the 8 ns capture-word
+        grid, the same alignment ``Blank`` is prepended to both channels so
+        that the capture start time stays a multiple of the capture word.
     """
     qubit = exp.ctx.resolve_qubit_label(target)
     resonator = exp.ctx.resolve_read_label(target)
@@ -190,7 +203,24 @@ def skew_check_qr_sequence(
     control_delay = max(0.0, time_offset)
     readout_delay = max(0.0, -time_offset)
 
+    # Capture windows must start on the capture-word grid. A negative offset
+    # delays the readout by `readout_delay`, which may be off that grid, so the
+    # same alignment Blank is prepended to both channels: it pushes the readout
+    # (and therefore the capture) start onto the grid without changing the
+    # control-vs-readout offset.
+    misalignment = readout_delay % CAPTURE_WORD_DURATION
+    if (
+        misalignment > TIME_GRID_TOLERANCE
+        and CAPTURE_WORD_DURATION - misalignment > TIME_GRID_TOLERANCE
+    ):
+        alignment_delay = CAPTURE_WORD_DURATION - misalignment
+    else:
+        alignment_delay = 0.0
+
     with PulseSchedule() as ps:
+        if control_pulse is not None and alignment_delay > 0:
+            ps.add(resonator, Blank(alignment_delay))
+            ps.add(qubit, Blank(alignment_delay))
         if control_pulse is not None and readout_delay > 0:
             ps.add(resonator, Blank(readout_delay))
         ps.add(resonator, readout_pulse)
