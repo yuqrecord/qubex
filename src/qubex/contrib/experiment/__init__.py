@@ -89,6 +89,8 @@ from .thermal_excitation_characterization import (
 )
 from .ac_stark_spectroscopy import ac_stark_spectroscopy
 
+from .skew_check_qr import skew_check_qr
+
 from .single_shot_measurement_with_post_selection import (
     single_shot_measurement_with_post_selection,
 )
@@ -164,4 +166,5 @@ __all__ = [
     "visualize_graph",
     "single_shot_measurement_with_post_selection",
     "ac_stark_spectroscopy",
+    "skew_check_qr",
 ]
