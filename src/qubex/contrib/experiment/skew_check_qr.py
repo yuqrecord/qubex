@@ -235,7 +235,9 @@ def run_skew_check_qr(
     exp: Experiment,
     *,
     target: str,
-    readout_amplitude: float | None = None,
+    readout_amplitude: float,
+    readout_duration: float,
+    readout_ramptime: float,
     control_amplitude: float | None = None,
     control_duration: float | None = None,
     control_ramptime: float | None = None,
@@ -249,12 +251,12 @@ def run_skew_check_qr(
     """
     Acquire the reference and the time-offset sweep.
 
-    Builds the readout pulse (the default readout pulse, with the amplitude
-    optionally overridden) and the control pulse (the calibrated pi pulse, or a
-    FlatTop from the amplitude/duration/ramptime triple), then measures the
-    readout IQ with no control pulse (reference) and, for each time offset,
-    with the control pulse applied. Each point is a shot-averaged,
-    time-integrated measurement via ``Experiment.execute``.
+    Builds the readout pulse (a FlatTop from its amplitude/duration/ramptime)
+    and the control pulse (the calibrated pi pulse, or a FlatTop from the
+    amplitude/duration/ramptime triple), then measures the readout IQ with no
+    control pulse (reference) and, for each time offset, with the control
+    pulse applied. Each point is a shot-averaged, time-integrated measurement
+    via ``Experiment.execute``.
 
     Parameters
     ----------
@@ -262,11 +264,14 @@ def run_skew_check_qr(
         Experiment object.
     target : str
         Target qubit name or label.
-    readout_amplitude : float | None, optional
-        Amplitude override for the resonator readout pulse. When ``None``
-        (default), the calibrated default readout amplitude is used. All other
-        readout-pulse parameters (duration, ramp time, margins) always use the
-        default readout pulse.
+    readout_amplitude : float
+        Amplitude of the resonator readout pulse.
+    readout_duration : float
+        Flat-top duration of the readout pulse in ns. Must be a multiple of
+        the 8 ns capture word, since the capture window is aligned to the
+        readout pulse.
+    readout_ramptime : float
+        Ramp time (flat-top tau) of the readout pulse in ns.
     control_amplitude : float | None, optional
         Amplitude of the qubit control pulse. Required unless
         ``using_pi_pulse`` is True.
@@ -299,12 +304,31 @@ def run_skew_check_qr(
         Raw acquisition data with keys ``target``, ``qubit_label``,
         ``read_label``, ``time_offset_range``, ``iq`` (one complex value per
         offset), ``reference_iq``, the echoed pulse/shot parameters
-        (``readout_amplitude``, ``control_amplitude``, ``control_duration``,
-        ``control_ramptime``, ``using_pi_pulse``, ``n_shots``,
-        ``shot_interval``).
+        (``readout_amplitude``, ``readout_duration``, ``readout_ramptime``,
+        ``control_amplitude``, ``control_duration``, ``control_ramptime``,
+        ``using_pi_pulse``, ``n_shots``, ``shot_interval``).
     """
-    if readout_amplitude is not None:
-        _validate_amplitude("readout_amplitude", readout_amplitude, allow_zero=False)
+    _validate_amplitude("readout_amplitude", readout_amplitude, allow_zero=False)
+    _validate_time_on_grid("readout_duration", readout_duration)
+    _validate_time_on_grid("readout_ramptime", readout_ramptime)
+    _validate_flat_top(
+        "readout",
+        duration=readout_duration,
+        ramptime=readout_ramptime,
+    )
+    # The capture window is aligned to the readout pulse, so its duration
+    # equals `readout_duration` and must be a multiple of the capture word.
+    if (
+        abs(
+            readout_duration
+            - round(readout_duration / CAPTURE_WORD_DURATION) * CAPTURE_WORD_DURATION
+        )
+        > TIME_GRID_TOLERANCE
+    ):
+        raise ValueError(
+            f"`readout_duration` ({readout_duration} ns) must be a multiple of "
+            f"the {CAPTURE_WORD_DURATION} ns capture word."
+        )
     _validate_axis("time_offset_range", time_offset_range)
     offsets = np.atleast_1d(np.asarray(time_offset_range, dtype=float))
     for offset in offsets:
@@ -351,9 +375,11 @@ def run_skew_check_qr(
             tau=control_ramptime,
         )
 
-    # Use the default readout pulse, overriding only the amplitude when given
-    # (``amplitude=None`` resolves to the calibrated default amplitude).
-    readout_pulse = exp.pulse.readout(target, amplitude=readout_amplitude)
+    readout_pulse = FlatTop(
+        duration=readout_duration,
+        amplitude=readout_amplitude,
+        tau=readout_ramptime,
+    )
 
     reset_first = (
         bool(reset_awg_and_capunits) if reset_awg_and_capunits is not None else False
@@ -422,6 +448,8 @@ def run_skew_check_qr(
         "iq": np.asarray(iq_values, dtype=complex),
         "reference_iq": complex(reference_iq),
         "readout_amplitude": readout_amplitude,
+        "readout_duration": readout_duration,
+        "readout_ramptime": readout_ramptime,
         "control_amplitude": control_amplitude,
         "control_duration": control_duration,
         "control_ramptime": control_ramptime,
@@ -483,7 +511,9 @@ def skew_check_qr(
     exp: Experiment,
     *,
     target: str,
-    readout_amplitude: float | None = None,
+    readout_amplitude: float,
+    readout_duration: float,
+    readout_ramptime: float,
     control_amplitude: float | None = None,
     control_duration: float | None = None,
     control_ramptime: float | None = None,
@@ -508,11 +538,14 @@ def skew_check_qr(
         Experiment object.
     target : str
         Target qubit name or label.
-    readout_amplitude : float | None, optional
-        Amplitude override for the resonator readout pulse. When ``None``
-        (default), the calibrated default readout amplitude is used. All other
-        readout-pulse parameters (duration, ramp time, margins) always use the
-        default readout pulse.
+    readout_amplitude : float
+        Amplitude of the resonator readout pulse.
+    readout_duration : float
+        Flat-top duration of the readout pulse in ns. Must be a multiple of
+        the 8 ns capture word, since the capture window is aligned to the
+        readout pulse.
+    readout_ramptime : float
+        Ramp time (flat-top tau) of the readout pulse in ns.
     control_amplitude : float | None, optional
         Amplitude of the qubit control pulse. Required unless
         ``using_pi_pulse`` is True.
@@ -551,6 +584,8 @@ def skew_check_qr(
         exp,
         target=target,
         readout_amplitude=readout_amplitude,
+        readout_duration=readout_duration,
+        readout_ramptime=readout_ramptime,
         control_amplitude=control_amplitude,
         control_duration=control_duration,
         control_ramptime=control_ramptime,
@@ -580,6 +615,8 @@ def skew_check_qr(
         "max_distance_offset": analysis["max_distance_offset"],
         "parameters": {
             "readout_amplitude": raw["readout_amplitude"],
+            "readout_duration": raw["readout_duration"],
+            "readout_ramptime": raw["readout_ramptime"],
             "control_amplitude": raw["control_amplitude"],
             "control_duration": raw["control_duration"],
             "control_ramptime": raw["control_ramptime"],
