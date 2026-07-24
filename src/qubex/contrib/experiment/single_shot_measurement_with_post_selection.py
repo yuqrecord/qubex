@@ -2,118 +2,11 @@ import numpy as np
 import qubex as qx
 import matplotlib.pyplot as plt
 from qubex.experiment.models import Result
+from qxpulse import Waveform
 from sklearn.linear_model import LogisticRegression
 from scipy.optimize import curve_fit
 from scipy.special import erfc
 import matplotlib.pyplot as plt
-
-
-def two_steps(
-    *,
-    height1: float,
-    height2: float,
-    rise_duration: float,
-    top1_duration: float,
-    fall1_duration: float,
-    top2_duration: float,
-    fall2_duration: float,
-    dt: float = 2.0,
-) -> qx.pulse.Arbitrary:
-    """
-    Create a smooth two-step pulse.
-
-    Shape:
-        0 -> height1 -> height2 -> 0
-
-    Parameters
-    ----------
-    height1:
-        First plateau amplitude.
-    height2:
-        Second plateau amplitude.
-    rise_duration:
-        Duration of smooth rise from 0 to height1 [ns].
-    fall1_duration:
-        Duration of smooth fall from height1 to height2 [ns].
-    fall2_duration:
-        Duration of smooth fall from height2 to 0 [ns].
-    top1_duration:
-        Duration of first plateau at height1 [ns].
-    top2_duration:
-        Duration of second plateau at height2 [ns].
-    dt:
-        Sampling period [ns].
-    """
-
-    for name, value in {
-        "rise_duration": rise_duration,
-        "fall1_duration": fall1_duration,
-        "fall2_duration": fall2_duration,
-        "top1_duration": top1_duration,
-        "top2_duration": top2_duration,
-        "dt": dt,
-    }.items():
-        if value <= 0:
-            raise ValueError(f"{name} must be positive.")
-
-    total_duration = (
-        rise_duration + top1_duration + fall1_duration + top2_duration + fall2_duration
-    )
-
-    n_samples = round(total_duration / dt)
-    if not np.isclose(n_samples * dt, total_duration):
-        raise ValueError("total_duration must be a multiple of dt.")
-
-    # サンプル区間の中心で評価
-    t = (np.arange(n_samples) + 0.5) * dt
-    y = np.zeros_like(t, dtype=float)
-
-    t0 = 0.0
-
-    # 1. 0 -> height1
-    t1 = t0 + rise_duration
-    m = (t0 <= t) & (t < t1)
-    u = t[m] - t0
-    y[m] = height1 * 0.5 * (1 - np.cos(np.pi * u / rise_duration))
-
-    # 2. height1 top
-    t0 = t1
-    t1 = t0 + top1_duration
-    m = (t0 <= t) & (t < t1)
-    y[m] = height1
-
-    # 3. height1 -> height2
-    t0 = t1
-    t1 = t0 + fall1_duration
-    m = (t0 <= t) & (t < t1)
-    u = t[m] - t0
-    y[m] = height1 + (height2 - height1) * 0.5 * (
-        1 - np.cos(np.pi * u / fall1_duration)
-    )
-
-    # 4. height2 top
-    t0 = t1
-    t1 = t0 + top2_duration
-    m = (t0 <= t) & (t < t1)
-    y[m] = height2
-
-    # 5. height2 -> 0
-    t0 = t1
-    t1 = t0 + fall2_duration
-    m = (t0 <= t) & (t < t1)
-    u = t[m] - t0
-    y[m] = height2 * 0.5 * (1 + np.cos(np.pi * u / fall2_duration))
-
-    return qx.pulse.Arbitrary(y.astype(np.complex128), sampling_period=dt)
-
-
-def next_pow2(x: float | int, nth: int = 1) -> int:
-    """Return the next power of 2 greater than or equal to x."""
-    if x <= 0:
-        raise ValueError("x must be positive.")
-    if nth < 1:
-        raise ValueError("nth must be a positive integer.")
-    return 2 ** (int(np.ceil(np.log2(x))) + nth - 1)
 
 
 def gaussian(x, a, mu, sigma):
@@ -154,43 +47,28 @@ def run_single_shot_measurement_with_post_selection(
     exp: qx.Experiment,
     *,
     target: str,
-    height1: float,
-    height2: float,
-    rise_duration: float,
-    top1_duration: float,
-    fall1_duration: float,
-    top2_duration: float,
-    fall2_duration: float,
+    readout_pulse: Waveform | None = None,
     waittime: float,
     buffer_after_pi_pulse: float,
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
+    add_readout_post_margin: bool = True,
 ):
     qubit = exp.ctx.qubits[target].label
     resonator = exp.ctx.resonators[target].label
-    readout_pulse_org = two_steps(
-        height1=height1,
-        height2=height2,
-        rise_duration=rise_duration,
-        top1_duration=top1_duration,
-        fall1_duration=fall1_duration,
-        top2_duration=top2_duration,
-        fall2_duration=fall2_duration,
-        dt=2.0,
-    )
-    if plot_pulse_schedule:
-        readout_pulse_org.plot(title="Original Readout Pulse")
-    readout_pulse = readout_pulse_org.padded(
-        next_pow2(readout_pulse_org.duration, 1), "right"
-    )
-    if plot_pulse_schedule:
-        readout_pulse.plot(title="Padded Readout Pulse")
+    if readout_pulse is None:
+        readout_pulse = exp.readout(target)
+    padded_readout_pulse = readout_pulse
+    if add_readout_post_margin:
+        padded_readout_pulse = padded_readout_pulse.padded(
+            padded_readout_pulse.duration + exp.readout_post_margin
+        )
     result = dict()
     for state in ["g", "e"]:
         schedule = qx.PulseSchedule()
         with schedule as s:
-            s.add(resonator, readout_pulse)
+            s.add(resonator, padded_readout_pulse)
             s.barrier()
             s.add(qubit, qx.pulse.Blank(waittime))
             if state == "e":
@@ -199,7 +77,7 @@ def run_single_shot_measurement_with_post_selection(
                 s.add(qubit, qx.pulse.Blank(exp.drag_pi_pulse[qubit].duration))
             s.add(qubit, qx.pulse.Blank(buffer_after_pi_pulse))
             s.barrier()
-            s.add(resonator, readout_pulse)
+            s.add(resonator, padded_readout_pulse)
         if plot_pulse_schedule:
             schedule.plot(title=f"Pulse Schedule |{state}>")
         result[state] = exp.execute(
@@ -535,13 +413,7 @@ def single_shot_measurement_with_post_selection(
     exp: qx.Experiment,
     *,
     target: str,
-    height1: float,
-    height2: float,
-    rise_duration: float,
-    top1_duration: float,
-    fall1_duration: float,
-    top2_duration: float,
-    fall2_duration: float,
+    readout_pulse: Waveform | None = None,
     waittime: float,
     buffer_after_pi_pulse: float,
     shot_interval: float,
@@ -549,22 +421,20 @@ def single_shot_measurement_with_post_selection(
     n_test: int,
     plot: bool = True,
     plot_pulse_schedule: bool = True,
+    add_readout_post_margin: bool = True,
 ) -> Result:
+    if readout_pulse is None:
+        readout_pulse = exp.readout(target)
     run_result = run_single_shot_measurement_with_post_selection(
         exp,
         target=target,
-        height1=height1,
-        height2=height2,
-        rise_duration=rise_duration,
-        top1_duration=top1_duration,
-        fall1_duration=fall1_duration,
-        top2_duration=top2_duration,
-        fall2_duration=fall2_duration,
+        readout_pulse=readout_pulse,
         waittime=waittime,
         buffer_after_pi_pulse=buffer_after_pi_pulse,
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
+        add_readout_post_margin=add_readout_post_margin,
     )
     iq_data = create_iq_data(run_result, target, n_train)
     analyze_result = analyze_single_shot_measurement_with_post_selection(
@@ -592,6 +462,7 @@ def single_shot_measurement_with_post_selection(
     result = Result(
         data={
             "target": target,
+            "readout_pulse": readout_pulse,
             "iq_data": iq_data,
             "signal": signal,
             "weight": weight,
