@@ -33,14 +33,34 @@ def create_iq_data(result, target, n_train):
     return iq_data
 
 
-def make_weight(iq_data_g, iq_data_e):
-    weight = np.conj(iq_data_g.mean(axis=0) - iq_data_e.mean(axis=0))
-    weight = weight / np.linalg.norm(weight)
-    return weight
+class Classifier:
+    def __init__(self):
+        self.model = LogisticRegression()
+        self.waight = None
 
+    @staticmethod
+    def expand_complex_feature(c_data):
+        return np.column_stack([np.real(c_data), np.imag(c_data)])
 
-def convert_data(iq_data):
-    return np.column_stack([np.real(iq_data), np.imag(iq_data)])
+    def weighted_signal(self, iq_data):
+        return iq_data @ self.weight
+
+    def update_weight(self, iq_data_g, iq_data_e):
+        self.weight = np.conj(iq_data_g.mean(axis=0) - iq_data_e.mean(axis=0))
+        self.weight = self.weight / np.linalg.norm(self.weight)
+
+    def fit(self, iq_data_g, iq_data_e):
+        signal_g = self.weighted_signal(iq_data_g)
+        signal_e = self.weighted_signal(iq_data_e)
+        train_data = np.concatenate([signal_g, signal_e])
+        train_label = np.concatenate(
+            [np.zeros(len(signal_g), dtype=int), np.ones(len(signal_e), dtype=int)]
+        )
+        self.model.fit(self.expand_complex_feature(train_data), train_label)
+
+    def predict(self, iq_data):
+        signal = self.weighted_signal(iq_data)
+        return self.model.predict(self.expand_complex_feature(signal))
 
 
 def run_single_shot_measurement_with_post_selection(
@@ -93,7 +113,7 @@ def run_single_shot_measurement_with_post_selection(
 def plot_single_shot_measurement_with_post_selection(
     *,
     iq_data,
-    signal,
+    classifier,
     post_selection,
     assignment_fidelity,
     alpha_scatter=0.01,
@@ -124,11 +144,13 @@ def plot_single_shot_measurement_with_post_selection(
             posterior_signal[w][s] = dict()
             for d in ["train", "test"]:
                 if w == "before_post_selection":
-                    posterior_signal[w][s][d] = signal[s]["posterior"][d]
+                    posterior_signal[w][s][d] = classifier.weighted_signal(
+                        iq_data[s]["posterior"][d]
+                    )
                 else:
-                    posterior_signal[w][s][d] = signal[s]["posterior"][d][
-                        post_selection[s][d]
-                    ]
+                    posterior_signal[w][s][d] = classifier.weighted_signal(
+                        iq_data[s]["posterior"][d][post_selection[s][d], :]
+                    )
     # TD averaged iq data
     figures["td_iq"] = dict()
     for w in ["before_post_selection", "after_post_selection"]:
@@ -317,9 +339,6 @@ def plot_single_shot_measurement_with_post_selection(
 def analyze_single_shot_measurement_with_post_selection(
     iq_data, n_train, n_test, n_max_epoch=10
 ):
-    weight = make_weight(
-        iq_data["g"]["posterior"]["train"], iq_data["e"]["posterior"]["train"]
-    )
     post_selection = dict()
     post_selection["g"] = dict()
     post_selection["e"] = dict()
@@ -329,54 +348,45 @@ def analyze_single_shot_measurement_with_post_selection(
     post_selection["e"]["test"] = np.ones(n_test, dtype=bool)
     num_post_selection_g = sum(post_selection["g"]["train"])
     num_post_selection_e = sum(post_selection["e"]["train"])
+    num_post_selection_g_prev = 0
+    num_post_selection_e_prev = 0
+    classifier = Classifier()
     for i_epoch in range(n_max_epoch):
         print("epoch: ", i_epoch)
         print("# of |e> at the 1st meas. (g train): ", num_post_selection_g)
         print("# of |e> at the 1st meas. (e train): ", num_post_selection_e)
-        signal = dict()
-        for s in ["g", "e"]:
-            signal[s] = dict()
-            for o in ["prior", "posterior"]:
-                signal[s][o] = dict()
-                for d in ["train", "test"]:
-                    signal[s][o][d] = iq_data[s][o][d] @ weight
-        train_data = np.concatenate(
-            [
-                signal["g"]["posterior"]["train"][post_selection["g"]["train"]],
-                signal["e"]["posterior"]["train"][post_selection["e"]["train"]],
-            ]
+        classifier.update_weight(
+            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
         )
-        train_label = np.concatenate(
-            [
-                np.zeros(num_post_selection_g, dtype=int),
-                np.ones(num_post_selection_e, dtype=int),
-            ]
+        classifier.fit(
+            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
         )
-        classifier = LogisticRegression()
-        classifier.fit(convert_data(train_data), train_label)
         for s in ["g", "e"]:
             post_selection[s]["train"] = (
-                classifier.predict(convert_data(signal[s]["prior"]["train"])) == 0
+                classifier.predict(iq_data[s]["prior"]["train"]) == 0
             )
-        if num_post_selection_g == sum(
-            post_selection["g"]["train"]
-        ) and num_post_selection_e == sum(post_selection["e"]["train"]):
-            print("No change in post-selection. Stop iteration.")
-            break
+        num_post_selection_g_prev = num_post_selection_g
+        num_post_selection_e_prev = num_post_selection_e
         num_post_selection_g = sum(post_selection["g"]["train"])
         num_post_selection_e = sum(post_selection["e"]["train"])
+        if (
+            num_post_selection_g == num_post_selection_g_prev
+            and num_post_selection_e == num_post_selection_e_prev
+        ):
+            print("No change in post-selection. Stop iteration.")
+            break
         if num_post_selection_g == 0 or num_post_selection_e == 0:
             raise ValueError(
                 "All data are rejected by post-selection. Please check the parameters."
             )
-        weight = make_weight(
-            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-        )
+    classifier.update_weight(
+        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+    )
     for s in ["g", "e"]:
-        post_selection[s]["test"] = (
-            classifier.predict(convert_data(signal[s]["prior"]["test"])) == 0
-        )
+        post_selection[s]["test"] = classifier.predict(iq_data[s]["prior"]["test"]) == 0
     assignment_fidelity = dict()
     assignment_fidelity["before_post_selection"] = dict()
     assignment_fidelity["after_post_selection"] = dict()
@@ -385,13 +395,10 @@ def analyze_single_shot_measurement_with_post_selection(
         assignment_fidelity["after_post_selection"][s] = dict()
         for d in ["train", "test"]:
             assignment_fidelity["before_post_selection"][s][d] = sum(
-                classifier.predict(convert_data(signal[s]["posterior"][d]))
-                == (0 if s == "g" else 1)
-            ) / len(signal[s]["posterior"][d])
+                classifier.predict(iq_data[s]["posterior"][d]) == (0 if s == "g" else 1)
+            ) / len(iq_data[s]["posterior"][d])
             assignment_fidelity["after_post_selection"][s][d] = sum(
-                classifier.predict(
-                    convert_data(signal[s]["posterior"][d][post_selection[s][d]])
-                )
+                classifier.predict(iq_data[s]["posterior"][d][post_selection[s][d]])
                 == (0 if s == "g" else 1)
             ) / sum(post_selection[s][d])
     for w in ["before_post_selection", "after_post_selection"]:
@@ -401,8 +408,6 @@ def analyze_single_shot_measurement_with_post_selection(
                 assignment_fidelity[w]["g"][d] + assignment_fidelity[w]["e"][d]
             ) / 2
     return {
-        "weight": weight,
-        "signal": signal,
         "classifier": classifier,
         "post_selection": post_selection,
         "assignment_fidelity": assignment_fidelity,
@@ -463,14 +468,12 @@ def single_shot_measurement_with_post_selection(
     analyze_result = analyze_single_shot_measurement_with_post_selection(
         iq_data=iq_data, n_train=n_train, n_test=n_test, n_max_epoch=10
     )
-    weight = analyze_result["weight"]
-    signal = analyze_result["signal"]
     classifier = analyze_result["classifier"]
     post_selection = analyze_result["post_selection"]
     assignment_fidelity = analyze_result["assignment_fidelity"]
     plot_result = plot_single_shot_measurement_with_post_selection(
         iq_data=iq_data,
-        signal=signal,
+        classifier=classifier,
         post_selection=post_selection,
         assignment_fidelity=assignment_fidelity,
         alpha_scatter=0.05,
@@ -487,8 +490,6 @@ def single_shot_measurement_with_post_selection(
             "target": target,
             "readout_pulse": readout_pulse,
             "iq_data": iq_data,
-            "signal": signal,
-            "weight": weight,
             "classifier": classifier,
             "post_selection": post_selection,
             "assignment_fidelity": assignment_fidelity,
