@@ -158,6 +158,28 @@ def plot_single_shot_measurement_with_post_selection(
             ax.legend()
             plt.close(fig)
             figures["td_iq"][w][d] = {"figure": fig, "ax": ax}
+    # TD averaged iq data distance from origin
+    figures["td_iq_distance"] = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        figures["td_iq_distance"][w] = dict()
+        for d in ["train", "test"]:
+            fig, ax = plt.subplots()
+            for s in ["g", "e"]:
+                ax.scatter(
+                    np.arange(len(posterior_averaged_iq[w][s][d])) * 8.0,
+                    np.abs(posterior_averaged_iq[w][s][d]),
+                    color=colors[s],
+                    label=f"[(I_{labels[s]})^2 + (Q_{labels[s]})^2]^(1/2)",
+                    marker="o",
+                )
+            ax.set_xlabel("Time (ns)")
+            ax.set_ylabel("Amplitude (a.u.)")
+            ax.grid()
+            title = f"Time-domain averaged IQ data {w.replace('_', ' ')} ({d} set)"
+            ax.set_title(title)
+            ax.legend()
+            plt.close(fig)
+            figures["td_iq_distance"][w][d] = {"figure": fig, "ax": ax}
     # IQ averaged separation
     figures["td_separation"] = dict()
     for w in ["before_post_selection", "after_post_selection"]:
@@ -396,6 +418,7 @@ def display_result(result: Result, plot: bool = True):
                 except ImportError:
                     display = lambda x: None
                 display(result.figures["td_iq"][w][d]["figure"])
+                display(result.figures["td_iq_distance"][w][d]["figure"])
                 display(result.figures["td_separation"][w][d]["figure"])
                 display(result.figures["iq_scatter"][w][d]["figure"])
                 display(result.figures["iq_histogram"][w][d]["figure"])
