@@ -415,19 +415,48 @@ def analyze_single_shot_measurement_with_post_selection(
 
 
 def display_result(result: Result, plot: bool = True):
+    try:
+        from IPython.display import display
+    except ImportError:
+        display = lambda x: None
+
+    def simple_display(figures):
+        for fig in figures:
+            display(fig)
+
+    def tiled_display(figures, n_cols=3):
+        outputs = []
+        for fig in figures:
+            output = widgets.Output()
+            with output:
+                display(fig)
+            outputs.append(output)
+        grid = widgets.GridBox(
+            outputs,
+            layout=widgets.Layout(
+                grid_template_columns=f"repeat({n_cols}, 1fr)",
+                grid_gap="10px",
+            ),
+        )
+        display(grid)
+
     for w in ["before_post_selection", "after_post_selection"]:
         for d in ["train", "test"]:
             if plot:
+                figures_to_display = [
+                    result.figures["td_iq"][w][d]["figure"],
+                    result.figures["td_iq_distance"][w][d]["figure"],
+                    result.figures["td_separation"][w][d]["figure"],
+                    result.figures["iq_scatter"][w][d]["figure"],
+                    result.figures["iq_histogram"][w][d]["figure"],
+                    result.figures["assignment_fidelity"][w][d]["figure"],
+                ]
                 try:
-                    from IPython.display import display
+                    import ipywidgets as widgets
+
+                    tiled_display(figures_to_display, n_cols=3)
                 except ImportError:
-                    display = lambda x: None
-                display(result.figures["td_iq"][w][d]["figure"])
-                display(result.figures["td_iq_distance"][w][d]["figure"])
-                display(result.figures["td_separation"][w][d]["figure"])
-                display(result.figures["iq_scatter"][w][d]["figure"])
-                display(result.figures["iq_histogram"][w][d]["figure"])
-                display(result.figures["assignment_fidelity"][w][d]["figure"])
+                    simple_display(figures_to_display)
             print(f"{w.replace('_', ' ')} ({d} set):")
             print(f"Assinment fidelity")
             for s in ["g", "e"]:
