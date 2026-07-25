@@ -102,6 +102,9 @@ from .experiment.superconducting_gap import (
 from .experiment.thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
+from .experiment.post_selected_measurement.assignment_fidelity import (
+    post_selected_assignment_fidelity_experiment,
+)
 
 __all__ = [
     "analyze_chevron_matched_transform",
@@ -173,4 +176,5 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
+    "post_selected_assignment_fidelity_experiment",
 ]

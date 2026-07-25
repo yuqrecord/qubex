@@ -63,7 +63,7 @@ class Classifier:
         return self.model.predict(self.expand_complex_feature(signal))
 
 
-def run_single_shot_measurement_with_post_selection(
+def run_post_selected_assignment_fidelity(
     exp: qx.Experiment,
     *,
     target: str,
@@ -110,7 +110,7 @@ def run_single_shot_measurement_with_post_selection(
     return result
 
 
-def plot_single_shot_measurement_with_post_selection(
+def plot_post_selected_assignment_fidelity(
     *,
     iq_data,
     classifier,
@@ -336,7 +336,7 @@ def plot_single_shot_measurement_with_post_selection(
     }
 
 
-def analyze_single_shot_measurement_with_post_selection(
+def analyze_post_selected_assignment_fidelity(
     iq_data, n_train, n_test, n_max_epoch=10
 ):
     post_selection = dict()
@@ -466,7 +466,7 @@ def display_result(result: Result, plot: bool = True):
             print(f"1-erfc(SNR/2)/2: {1 - erfc(result.data['snr'][w][d] / 2) / 2:.4f}")
 
 
-def single_shot_measurement_with_post_selection(
+def post_selected_assignment_fidelity_experiment(
     exp: qx.Experiment,
     *,
     target: str,
@@ -482,7 +482,7 @@ def single_shot_measurement_with_post_selection(
 ) -> Result:
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
-    run_result = run_single_shot_measurement_with_post_selection(
+    run_result = run_post_selected_assignment_fidelity(
         exp,
         target=target,
         readout_pulse=readout_pulse,
@@ -494,13 +494,13 @@ def single_shot_measurement_with_post_selection(
         add_readout_post_margin=add_readout_post_margin,
     )
     iq_data = create_iq_data(run_result, target, n_train)
-    analyze_result = analyze_single_shot_measurement_with_post_selection(
+    analyze_result = analyze_post_selected_assignment_fidelity(
         iq_data=iq_data, n_train=n_train, n_test=n_test, n_max_epoch=10
     )
     classifier = analyze_result["classifier"]
     post_selection = analyze_result["post_selection"]
     assignment_fidelity = analyze_result["assignment_fidelity"]
-    plot_result = plot_single_shot_measurement_with_post_selection(
+    plot_result = plot_post_selected_assignment_fidelity(
         iq_data=iq_data,
         classifier=classifier,
         post_selection=post_selection,
