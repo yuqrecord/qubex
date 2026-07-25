@@ -6,7 +6,8 @@ from qxpulse import Waveform
 from sklearn.linear_model import LogisticRegression
 from scipy.optimize import curve_fit
 from scipy.special import erfc
-import matplotlib.pyplot as plt
+
+MIN_POST_SELECTED_SHOTS = 10
 
 
 def gaussian(x, a, mu, sigma):
@@ -14,14 +15,26 @@ def gaussian(x, a, mu, sigma):
 
 
 def gaussian_fit(x, y):
-    p0 = [max(y), np.mean(x), np.std(x)]
-    popt, _ = curve_fit(gaussian, x, y, p0=p0)
+    total = np.sum(y)
+    if total <= 0:
+        return None
+    mu0 = np.sum(x * y) / total
+    sigma0 = np.sqrt(np.sum(y * (x - mu0) ** 2) / total)
+    p0 = [max(y), mu0, sigma0]
+    if not np.all(np.isfinite(p0)):
+        return None
+    try:
+        popt, _ = curve_fit(gaussian, x, y, p0=p0)
+    except (RuntimeError, ValueError):
+        return None
+    if not np.all(np.isfinite(popt)):
+        return None
     return {"a": popt[0], "mu": popt[1], "sigma": popt[2]}
 
 
-def create_iq_data(result, target, n_train):
+def _create_iq_data(*, target, run_result, n_train):
     iq_data = dict()
-    for s, res in result.items():
+    for s, res in run_result.items():
         iq_data[s] = dict()
         for o, data in zip(["prior", "posterior"], res.data[target]):
             iq_data[s][o] = dict()
@@ -36,7 +49,7 @@ def create_iq_data(result, target, n_train):
 class Classifier:
     def __init__(self):
         self.model = LogisticRegression()
-        self.waight = None
+        self.weight = None
 
     @staticmethod
     def expand_complex_feature(c_data):
@@ -46,8 +59,13 @@ class Classifier:
         return iq_data @ self.weight
 
     def update_weight(self, iq_data_g, iq_data_e):
-        self.weight = np.conj(iq_data_g.mean(axis=0) - iq_data_e.mean(axis=0))
-        self.weight = self.weight / np.linalg.norm(self.weight)
+        self.weight = np.conj(iq_data_e.mean(axis=0) - iq_data_g.mean(axis=0))
+        norm = np.linalg.norm(self.weight)
+        if norm == 0:
+            raise ValueError(
+                "Mean IQ data of |g> and |e> are identical. Cannot compute the weight."
+            )
+        self.weight = self.weight / norm
 
     def fit(self, iq_data_g, iq_data_e):
         signal_g = self.weighted_signal(iq_data_g)
@@ -63,7 +81,7 @@ class Classifier:
         return self.model.predict(self.expand_complex_feature(signal))
 
 
-def run_single_shot_measurement_with_post_selection(
+def run_post_selected_assignment_fidelity(
     exp: qx.Experiment,
     *,
     target: str,
@@ -110,17 +128,19 @@ def run_single_shot_measurement_with_post_selection(
     return result
 
 
-def plot_single_shot_measurement_with_post_selection(
+def plot_post_selected_assignment_fidelity(
     *,
     iq_data,
     classifier,
     post_selection,
+    posterior_weighted_signal,
     assignment_fidelity,
+    weighted_signal_histogram,
+    capture_sampling_period,
     alpha_scatter=0.01,
-    alpha_hist=0.5,
+    alpa_histogram=0.5,
     colors={"g": "blue", "e": "red"},
     labels={"g": "|g>", "e": "|e>"},
-    n_bins=100,
 ):
     figures = dict()
     posterior_averaged_iq = dict()
@@ -137,20 +157,6 @@ def plot_single_shot_measurement_with_post_selection(
                     posterior_averaged_iq[w][s][d] = iq_data[s]["posterior"][d][
                         post_selection[s][d], :
                     ].mean(axis=0)
-    posterior_signal = dict()
-    for w in ["before_post_selection", "after_post_selection"]:
-        posterior_signal[w] = dict()
-        for s in ["g", "e"]:
-            posterior_signal[w][s] = dict()
-            for d in ["train", "test"]:
-                if w == "before_post_selection":
-                    posterior_signal[w][s][d] = classifier.weighted_signal(
-                        iq_data[s]["posterior"][d]
-                    )
-                else:
-                    posterior_signal[w][s][d] = classifier.weighted_signal(
-                        iq_data[s]["posterior"][d][post_selection[s][d], :]
-                    )
     # TD averaged iq data
     figures["td_iq"] = dict()
     for w in ["before_post_selection", "after_post_selection"]:
@@ -159,14 +165,16 @@ def plot_single_shot_measurement_with_post_selection(
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
                 ax.scatter(
-                    np.arange(len(posterior_averaged_iq[w][s][d])) * 8.0,
+                    np.arange(len(posterior_averaged_iq[w][s][d]))
+                    * capture_sampling_period,
                     np.real(posterior_averaged_iq[w][s][d]),
                     color=colors[s],
                     label=f"I_{labels[s]}",
                     marker="o",
                 )
                 ax.scatter(
-                    np.arange(len(posterior_averaged_iq[w][s][d])) * 8.0,
+                    np.arange(len(posterior_averaged_iq[w][s][d]))
+                    * capture_sampling_period,
                     np.imag(posterior_averaged_iq[w][s][d]),
                     color=colors[s],
                     label=f"Q_{labels[s]}",
@@ -188,7 +196,8 @@ def plot_single_shot_measurement_with_post_selection(
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
                 ax.scatter(
-                    np.arange(len(posterior_averaged_iq[w][s][d])) * 8.0,
+                    np.arange(len(posterior_averaged_iq[w][s][d]))
+                    * capture_sampling_period,
                     np.abs(posterior_averaged_iq[w][s][d]),
                     color=colors[s],
                     label=f"[(I_{labels[s]})^2 + (Q_{labels[s]})^2]^(1/2)",
@@ -212,7 +221,7 @@ def plot_single_shot_measurement_with_post_selection(
                 posterior_averaged_iq[w]["e"][d] - posterior_averaged_iq[w]["g"][d]
             )
             ax.scatter(
-                np.arange(len(separation)) * 8.0,
+                np.arange(len(separation)) * capture_sampling_period,
                 np.abs(separation),
                 color="black",
             )
@@ -233,8 +242,8 @@ def plot_single_shot_measurement_with_post_selection(
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
                 ax.scatter(
-                    np.real(posterior_signal[w][s][d]),
-                    np.imag(posterior_signal[w][s][d]),
+                    np.real(posterior_weighted_signal[w][s][d]),
+                    np.imag(posterior_weighted_signal[w][s][d]),
                     color=colors[s],
                     label=labels[s],
                     alpha=alpha_scatter,
@@ -250,35 +259,35 @@ def plot_single_shot_measurement_with_post_selection(
             figures["iq_scatter"][w][d] = {"figure": fig, "ax": ax}
     # Plot histograms
     figures["iq_histogram"] = dict()
-    gaussian_params = dict()
-    snr = dict()
     for w in ["before_post_selection", "after_post_selection"]:
         figures["iq_histogram"][w] = dict()
-        gaussian_params[w] = {"g": dict(), "e": dict()}
-        snr[w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
             for s in ["g", "e"]:
-                counts, bin_edges, _ = ax.hist(
-                    np.real(posterior_signal[w][s][d]),
-                    bins=n_bins,
+                ax.stairs(
+                    weighted_signal_histogram["histogram"][w][s][d]["counts"],
+                    weighted_signal_histogram["histogram"][w][s][d]["bin_edges"],
                     color=colors[s],
-                    alpha=alpha_hist,
                     label=labels[s],
+                    fill=True,
+                    alpha=alpa_histogram,
                 )
-                bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
-                gaussian_params[w][s][d] = gaussian_fit(bin_centers, counts)
-                x_fit = np.linspace(bin_edges[0], bin_edges[-1], 1000)
-                y_fit = gaussian(x_fit, **gaussian_params[w][s][d])
-                ax.plot(x_fit, y_fit, color=colors[s], linestyle="--")
-            snr[w][d] = np.sqrt(
-                (gaussian_params[w]["g"][d]["mu"] - gaussian_params[w]["e"][d]["mu"])
-                ** 2
-                / (
-                    gaussian_params[w]["g"][d]["sigma"] ** 2
-                    + gaussian_params[w]["e"][d]["sigma"] ** 2
-                )
-            )
+                fit_params = weighted_signal_histogram["gaussian_fit_params"][w][s][d]
+                if fit_params is not None:
+                    x_fit = np.linspace(
+                        weighted_signal_histogram["histogram"][w][s][d]["bin_edges"][0],
+                        weighted_signal_histogram["histogram"][w][s][d]["bin_edges"][
+                            -1
+                        ],
+                        1000,
+                    )
+                    y_fit = gaussian(
+                        x_fit,
+                        fit_params["a"],
+                        fit_params["mu"],
+                        fit_params["sigma"],
+                    )
+                    ax.plot(x_fit, y_fit, color="black", linestyle="--")
             ax.set_xlabel("I")
             ax.set_ylabel("Counts")
             ax.set_yscale("log")
@@ -310,20 +319,20 @@ def plot_single_shot_measurement_with_post_selection(
             im = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=1)
             for i in range(2):
                 for j in range(2):
-                    text = ax.text(
+                    ax.text(
                         j,
                         i,
                         f"{matrix[i, j]:.4f}",
                         ha="center",
                         va="center",
-                        color="black",
+                        color="black" if matrix[i, j] < 0.5 else "white",
                     )
             ax.set_xticks([0, 1])
             ax.set_yticks([0, 1])
             ax.set_xticklabels(["|g>", "|e>"])
             ax.set_yticklabels(["|g>", "|e>"])
-            ax.set_xlabel("Prepared State")
-            ax.set_ylabel("Observed State")
+            ax.set_xlabel("Observed State")
+            ax.set_ylabel("Prepared State")
             title = f"Assignment Fidelity Matrix {w.replace('_', ' ')} ({d} set)"
             ax.set_title(title)
             fig.colorbar(im, ax=ax)
@@ -331,14 +340,10 @@ def plot_single_shot_measurement_with_post_selection(
             figures["assignment_fidelity"][w][d] = {"figure": fig, "ax": ax}
     return {
         "figures": figures,
-        "gaussian_params": gaussian_params,
-        "snr": snr,
     }
 
 
-def analyze_single_shot_measurement_with_post_selection(
-    iq_data, n_train, n_test, n_max_epoch=10
-):
+def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10):
     post_selection = dict()
     post_selection["g"] = dict()
     post_selection["e"] = dict()
@@ -346,15 +351,12 @@ def analyze_single_shot_measurement_with_post_selection(
     post_selection["e"]["train"] = np.ones(n_train, dtype=bool)
     post_selection["g"]["test"] = np.ones(n_test, dtype=bool)
     post_selection["e"]["test"] = np.ones(n_test, dtype=bool)
-    num_post_selection_g = sum(post_selection["g"]["train"])
-    num_post_selection_e = sum(post_selection["e"]["train"])
-    num_post_selection_g_prev = 0
-    num_post_selection_e_prev = 0
     classifier = Classifier()
+    converged = False
     for i_epoch in range(n_max_epoch):
         print("epoch: ", i_epoch)
-        print("# of |e> at the 1st meas. (g train): ", num_post_selection_g)
-        print("# of |e> at the 1st meas. (e train): ", num_post_selection_e)
+        print("# of post-selected shots (g train): ", sum(post_selection["g"]["train"]))
+        print("# of post-selected shots (e train): ", sum(post_selection["e"]["train"]))
         classifier.update_weight(
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
             iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
@@ -363,41 +365,59 @@ def analyze_single_shot_measurement_with_post_selection(
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
             iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
         )
+        post_selection_prev = {s: post_selection[s]["train"] for s in ["g", "e"]}
         for s in ["g", "e"]:
             post_selection[s]["train"] = (
                 classifier.predict(iq_data[s]["prior"]["train"]) == 0
             )
-        num_post_selection_g_prev = num_post_selection_g
-        num_post_selection_e_prev = num_post_selection_e
-        num_post_selection_g = sum(post_selection["g"]["train"])
-        num_post_selection_e = sum(post_selection["e"]["train"])
-        if (
-            num_post_selection_g == num_post_selection_g_prev
-            and num_post_selection_e == num_post_selection_e_prev
+            if sum(post_selection[s]["train"]) < MIN_POST_SELECTED_SHOTS:
+                raise ValueError(
+                    f"Number of post-selected shots ({s} train) is less than "
+                    f"{MIN_POST_SELECTED_SHOTS}. Please check the parameters."
+                )
+        if all(
+            sum(post_selection[s]["train"]) == sum(post_selection_prev[s])
+            for s in ["g", "e"]
         ):
             print("No change in post-selection. Stop iteration.")
+            converged = True
             break
-        if num_post_selection_g == 0 or num_post_selection_e == 0:
-            raise ValueError(
-                "All data are rejected by post-selection. Please check the parameters."
-            )
+    if not converged:
+        print(f"Post-selection did not converge within {n_max_epoch} epochs.")
     classifier.update_weight(
+        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+    )
+    classifier.fit(
         iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
         iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
     )
     for s in ["g", "e"]:
         post_selection[s]["test"] = classifier.predict(iq_data[s]["prior"]["test"]) == 0
+        if sum(post_selection[s]["test"]) < MIN_POST_SELECTED_SHOTS:
+            raise ValueError(
+                f"Number of post-selected shots ({s} test) is less than "
+                f"{MIN_POST_SELECTED_SHOTS}. Please check the parameters."
+            )
+    return classifier, post_selection
+
+
+def _assignment_fidelity(*, iq_data, classifier, post_selection):
     assignment_fidelity = dict()
-    assignment_fidelity["before_post_selection"] = dict()
-    assignment_fidelity["after_post_selection"] = dict()
+    w = "before_post_selection"
+    assignment_fidelity[w] = dict()
     for s in ["g", "e"]:
-        assignment_fidelity["before_post_selection"][s] = dict()
-        assignment_fidelity["after_post_selection"][s] = dict()
+        assignment_fidelity[w][s] = dict()
         for d in ["train", "test"]:
-            assignment_fidelity["before_post_selection"][s][d] = sum(
+            assignment_fidelity[w][s][d] = sum(
                 classifier.predict(iq_data[s]["posterior"][d]) == (0 if s == "g" else 1)
             ) / len(iq_data[s]["posterior"][d])
-            assignment_fidelity["after_post_selection"][s][d] = sum(
+    w = "after_post_selection"
+    assignment_fidelity[w] = dict()
+    for s in ["g", "e"]:
+        assignment_fidelity[w][s] = dict()
+        for d in ["train", "test"]:
+            assignment_fidelity[w][s][d] = sum(
                 classifier.predict(iq_data[s]["posterior"][d][post_selection[s][d]])
                 == (0 if s == "g" else 1)
             ) / sum(post_selection[s][d])
@@ -407,10 +427,111 @@ def analyze_single_shot_measurement_with_post_selection(
             assignment_fidelity[w]["avg"][d] = (
                 assignment_fidelity[w]["g"][d] + assignment_fidelity[w]["e"][d]
             ) / 2
+    return assignment_fidelity
+
+
+def _posterior_weighted_signal(*, iq_data, classifier, post_selection):
+    posterior_weighted_signal = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        posterior_weighted_signal[w] = dict()
+        for s in ["g", "e"]:
+            posterior_weighted_signal[w][s] = dict()
+            for d in ["train", "test"]:
+                if w == "before_post_selection":
+                    posterior_weighted_signal[w][s][d] = classifier.weighted_signal(
+                        iq_data[s]["posterior"][d]
+                    )
+                else:
+                    posterior_weighted_signal[w][s][d] = classifier.weighted_signal(
+                        iq_data[s]["posterior"][d][post_selection[s][d], :]
+                    )
+    return posterior_weighted_signal
+
+
+def _signal_to_noise_ratio(*, posterior_weighted_signal):
+    snr = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        snr[w] = dict()
+        for d in ["train", "test"]:
+            mu_g = posterior_weighted_signal[w]["g"][d].real.mean()
+            mu_e = posterior_weighted_signal[w]["e"][d].real.mean()
+            var_g = posterior_weighted_signal[w]["g"][d].real.var(ddof=1)
+            var_e = posterior_weighted_signal[w]["e"][d].real.var(ddof=1)
+            snr[w][d] = np.abs(mu_g - mu_e) / np.sqrt(var_g + var_e)
+    return snr
+
+
+def _weighted_signal_histogram(*, posterior_weighted_signal, n_bins=100):
+    histogram = dict()
+    gaussian_fit_params = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        histogram[w] = dict()
+        gaussian_fit_params[w] = dict()
+        for s in ["g", "e"]:
+            histogram[w][s] = dict()
+            gaussian_fit_params[w][s] = dict()
+            for d in ["train", "test"]:
+                counts, bin_edges = np.histogram(
+                    posterior_weighted_signal[w][s][d].real, bins=n_bins
+                )
+                bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+                gaussian_fit_params[w][s][d] = gaussian_fit(bin_centers, counts)
+                histogram[w][s][d] = {
+                    "counts": counts,
+                    "bin_edges": bin_edges,
+                }
+    gaussian_fit_snr = dict()
+    for w in ["before_post_selection", "after_post_selection"]:
+        gaussian_fit_snr[w] = dict()
+        for d in ["train", "test"]:
+            params_g = gaussian_fit_params[w]["g"][d]
+            params_e = gaussian_fit_params[w]["e"][d]
+            if params_g is None or params_e is None:
+                gaussian_fit_snr[w][d] = None
+            else:
+                gaussian_fit_snr[w][d] = np.abs(
+                    params_g["mu"] - params_e["mu"]
+                ) / np.sqrt(params_g["sigma"] ** 2 + params_e["sigma"] ** 2)
+    return dict(
+        histogram=histogram,
+        gaussian_fit_params=gaussian_fit_params,
+        gaussian_fit_snr=gaussian_fit_snr,
+    )
+
+
+def analyze_post_selected_assignment_fidelity(
+    *, target, run_result, n_train, n_test, n_max_epoch=10
+):
+    iq_data = _create_iq_data(target=target, run_result=run_result, n_train=n_train)
+    classifier, post_selection = _build_classifier(
+        iq_data=iq_data, n_train=n_train, n_test=n_test, n_max_epoch=n_max_epoch
+    )
+    post_selection_rate = dict()
+    for s in ["g", "e"]:
+        post_selection_rate[s] = dict()
+        for d in ["train", "test"]:
+            post_selection_rate[s][d] = sum(post_selection[s][d]) / len(
+                post_selection[s][d]
+            )
+    posterior_weighted_signal = _posterior_weighted_signal(
+        iq_data=iq_data, classifier=classifier, post_selection=post_selection
+    )
+    assignment_fidelity = _assignment_fidelity(
+        iq_data=iq_data, classifier=classifier, post_selection=post_selection
+    )
+    weighted_signal_histogram = _weighted_signal_histogram(
+        posterior_weighted_signal=posterior_weighted_signal, n_bins=100
+    )
+    snr = _signal_to_noise_ratio(posterior_weighted_signal=posterior_weighted_signal)
     return {
+        "iq_data": iq_data,
         "classifier": classifier,
         "post_selection": post_selection,
+        "post_selection_rate": post_selection_rate,
+        "posterior_weighted_signal": posterior_weighted_signal,
         "assignment_fidelity": assignment_fidelity,
+        "weighted_signal_histogram": weighted_signal_histogram,
+        "snr": snr,
     }
 
 
@@ -458,15 +579,31 @@ def display_result(result: Result, plot: bool = True):
                 except ImportError:
                     simple_display(figures_to_display)
             print(f"{w.replace('_', ' ')} ({d} set):")
-            print(f"Assinment fidelity")
+            print("Assignment fidelity")
             for s in ["g", "e"]:
                 print(f"  |{s}>: {result.data['assignment_fidelity'][w][s][d]:.4f}")
             print(f"  avg: {result.data['assignment_fidelity'][w]['avg'][d]:.4f}")
+            if w == "after_post_selection":
+                for s in ["g", "e"]:
+                    print(
+                        f"Post-selection rate |{s}>: {result.data['post_selection_rate'][s][d]:.4f}"
+                    )
             print(f"SNR: {result.data['snr'][w][d]:.4f}")
             print(f"1-erfc(SNR/2)/2: {1 - erfc(result.data['snr'][w][d] / 2) / 2:.4f}")
+            gaussian_fit_snr = result.data["weighted_signal_histogram"][
+                "gaussian_fit_snr"
+            ][w][d]
+            if gaussian_fit_snr is None:
+                print("Gaussian fit SNR: N/A (fit failed)")
+                print("1-erfc(Gaussian fit SNR/2)/2: N/A (fit failed)")
+            else:
+                print(f"Gaussian fit SNR: {gaussian_fit_snr:.4f}")
+                print(
+                    f"1-erfc(Gaussian fit SNR/2)/2: {1 - erfc(gaussian_fit_snr / 2) / 2:.4f}"
+                )
 
 
-def single_shot_measurement_with_post_selection(
+def post_selected_assignment_fidelity_experiment(
     exp: qx.Experiment,
     *,
     target: str,
@@ -482,7 +619,11 @@ def single_shot_measurement_with_post_selection(
 ) -> Result:
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
-    run_result = run_single_shot_measurement_with_post_selection(
+    capture_sampling_period = (
+        exp.backend_controller.sampling_period_ns
+        * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
+    )
+    run_result = run_post_selected_assignment_fidelity(
         exp,
         target=target,
         readout_pulse=readout_pulse,
@@ -493,37 +634,49 @@ def single_shot_measurement_with_post_selection(
         plot_pulse_schedule=plot_pulse_schedule,
         add_readout_post_margin=add_readout_post_margin,
     )
-    iq_data = create_iq_data(run_result, target, n_train)
-    analyze_result = analyze_single_shot_measurement_with_post_selection(
-        iq_data=iq_data, n_train=n_train, n_test=n_test, n_max_epoch=10
+    analyze_result = analyze_post_selected_assignment_fidelity(
+        target=target,
+        run_result=run_result,
+        n_train=n_train,
+        n_test=n_test,
+        n_max_epoch=10,
     )
+    iq_data = analyze_result["iq_data"]
     classifier = analyze_result["classifier"]
     post_selection = analyze_result["post_selection"]
+    post_selection_rate = analyze_result["post_selection_rate"]
+    posterior_weighted_signal = analyze_result["posterior_weighted_signal"]
     assignment_fidelity = analyze_result["assignment_fidelity"]
-    plot_result = plot_single_shot_measurement_with_post_selection(
+    weighted_signal_histogram = analyze_result["weighted_signal_histogram"]
+    snr = analyze_result["snr"]
+    plot_result = plot_post_selected_assignment_fidelity(
         iq_data=iq_data,
         classifier=classifier,
         post_selection=post_selection,
+        posterior_weighted_signal=posterior_weighted_signal,
         assignment_fidelity=assignment_fidelity,
+        weighted_signal_histogram=weighted_signal_histogram,
+        capture_sampling_period=capture_sampling_period,
         alpha_scatter=0.05,
-        alpha_hist=0.5,
+        alpa_histogram=0.5,
         colors={"g": "blue", "e": "red"},
         labels={"g": "|g>", "e": "|e>"},
-        n_bins=100,
     )
     figures = plot_result["figures"]
-    gaussian_params = plot_result["gaussian_params"]
-    snr = plot_result["snr"]
     result = Result(
         data={
             "target": target,
+            "raw": run_result,
             "readout_pulse": readout_pulse,
             "iq_data": iq_data,
             "classifier": classifier,
             "post_selection": post_selection,
+            "post_selection_rate": post_selection_rate,
+            "posterior_weighted_signal": posterior_weighted_signal,
             "assignment_fidelity": assignment_fidelity,
-            "gaussian_params": gaussian_params,
+            "weighted_signal_histogram": weighted_signal_histogram,
             "snr": snr,
+            "capture_sampling_period": capture_sampling_period,
         },
         figure=None,
         figures=figures,

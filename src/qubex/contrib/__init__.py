@@ -102,6 +102,9 @@ from .experiment.superconducting_gap import (
 from .experiment.thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
+from .experiment.post_selected_measurement.assignment_fidelity import (
+    post_selected_assignment_fidelity_experiment,
+)
 
 from .experiment.ac_stark_spectroscopy import ac_stark_spectroscopy
 
@@ -179,4 +182,5 @@ __all__ = [
     "visualize_graph",
     "ac_stark_spectroscopy",
     "skew_check_qr",
+    "post_selected_assignment_fidelity_experiment",
 ]
