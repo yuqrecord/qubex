@@ -91,8 +91,8 @@ from .ac_stark_spectroscopy import ac_stark_spectroscopy
 
 from .skew_check_qr import skew_check_qr
 
-from .single_shot_measurement_with_post_selection import (
-    single_shot_measurement_with_post_selection,
+from .post_selected_measurement.assignment_fidelity import (
+    post_selected_assignment_fidelity_experiment,
 )
 
 __all__ = [
@@ -164,7 +164,7 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
-    "single_shot_measurement_with_post_selection",
     "ac_stark_spectroscopy",
     "skew_check_qr",
+    "post_selected_assignment_fidelity_experiment",
 ]
