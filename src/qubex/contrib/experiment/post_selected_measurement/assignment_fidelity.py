@@ -336,9 +336,7 @@ def plot_post_selected_assignment_fidelity(
     }
 
 
-def analyze_post_selected_assignment_fidelity(
-    iq_data, n_train, n_test, n_max_epoch=10
-):
+def analyze_post_selected_assignment_fidelity(iq_data, n_train, n_test, n_max_epoch=10):
     post_selection = dict()
     post_selection["g"] = dict()
     post_selection["e"] = dict()
@@ -517,6 +515,7 @@ def post_selected_assignment_fidelity_experiment(
     result = Result(
         data={
             "target": target,
+            "raw": run_result,
             "readout_pulse": readout_pulse,
             "iq_data": iq_data,
             "classifier": classifier,
