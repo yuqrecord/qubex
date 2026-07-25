@@ -46,7 +46,7 @@ class Classifier:
         return iq_data @ self.weight
 
     def update_weight(self, iq_data_g, iq_data_e):
-        self.weight = np.conj(iq_data_g.mean(axis=0) - iq_data_e.mean(axis=0))
+        self.weight = np.conj(iq_data_e.mean(axis=0) - iq_data_g.mean(axis=0))
         self.weight = self.weight / np.linalg.norm(self.weight)
 
     def fit(self, iq_data_g, iq_data_e):
