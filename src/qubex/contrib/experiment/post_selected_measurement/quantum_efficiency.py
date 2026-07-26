@@ -166,7 +166,6 @@ def _build_readout_pulse(
     readout_duration: float | None,
     readout_ramptime: float | None,
     waittime_after_readout_drive: float,
-    add_readout_post_margin: bool,
 ) -> Waveform:
     """
     Build the shared "readout drive + ring-down wait" waveform.
@@ -186,8 +185,6 @@ def _build_readout_pulse(
         ramptime=readout_ramptime,
     )
     pulse = pulse.padded(pulse.duration + waittime_after_readout_drive)
-    if add_readout_post_margin:
-        pulse = pulse.padded(pulse.duration + exp.readout_post_margin)
     return pulse
 
 
@@ -200,7 +197,6 @@ def run_readout_induced_dephasing(
     readout_ramptime: float | None,
     ramsey_phase_range,
     waittime_after_readout_drive: float,
-    add_readout_post_margin: bool,
     n_shots: int,
     shot_interval: float,
     plot_pulse_schedule: bool = True,
@@ -245,7 +241,6 @@ def run_readout_induced_dephasing(
         readout_duration=readout_duration,
         readout_ramptime=readout_ramptime,
         waittime_after_readout_drive=waittime_after_readout_drive,
-        add_readout_post_margin=add_readout_post_margin,
     )
     final_readout_pulse = exp.readout(target)
 
@@ -293,7 +288,6 @@ def run_post_selected_snr(
     readout_duration: float | None,
     readout_ramptime: float | None,
     waittime_after_readout_drive: float,
-    add_readout_post_margin: bool,
     waittime: float,
     buffer_after_pi_pulse: float,
     n_train: int,
@@ -334,7 +328,6 @@ def run_post_selected_snr(
         readout_duration=readout_duration,
         readout_ramptime=readout_ramptime,
         waittime_after_readout_drive=waittime_after_readout_drive,
-        add_readout_post_margin=add_readout_post_margin,
     )
     run_result = run_post_selected_assignment_fidelity(
         exp,
@@ -345,7 +338,6 @@ def run_post_selected_snr(
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
-        add_readout_post_margin=False,
     )
     return {
         "target": target,
@@ -1124,7 +1116,6 @@ def post_selected_quantum_efficiency_experiment(
     n_test: int,
     n_max_epoch: int,
     shot_interval: float,
-    add_readout_post_margin: bool,
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ) -> Result:
@@ -1155,7 +1146,6 @@ def post_selected_quantum_efficiency_experiment(
                 readout_ramptime=readout_ramptime,
                 ramsey_phase_range=phase_array,
                 waittime_after_readout_drive=waittime_after_readout_drive,
-                add_readout_post_margin=add_readout_post_margin,
                 n_shots=dephasing_n_shots,
                 shot_interval=shot_interval,
                 plot_pulse_schedule=plot_pulse_schedule,
@@ -1171,7 +1161,6 @@ def post_selected_quantum_efficiency_experiment(
                 readout_duration=readout_duration,
                 readout_ramptime=readout_ramptime,
                 waittime_after_readout_drive=waittime_after_readout_drive,
-                add_readout_post_margin=add_readout_post_margin,
                 waittime=waittime,
                 buffer_after_pi_pulse=buffer_after_pi_pulse,
                 n_train=n_train,
@@ -1205,7 +1194,6 @@ def post_selected_quantum_efficiency_experiment(
             "n_test": n_test,
             "n_max_epoch": n_max_epoch,
             "shot_interval": shot_interval,
-            "add_readout_post_margin": add_readout_post_margin,
         },
         "raw": {
             "dephasing": dephasing_run_results,
