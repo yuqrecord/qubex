@@ -91,24 +91,21 @@ def run_post_selected_assignment_fidelity(
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
-    add_readout_post_margin: bool = True,
 ):
     qubit = exp.ctx.qubits[target].label
     resonator = exp.ctx.resonators[target].label
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
-    padded_readout_pulse = readout_pulse
-    if add_readout_post_margin:
-        padded_readout_pulse = padded_readout_pulse.padded(
-            padded_readout_pulse.duration + exp.readout_post_margin
-        )
+    padded_readout_pulse = readout_pulse.padded(
+        readout_pulse.duration + exp.readout_post_margin
+    )
     result = dict()
     for state in ["g", "e"]:
         schedule = qx.PulseSchedule()
         with schedule as s:
             s.add(resonator, padded_readout_pulse)
             s.barrier()
-            s.add(qubit, qx.pulse.Blank(waittime))
+            s.add(qubit, qx.pulse.Blank(waittime-exp.readout_post_margin))
             if state == "e":
                 s.add(qubit, exp.drag_pi_pulse[qubit])
             else:
@@ -615,7 +612,6 @@ def post_selected_assignment_fidelity_experiment(
     n_test: int,
     plot: bool = True,
     plot_pulse_schedule: bool = True,
-    add_readout_post_margin: bool = True,
 ) -> Result:
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
@@ -632,7 +628,6 @@ def post_selected_assignment_fidelity_experiment(
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
-        add_readout_post_margin=add_readout_post_margin,
     )
     analyze_result = analyze_post_selected_assignment_fidelity(
         target=target,
