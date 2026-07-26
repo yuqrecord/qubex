@@ -1135,6 +1135,7 @@ def post_selected_quantum_efficiency_experiment(
     _validate_readout_amplitude_range(readout_amplitude_range)
     phase_array = np.asarray(ramsey_phase_range, dtype=np.float64)
 
+    pulse_schedule_is_plotted = False
     dephasing_run_results = []
     for amplitude in readout_amplitude_range:
         dephasing_run_results.append(
@@ -1148,9 +1149,11 @@ def post_selected_quantum_efficiency_experiment(
                 waittime_after_readout_drive=waittime_after_readout_drive,
                 n_shots=dephasing_n_shots,
                 shot_interval=shot_interval,
-                plot_pulse_schedule=plot_pulse_schedule,
+                plot_pulse_schedule=plot_pulse_schedule and not pulse_schedule_is_plotted,
             )
         )
+        pulse_schedule_is_plotted = True
+    pulse_schedule_is_plotted = False
     snr_run_results = []
     for amplitude in readout_amplitude_range:
         snr_run_results.append(
@@ -1166,9 +1169,10 @@ def post_selected_quantum_efficiency_experiment(
                 n_train=n_train,
                 n_test=n_test,
                 shot_interval=shot_interval,
-                plot_pulse_schedule=plot_pulse_schedule,
+                plot_pulse_schedule=plot_pulse_schedule and not pulse_schedule_is_plotted,
             )
         )
+        pulse_schedule_is_plotted = True
     analysis_result = analyze_post_selected_quantum_efficiency(
         target=target,
         dephasing_run_results=dephasing_run_results,
