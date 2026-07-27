@@ -105,7 +105,7 @@ def run_post_selected_assignment_fidelity(
         with schedule as s:
             s.add(resonator, padded_readout_pulse)
             s.barrier()
-            s.add(qubit, qx.pulse.Blank(waittime-exp.readout_post_margin))
+            s.add(qubit, qx.pulse.Blank(waittime - exp.readout_post_margin))
             if state == "e":
                 s.add(qubit, exp.drag_pi_pulse[qubit])
             else:
@@ -340,7 +340,7 @@ def plot_post_selected_assignment_fidelity(
     }
 
 
-def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10):
+def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True):
     post_selection = dict()
     post_selection["g"] = dict()
     post_selection["e"] = dict()
@@ -497,11 +497,15 @@ def _weighted_signal_histogram(*, posterior_weighted_signal, n_bins=100):
 
 
 def analyze_post_selected_assignment_fidelity(
-    *, target, run_result, n_train, n_test, n_max_epoch=10
+    *, target, run_result, n_train, n_test, n_max_epoch=10, verbose=True
 ):
     iq_data = _create_iq_data(target=target, run_result=run_result, n_train=n_train)
     classifier, post_selection = _build_classifier(
-        iq_data=iq_data, n_train=n_train, n_test=n_test, n_max_epoch=n_max_epoch
+        iq_data=iq_data,
+        n_train=n_train,
+        n_test=n_test,
+        n_max_epoch=n_max_epoch,
+        verbose=verbose,
     )
     post_selection_rate = dict()
     for s in ["g", "e"]:
@@ -610,6 +614,8 @@ def post_selected_assignment_fidelity_experiment(
     shot_interval: float,
     n_train: int,
     n_test: int,
+    n_max_epoch: int = 10,
+    verbose: bool = True,
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ) -> Result:
@@ -634,7 +640,8 @@ def post_selected_assignment_fidelity_experiment(
         run_result=run_result,
         n_train=n_train,
         n_test=n_test,
-        n_max_epoch=10,
+        n_max_epoch=n_max_epoch,
+        verbose=verbose,
     )
     iq_data = analyze_result["iq_data"]
     classifier = analyze_result["classifier"]
