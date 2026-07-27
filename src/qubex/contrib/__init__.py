@@ -105,6 +105,9 @@ from .experiment.thermal_excitation_characterization import (
 from .experiment.post_selected_measurement.assignment_fidelity import (
     post_selected_assignment_fidelity_experiment,
 )
+from .experiment.post_selected_measurement.quantum_efficiency import (
+    post_selected_quantum_efficiency_experiment,
+)
 
 from .experiment.ac_stark_spectroscopy import ac_stark_spectroscopy
 
@@ -183,4 +186,5 @@ __all__ = [
     "ac_stark_spectroscopy",
     "skew_check_qr",
     "post_selected_assignment_fidelity_experiment",
+    "post_selected_quantum_efficiency_experiment",
 ]

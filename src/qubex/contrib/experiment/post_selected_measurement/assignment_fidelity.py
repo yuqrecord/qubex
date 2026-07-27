@@ -9,6 +9,39 @@ from scipy.special import erfc
 
 MIN_POST_SELECTED_SHOTS = 10
 
+__all__ = [
+    "post_selected_assignment_fidelity_experiment",
+    "run_post_selected_assignment_fidelity",
+    "analyze_post_selected_assignment_fidelity",
+    "display_post_selected_assignment_fidelity",
+    "plot_post_selected_assignment_fidelity",
+    "Classifier",
+]
+
+
+def _validate_readout_pulse_start_position(
+    exp: qx.Experiment,
+    *,
+    target: str,
+    readout_duration: float,
+    waittime_after_readout_pulse: float,
+    waittime_after_ctrl_pulse: float,
+    capture_sampling_period: float,
+):
+    qubit = exp.ctx.qubits[target].label
+    drag_pi_pulse_duration = exp.drag_pi_pulse[qubit].duration
+    second_readout_start = (
+        readout_duration
+        + waittime_after_readout_pulse
+        + drag_pi_pulse_duration
+        + waittime_after_ctrl_pulse
+    )
+    if second_readout_start % capture_sampling_period != 0:
+        raise ValueError(
+            f"The start position of the second readout pulse ({second_readout_start} ns) "
+            f"is not aligned with the capture sampling period ({capture_sampling_period} ns)."
+        )
+
 
 def gaussian(x, a, mu, sigma):
     return a * np.exp(-((x - mu) ** 2) / (2 * sigma**2))
@@ -86,8 +119,8 @@ def run_post_selected_assignment_fidelity(
     *,
     target: str,
     readout_pulse: Waveform | None = None,
-    waittime: float,
-    buffer_after_pi_pulse: float,
+    waittime_after_readout_pulse: float,
+    waittime_after_ctrl_pulse: float,
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
@@ -105,12 +138,15 @@ def run_post_selected_assignment_fidelity(
         with schedule as s:
             s.add(resonator, padded_readout_pulse)
             s.barrier()
-            s.add(qubit, qx.pulse.Blank(waittime - exp.readout_post_margin))
+            s.add(
+                qubit,
+                qx.pulse.Blank(waittime_after_readout_pulse - exp.readout_post_margin),
+            )
             if state == "e":
                 s.add(qubit, exp.drag_pi_pulse[qubit])
             else:
                 s.add(qubit, qx.pulse.Blank(exp.drag_pi_pulse[qubit].duration))
-            s.add(qubit, qx.pulse.Blank(buffer_after_pi_pulse))
+            s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
             s.barrier()
             s.add(resonator, padded_readout_pulse)
         if plot_pulse_schedule:
@@ -351,9 +387,16 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
     classifier = Classifier()
     converged = False
     for i_epoch in range(n_max_epoch):
-        print("epoch: ", i_epoch)
-        print("# of post-selected shots (g train): ", sum(post_selection["g"]["train"]))
-        print("# of post-selected shots (e train): ", sum(post_selection["e"]["train"]))
+        if verbose:
+            print("epoch: ", i_epoch)
+            print(
+                "# of post-selected shots (g train): ",
+                sum(post_selection["g"]["train"]),
+            )
+            print(
+                "# of post-selected shots (e train): ",
+                sum(post_selection["e"]["train"]),
+            )
         classifier.update_weight(
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
             iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
@@ -376,7 +419,8 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
             sum(post_selection[s]["train"]) == sum(post_selection_prev[s])
             for s in ["g", "e"]
         ):
-            print("No change in post-selection. Stop iteration.")
+            if verbose:
+                print("No change in post-selection. Stop iteration.")
             converged = True
             break
     if not converged:
@@ -536,7 +580,7 @@ def analyze_post_selected_assignment_fidelity(
     }
 
 
-def display_result(result: Result, plot: bool = True):
+def display_post_selected_assignment_fidelity(result: Result, plot: bool = True):
     try:
         from IPython.display import display
     except ImportError:
@@ -609,8 +653,8 @@ def post_selected_assignment_fidelity_experiment(
     *,
     target: str,
     readout_pulse: Waveform | None = None,
-    waittime: float,
-    buffer_after_pi_pulse: float,
+    waittime_after_readout_pulse: float,
+    waittime_after_ctrl_pulse: float,
     shot_interval: float,
     n_train: int,
     n_test: int,
@@ -625,12 +669,20 @@ def post_selected_assignment_fidelity_experiment(
         exp.backend_controller.sampling_period_ns
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
     )
+    _validate_readout_pulse_start_position(
+        exp,
+        target=target,
+        readout_duration=readout_pulse.duration,
+        waittime_after_readout_pulse=waittime_after_readout_pulse,
+        waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
+        capture_sampling_period=capture_sampling_period,
+    )
     run_result = run_post_selected_assignment_fidelity(
         exp,
         target=target,
         readout_pulse=readout_pulse,
-        waittime=waittime,
-        buffer_after_pi_pulse=buffer_after_pi_pulse,
+        waittime_after_readout_pulse=waittime_after_readout_pulse,
+        waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
@@ -683,5 +735,5 @@ def post_selected_assignment_fidelity_experiment(
         figure=None,
         figures=figures,
     )
-    display_result(result, plot)
+    display_post_selected_assignment_fidelity(result, plot)
     return result
