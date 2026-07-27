@@ -72,6 +72,7 @@ from qubex.experiment.models import Result
 from .assignment_fidelity import (
     analyze_post_selected_assignment_fidelity,
     run_post_selected_assignment_fidelity,
+    _validate_readout_pulse_start_position as _validate_readout_pulse_start_position_snr,
 )
 
 __all__ = [
@@ -88,6 +89,49 @@ GRID_TOLERANCE = 1e-9
 MIN_READOUT_AMPLITUDES = 3
 MIN_RAMSEY_PHASES = 8
 MIN_RAMSEY_PHASE_SPAN = 1.5 * np.pi
+
+
+def _validate_readout_pulse_start_position(
+    exp: qx.Experiment,
+    *,
+    target: str,
+    readout_duration: float | None,
+    waittime_after_readout_drive: float,
+    waittime_after_capture_window: float,
+    waittime_after_ctrl_pulse: float,
+    capture_sampling_period: float,
+):
+    _validate_readout_pulse_start_position_snr(
+        exp,
+        target=target,
+        readout_duration=readout_duration,
+        waittime_after_readout_pulse=waittime_after_readout_drive
+        + waittime_after_capture_window,
+        waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
+        capture_sampling_period=capture_sampling_period,
+    )
+    qubit = exp.ctx.qubits[target].label
+    drag_hpi_pulse_duration = exp.drag_hpi_pulse[qubit].duration
+    readout_drive_start = drag_hpi_pulse_duration + waittime_after_ctrl_pulse
+    if readout_drive_start % capture_sampling_period != 0:
+        raise ValueError(
+            f"The readout drive start time ({readout_drive_start} ns) must be a "
+            f"multiple of the capture sampling period ({capture_sampling_period} ns)."
+        )
+    final_readout_start = (
+        drag_hpi_pulse_duration
+        + waittime_after_ctrl_pulse
+        + readout_duration
+        + waittime_after_readout_drive
+        + waittime_after_capture_window
+        + drag_hpi_pulse_duration
+        + waittime_after_ctrl_pulse
+    )
+    if final_readout_start % capture_sampling_period != 0:
+        raise ValueError(
+            f"The final readout start time ({final_readout_start} ns) must be a "
+            f"multiple of the capture sampling period ({capture_sampling_period} ns)."
+        )
 
 
 def _validate_time_on_grid(value, *, name, minimum=0.0):
@@ -197,7 +241,7 @@ def run_readout_induced_dephasing(
     readout_ramptime: float | None,
     ramsey_phase_range,
     waittime_after_readout_drive: float,
-    buffer_after_pi_pulse: float,
+    waittime_after_ctrl_pulse: float,
     n_shots: int,
     shot_interval: float,
     plot_pulse_schedule: bool = True,
@@ -250,11 +294,12 @@ def run_readout_induced_dephasing(
         schedule = qx.PulseSchedule()
         with schedule as s:
             s.add(qubit, hpi)
+            s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
             s.barrier()
             s.add(resonator, readout_pulse)
             s.barrier()
             s.add(qubit, hpi.shifted(float(phase)))
-            s.add(qubit, qx.Pulse.blank(buffer_after_pi_pulse))
+            s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
             s.barrier()
             s.add(resonator, final_readout_pulse)
         if plot_pulse_schedule and index == 0:
@@ -290,8 +335,8 @@ def run_post_selected_snr(
     readout_duration: float | None,
     readout_ramptime: float | None,
     waittime_after_readout_drive: float,
-    waittime_between_readout_pulses: float,
-    buffer_after_pi_pulse: float,
+    waittime_after_capture_window: float,
+    waittime_after_ctrl_pulse: float,
     n_train: int,
     n_test: int,
     shot_interval: float,
@@ -318,9 +363,9 @@ def run_post_selected_snr(
         name="waittime_after_readout_drive",
     )
     _validate_time_on_grid(
-        waittime_between_readout_pulses, name="waittime_between_readout_pulses"
+        waittime_after_capture_window, name="waittime_after_capture_window"
     )
-    _validate_time_on_grid(buffer_after_pi_pulse, name="buffer_after_pi_pulse")
+    _validate_time_on_grid(waittime_after_ctrl_pulse, name="waittime_after_ctrl_pulse")
     _validate_positive_int(n_train, name="n_train", minimum=2)
     _validate_positive_int(n_test, name="n_test", minimum=2)
     _validate_shot_interval(shot_interval)
@@ -337,8 +382,8 @@ def run_post_selected_snr(
         exp,
         target=target,
         readout_pulse=readout_pulse,
-        waittime=waittime_between_readout_pulses,
-        buffer_after_pi_pulse=buffer_after_pi_pulse,
+        waittime_after_readout_pulse=waittime_after_capture_window,
+        waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
@@ -1114,8 +1159,8 @@ def post_selected_quantum_efficiency_experiment(
     readout_ramptime: float | None,
     ramsey_phase_range,
     waittime_after_readout_drive: float,
-    waittime_between_readout_pulses: float,
-    buffer_after_pi_pulse: float,
+    waittime_after_capture_window: float,
+    waittime_after_ctrl_pulse: float,
     dephasing_n_shots: int,
     n_train: int,
     n_test: int,
@@ -1152,6 +1197,7 @@ def post_selected_quantum_efficiency_experiment(
                 readout_ramptime=readout_ramptime,
                 ramsey_phase_range=phase_array,
                 waittime_after_readout_drive=waittime_after_readout_drive,
+                waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
                 n_shots=dephasing_n_shots,
                 shot_interval=shot_interval,
                 plot_pulse_schedule=plot_pulse_schedule
@@ -1170,8 +1216,8 @@ def post_selected_quantum_efficiency_experiment(
                 readout_duration=readout_duration,
                 readout_ramptime=readout_ramptime,
                 waittime_after_readout_drive=waittime_after_readout_drive,
-                watitime_between_readout_pulses=waittime_between_readout_pulses,
-                buffer_after_pi_pulse=buffer_after_pi_pulse,
+                waittime_after_capture_window=waittime_after_capture_window,
+                waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
                 n_train=n_train,
                 n_test=n_test,
                 shot_interval=shot_interval,
@@ -1198,8 +1244,8 @@ def post_selected_quantum_efficiency_experiment(
             "readout_ramptime": readout_ramptime,
             "ramsey_phase_range": phase_array,
             "waittime_after_readout_drive": waittime_after_readout_drive,
-            "waittime": waittime,
-            "buffer_after_pi_pulse": buffer_after_pi_pulse,
+            "waittime_after_capture_window": waittime_after_capture_window,
+            "waittime_after_ctrl_pulse": waittime_after_ctrl_pulse,
             "dephasing_n_shots": dephasing_n_shots,
             "n_train": n_train,
             "n_test": n_test,
