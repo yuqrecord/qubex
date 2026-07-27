@@ -197,6 +197,7 @@ def run_readout_induced_dephasing(
     readout_ramptime: float | None,
     ramsey_phase_range,
     waittime_after_readout_drive: float,
+    buffer_after_pi_pulse: float,
     n_shots: int,
     shot_interval: float,
     plot_pulse_schedule: bool = True,
@@ -206,7 +207,7 @@ def run_readout_induced_dephasing(
 
     For each phase in `ramsey_phase_range` the sequence is
 
-        x90 -- [readout drive + wait] -- x90(phase) -- calibrated readout
+        x90 -- [readout drive + wait] -- x90(phase) -- wait -- calibrated readout
 
     built from the DRAG half-pi pulse. The injected drive generates a capture
     window that is ignored by the analysis; the last capture is the final
@@ -253,6 +254,7 @@ def run_readout_induced_dephasing(
             s.add(resonator, readout_pulse)
             s.barrier()
             s.add(qubit, hpi.shifted(float(phase)))
+            s.add(qubit, qx.Pulse.blank(buffer_after_pi_pulse))
             s.barrier()
             s.add(resonator, final_readout_pulse)
         if plot_pulse_schedule and index == 0:
@@ -288,7 +290,7 @@ def run_post_selected_snr(
     readout_duration: float | None,
     readout_ramptime: float | None,
     waittime_after_readout_drive: float,
-    waittime: float,
+    waittime_between_readout_pulses: float,
     buffer_after_pi_pulse: float,
     n_train: int,
     n_test: int,
@@ -315,7 +317,9 @@ def run_post_selected_snr(
         waittime_after_readout_drive,
         name="waittime_after_readout_drive",
     )
-    _validate_time_on_grid(waittime, name="waittime")
+    _validate_time_on_grid(
+        waittime_between_readout_pulses, name="waittime_between_readout_pulses"
+    )
     _validate_time_on_grid(buffer_after_pi_pulse, name="buffer_after_pi_pulse")
     _validate_positive_int(n_train, name="n_train", minimum=2)
     _validate_positive_int(n_test, name="n_test", minimum=2)
@@ -333,7 +337,7 @@ def run_post_selected_snr(
         exp,
         target=target,
         readout_pulse=readout_pulse,
-        waittime=waittime,
+        waittime=waittime_between_readout_pulses,
         buffer_after_pi_pulse=buffer_after_pi_pulse,
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
@@ -621,6 +625,7 @@ def analyze_post_selected_quantum_efficiency(
             n_train=n_train,
             n_test=n_test,
             n_max_epoch=n_max_epoch,
+            verbose=False,
         )
         for snr_run in snr_run_results
     ]
@@ -1109,12 +1114,12 @@ def post_selected_quantum_efficiency_experiment(
     readout_ramptime: float | None,
     ramsey_phase_range,
     waittime_after_readout_drive: float,
-    waittime: float,
+    waittime_between_readout_pulses: float,
     buffer_after_pi_pulse: float,
     dephasing_n_shots: int,
     n_train: int,
     n_test: int,
-    n_max_epoch: int,
+    n_max_epoch: int = 10,
     shot_interval: float,
     plot: bool = True,
     plot_pulse_schedule: bool = True,
@@ -1149,7 +1154,8 @@ def post_selected_quantum_efficiency_experiment(
                 waittime_after_readout_drive=waittime_after_readout_drive,
                 n_shots=dephasing_n_shots,
                 shot_interval=shot_interval,
-                plot_pulse_schedule=plot_pulse_schedule and not pulse_schedule_is_plotted,
+                plot_pulse_schedule=plot_pulse_schedule
+                and not pulse_schedule_is_plotted,
             )
         )
         pulse_schedule_is_plotted = True
@@ -1164,12 +1170,13 @@ def post_selected_quantum_efficiency_experiment(
                 readout_duration=readout_duration,
                 readout_ramptime=readout_ramptime,
                 waittime_after_readout_drive=waittime_after_readout_drive,
-                waittime=waittime,
+                watitime_between_readout_pulses=waittime_between_readout_pulses,
                 buffer_after_pi_pulse=buffer_after_pi_pulse,
                 n_train=n_train,
                 n_test=n_test,
                 shot_interval=shot_interval,
-                plot_pulse_schedule=plot_pulse_schedule and not pulse_schedule_is_plotted,
+                plot_pulse_schedule=plot_pulse_schedule
+                and not pulse_schedule_is_plotted,
             )
         )
         pulse_schedule_is_plotted = True
