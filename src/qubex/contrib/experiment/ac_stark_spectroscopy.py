@@ -525,9 +525,11 @@ def run_ac_stark_spectroscopy(
     -------
     dict[str, Any]
         Raw acquisition data with keys ``detuning_range``,
-        ``frequency_range``, ``iq``, labels, ``nominal_frequency``
-        (the calibrated ge transition frequency), and an echo of the
-        drive parameters.
+        ``frequency_range``, ``iq``, ``measure_results`` (the list of raw
+        ``MultipleMeasureResult`` objects returned by
+        ``Experiment.execute``, one per detuning point), labels,
+        ``nominal_frequency`` (the calibrated ge transition frequency),
+        and an echo of the drive parameters.
     """
     _validate_run_parameters(
         qubit_initial_state=qubit_initial_state,
@@ -557,6 +559,7 @@ def run_ac_stark_spectroscopy(
     resonator_frequency = float(exp.ctx.targets[read_label].frequency)
 
     iq_values: list[complex] = []
+    measure_results: list[MultipleMeasureResult] = []
     for index, detuning in enumerate(
         tqdm(
             detuning_range,
@@ -597,6 +600,7 @@ def run_ac_stark_spectroscopy(
             shot_interval=shot_interval,
             reset_awg_and_capunits=reset_first and index == 0,
         )
+        measure_results.append(measure_result)
         iq_values.append(
             _extract_readout_iq(
                 measure_result,
@@ -616,6 +620,7 @@ def run_ac_stark_spectroscopy(
         "detuning_range": detuning_range,
         "frequency_range": nominal_frequency + detuning_range,
         "iq": np.asarray(iq_values, dtype=complex),
+        "measure_results": measure_results,
         "qubit_drive_amplitude": qubit_drive_amplitude,
         "qubit_drive_duration": qubit_drive_duration,
         "qubit_drive_ramptime": qubit_drive_ramptime,
@@ -906,7 +911,12 @@ def ac_stark_spectroscopy(
     -------
     Result
         Result with ``data`` (axes, raw spectra, fits and derived
-        quantities; see the module docstring) and ``figures``.
+        quantities; see the module docstring) and ``figures``. The
+        ``data["raw"]`` entry holds the unprocessed
+        ``MultipleMeasureResult`` objects from ``Experiment.execute`` as
+        object arrays: ``measure_results`` (state, amplitude, offset,
+        detuning) and ``no_drive_measure_results`` (state, offset,
+        detuning).
     """
     if isinstance(qubit_initial_states, str):
         states = [qubit_initial_states]
@@ -965,6 +975,12 @@ def ac_stark_spectroscopy(
     r2 = np.full((n_states, n_amplitudes, n_offsets), np.nan)
     fit_valid = np.zeros((n_states, n_amplitudes, n_offsets), dtype=bool)
     fit_results = np.empty((n_states, n_amplitudes, n_offsets), dtype=object)
+    raw_measure_results = np.empty(
+        (n_states, n_amplitudes, n_offsets, n_detunings), dtype=object
+    )
+    no_drive_measure_results = np.empty(
+        (n_states, n_offsets, n_detunings), dtype=object
+    )
     no_drive_iq = np.full((n_states, n_offsets, n_detunings), np.nan, dtype=complex)
     no_drive_normalized = np.full((n_states, n_offsets, n_detunings), np.nan)
     reference_f0 = np.full((n_states, n_offsets), np.nan)
@@ -1016,6 +1032,7 @@ def ac_stark_spectroscopy(
                 rabi_param=rabi_param,
             )
             reference_point = (state_index, offset_index)
+            no_drive_measure_results[reference_point] = reference_run["measure_results"]
             no_drive_iq[reference_point] = reference_run["iq"]
             no_drive_normalized[reference_point] = reference_analysis["normalized"]
             reference_f0[reference_point] = reference_analysis["f0"]
@@ -1060,6 +1077,7 @@ def ac_stark_spectroscopy(
                     rabi_param=rabi_param,
                 )
                 point = (state_index, amplitude_index, offset_index)
+                raw_measure_results[point] = run_result["measure_results"]
                 iq[point] = run_result["iq"]
                 normalized[point] = analysis["normalized"]
                 f0[point] = analysis["f0"]
@@ -1132,6 +1150,10 @@ def ac_stark_spectroscopy(
             "normalized": normalized,
             "no_drive_iq": no_drive_iq,
             "no_drive_normalized": no_drive_normalized,
+        },
+        "raw": {
+            "measure_results": raw_measure_results,
+            "no_drive_measure_results": no_drive_measure_results,
         },
         "fit": {
             "f0": f0,
