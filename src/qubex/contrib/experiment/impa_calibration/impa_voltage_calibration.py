@@ -167,32 +167,48 @@ def plot_impa_voltage_calibration(
         width=600,
         height=400,
     )
-    # Plot shifted phase
-    fig_shifted_phase = viz.make_figure()
-    fig_shifted_phase.add_scatter(
+    # Plot phase
+    fig_phase = viz.make_figure()
+    fig_phase.add_scatter(
         x=voltage_range,
         y=shifted_phase,
         mode="lines+markers",
-        name="Shifted Phase (rad)",
+        name="Phase (rad)",
     )
     if best_peak_voltage is not None:
-        fig_shifted_phase.add_vline(
+        fig_phase.add_vline(
             x=best_peak_voltage,
             line=dict(color="black", dash="dash"),
             annotation_text=f"Best Peak Voltage: {best_peak_voltage:.3f} V",
             annotation_position="top right",
         )
-    fig_shifted_phase.update_layout(
-        title=f"IMPA Voltage Calibration - Shifted Phase for {target}",
+    fig_phase.update_layout(
+        title=f"IMPA Voltage Calibration - Phase for {target}",
         xaxis_title="Voltage (V)",
-        yaxis_title="Shifted Phase (rad)",
+        yaxis_title="Phase (rad)",
+        width=600,
+        height=400,
+    )
+    # Plot phase difference
+    fig_phase_diff = viz.make_figure()
+    fig_phase_diff.add_scatter(
+        x=0.5 * (voltage_range[:-1] + voltage_range[1:]),
+        y=np.diff(shifted_phase),
+        mode="lines+markers",
+        name="Phase Difference (rad)",
+    )
+    fig_phase_diff.update_layout(
+        title=f"IMPA Voltage Calibration - Phase Difference for {target}",
+        xaxis_title="Voltage (V)",
+        yaxis_title="Phase Difference (rad)",
         width=600,
         height=400,
     )
     return {
         "amplitude": fig_amplitude,
         "iq_plane": fig_iq,
-        "shifted_phase": fig_shifted_phase,
+        "phase": fig_phase,
+        "phase_difference": fig_phase_diff,
     }
 
 
