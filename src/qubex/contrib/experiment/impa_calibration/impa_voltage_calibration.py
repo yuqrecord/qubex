@@ -47,6 +47,7 @@ def run_impa_voltage_calibration(
     with blank_schedule as ps:
         ps.add(qubit, qx.pulse.Blank(0))
     original_voltage = dc_bias_controller.voltage(mux=mux)
+    print(f"Original voltage for mux '{mux}': {original_voltage} V")
     results = []
     for voltage in voltage_range:
         dc_bias_controller.voltage(mux=mux, voltage_in_volts=voltage)
@@ -59,6 +60,9 @@ def run_impa_voltage_calibration(
         )
         results.append(result)
     dc_bias_controller.voltage(mux=mux, voltage_in_volts=original_voltage)
+    print(
+        f"Voltage for mux '{mux}' restored to original value: {dc_bias_controller.voltage(mux=mux)} V"
+    )
     return results
 
 
