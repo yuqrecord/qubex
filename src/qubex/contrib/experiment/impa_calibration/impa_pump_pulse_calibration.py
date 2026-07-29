@@ -396,11 +396,19 @@ def plot_impa_pump_pulse_calibration(
     best_pump_amplitude = analysis_result["best_pump_amplitude"]
 
     # Plot SNR gain heatmap
+    # Clamp the color range at 0 dB so that all non-positive gains share
+    # the same color.
+    finite_gain_db = snr_gain_db[np.isfinite(snr_gain_db)]
+    gain_zmax = float(finite_gain_db.max()) if finite_gain_db.size > 0 else 1.0
+    if gain_zmax <= 0.0:
+        gain_zmax = 1.0
     fig_snr_gain = viz.make_figure()
     fig_snr_gain.add_heatmap(
         x=pump_amplitude_range,
         y=pump_frequency_range,
         z=snr_gain_db,
+        zmin=0.0,
+        zmax=gain_zmax,
         colorscale="Viridis",
         colorbar=dict(title=dict(text="SNR gain (dB)", side="right")),
     )
