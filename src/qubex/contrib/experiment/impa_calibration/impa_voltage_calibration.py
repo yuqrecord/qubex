@@ -4,6 +4,7 @@ This module provides functions to perform IMPA voltage calibration.
 This module assumes that an external instance `dc_bias_controller` is provided, which has the following methods:
 - `validate_voltage(voltage: float)`: Validates if the given voltage is within the acceptable range for the DC bias controller.
 - `voltage(mux: str, voltage_in_volts: float = None)`: Gets or sets the voltage for the specified multiplexer (mux).
+- `voltage_sweep_rate(mux: str, rate_in_volts_per_second: float = None)`: Gets or sets the voltage sweep rate for the specified multiplexer (mux).
 """
 
 import qubex as qx
@@ -22,6 +23,10 @@ def _validate_dc_bias_controller(dc_bias_controller) -> None:
     if not hasattr(dc_bias_controller, "voltage"):
         raise ValueError(
             "The provided dc_bias_controller does not have a 'voltage' method."
+        )
+    if not hasattr(dc_bias_controller, "voltage_sweep_rate"):
+        raise ValueError(
+            "The provided dc_bias_controller does not have a 'voltage_sweep_rate' method."
         )
 
 
@@ -48,6 +53,9 @@ def run_impa_voltage_calibration(
         ps.add(qubit, qx.pulse.Blank(0))
     original_voltage = dc_bias_controller.voltage(mux=mux)
     print(f"Original voltage for mux '{mux}': {original_voltage} V")
+    print(
+        f"Voltage sweep rate for mux '{mux}': {dc_bias_controller.voltage_sweep_rate(mux=mux)} V/s"
+    )
     results = []
     for voltage in voltage_range:
         dc_bias_controller.voltage(mux=mux, voltage_in_volts=voltage)
