@@ -1,6 +1,11 @@
 """
 This module provides functions to perform IMPA voltage calibration.
 
+The voltage sweep is performed in the order of `voltage_range` (forward sweep).
+If `enable_backward_sweep` is True, the sweep is repeated in the reversed order
+(backward sweep) to check for hysteresis, and the forward and backward sweeps
+are plotted together in the same figures.
+
 This module assumes that an external instance `dc_bias_controller` is provided, which has the following methods:
 - `validate_voltage(voltage: float)`: Validates if the given voltage is within the acceptable range for the DC bias controller.
 - `voltage(mux: str, voltage_in_volts: float = None)`: Gets or sets the voltage for the specified multiplexer (mux).
@@ -12,7 +17,6 @@ from qubex.experiment.models import Result
 import qubex.visualization as viz
 import numpy as np
 from numpy.typing import ArrayLike
-import scipy
 
 
 def _validate_dc_bias_controller(dc_bias_controller) -> None:
@@ -41,11 +45,13 @@ def run_impa_voltage_calibration(
     target: str,
     dc_bias_controller,
     voltage_range: ArrayLike,
+    enable_backward_sweep: bool,
     shot_interval: float,
     n_shots: int,
 ):
     _validate_dc_bias_controller(dc_bias_controller)
     _validate_voltage_range(dc_bias_controller, voltage_range)
+    voltage_range = np.atleast_1d(np.asarray(voltage_range, dtype=float))
     qubit = exp.ctx.resolve_qubit_label(target)
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     blank_schedule = qx.PulseSchedule()
@@ -56,22 +62,31 @@ def run_impa_voltage_calibration(
     print(
         f"Voltage sweep rate for mux '{mux}': {dc_bias_controller.voltage_sweep_rate(mux=mux)} V/s"
     )
-    results = []
-    for voltage in voltage_range:
+
+    def measure_at(voltage):
         dc_bias_controller.voltage(mux=mux, voltage_in_volts=voltage)
-        result = exp.measure(
+        return exp.measure(
             sequence=blank_schedule,
             mode="avg",
             time_integration=True,
             shot_interval=shot_interval,
             n_shots=n_shots,
         )
-        results.append(result)
+
+    results_forward = [measure_at(voltage) for voltage in voltage_range]
+    results_backward = (
+        [measure_at(voltage) for voltage in voltage_range[::-1]]
+        if enable_backward_sweep
+        else None
+    )
     dc_bias_controller.voltage(mux=mux, voltage_in_volts=original_voltage)
     print(
         f"Voltage for mux '{mux}' restored to original value: {dc_bias_controller.voltage(mux=mux)} V"
     )
-    return results
+    return {
+        "results_forward": results_forward,
+        "results_backward": results_backward,
+    }
 
 
 def analyze_impa_voltage_calibration(
@@ -81,48 +96,55 @@ def analyze_impa_voltage_calibration(
     voltage_range: ArrayLike,
     run_result,
 ):
-    iq_data = np.array([res.data[target].raw for res in run_result])
-    amplitude = np.abs(iq_data)
-    phase = np.angle(iq_data)
+    iq_data_forward = np.array(
+        [res.data[target].raw for res in run_result["results_forward"]]
+    )
+    amplitude_forward = np.abs(iq_data_forward)
+    phase_forward = np.angle(iq_data_forward)
+    results_backward = run_result["results_backward"]
+    if results_backward is not None:
+        iq_data_backward = np.array([res.data[target].raw for res in results_backward])
+        amplitude_backward = np.abs(iq_data_backward)
+        phase_backward = np.angle(iq_data_backward)
+        phase_list = [phase_forward, phase_backward]
+    else:
+        iq_data_backward = None
+        amplitude_backward = None
+        phase_backward = None
+        phase_list = [phase_forward]
+    # Find a common branch cut so that both sweeps share the same phase offset.
     min_val = 1e20
     phase_offset = 0.0
     for start_phase in np.arange(-np.pi, np.pi, np.pi / 32):
-        buf = np.abs(
-            np.diff(np.where(phase > start_phase, phase - 2 * np.pi, phase))
-        ).sum()
+        buf = sum(
+            np.abs(
+                np.diff(np.where(phase > start_phase, phase - 2 * np.pi, phase))
+            ).sum()
+            for phase in phase_list
+        )
         if buf < min_val:
             min_val = buf
             phase_offset = start_phase
-    shifted_phase = np.where(phase > phase_offset, phase - 2 * np.pi, phase)
-    peak_idxes, _ = scipy.signal.find_peaks(
-        -shifted_phase, height=-0.5 * (np.max(shifted_phase) + np.min(shifted_phase))
+    shifted_phase_forward = np.where(
+        phase_forward > phase_offset, phase_forward - 2 * np.pi, phase_forward
     )
-    num_peaks = len(peak_idxes)
-    peak_shifted_phases = shifted_phase[peak_idxes] if num_peaks > 0 else np.array([])
-    peak_voltages = voltage_range[peak_idxes] if num_peaks > 0 else np.array([])
-    peak_phases = phase[peak_idxes] if num_peaks > 0 else np.array([])
-    best_peak_idx = np.argmin(np.abs(peak_voltages)) if num_peaks > 0 else None
-    best_peak_shifted_phase = (
-        peak_shifted_phases[best_peak_idx] if best_peak_idx is not None else None
+    shifted_phase_backward = (
+        np.where(
+            phase_backward > phase_offset, phase_backward - 2 * np.pi, phase_backward
+        )
+        if phase_backward is not None
+        else None
     )
-    best_peak_voltage = (
-        peak_voltages[best_peak_idx] if best_peak_idx is not None else None
-    )
-    best_peak_phase = peak_phases[best_peak_idx] if best_peak_idx is not None else None
     return {
-        "iq_data": iq_data,
-        "amplitude": amplitude,
-        "phase": phase,
+        "iq_data_forward": iq_data_forward,
+        "amplitude_forward": amplitude_forward,
+        "phase_forward": phase_forward,
+        "shifted_phase_forward": shifted_phase_forward,
+        "iq_data_backward": iq_data_backward,
+        "amplitude_backward": amplitude_backward,
+        "phase_backward": phase_backward,
+        "shifted_phase_backward": shifted_phase_backward,
         "phase_offset": phase_offset,
-        "shifted_phase": shifted_phase,
-        "peak_idxes": peak_idxes,
-        "peak_shifted_phases": peak_shifted_phases,
-        "peak_voltages": peak_voltages,
-        "peak_phases": peak_phases,
-        "best_peak_idx": best_peak_idx,
-        "best_peak_shifted_phase": best_peak_shifted_phase,
-        "best_peak_voltage": best_peak_voltage,
-        "best_peak_phase": best_peak_phase,
     }
 
 
@@ -133,20 +155,31 @@ def plot_impa_voltage_calibration(
     voltage_range: ArrayLike,
     analysis_result,
 ):
-    amplitude = analysis_result["amplitude"]
-    phase = analysis_result["phase"]
+    voltage_range = np.atleast_1d(np.asarray(voltage_range, dtype=float))
+    backward_voltage_range = voltage_range[::-1]
+    amplitude_forward = analysis_result["amplitude_forward"]
+    phase_forward = analysis_result["phase_forward"]
+    shifted_phase_forward = analysis_result["shifted_phase_forward"]
+    amplitude_backward = analysis_result["amplitude_backward"]
+    phase_backward = analysis_result["phase_backward"]
+    shifted_phase_backward = analysis_result["shifted_phase_backward"]
     phase_offset = analysis_result["phase_offset"]
-    shifted_phase = analysis_result["shifted_phase"]
-    best_peak_voltage = analysis_result["best_peak_voltage"]
 
     # Plot amplitude
     fig_amplitude = viz.make_figure()
     fig_amplitude.add_scatter(
         x=voltage_range,
-        y=amplitude,
+        y=amplitude_forward,
         mode="lines+markers",
-        name="Amplitude (a.u.)",
+        name="Forward",
     )
+    if amplitude_backward is not None:
+        fig_amplitude.add_scatter(
+            x=backward_voltage_range,
+            y=amplitude_backward,
+            mode="lines+markers",
+            name="Backward",
+        )
     fig_amplitude.update_layout(
         title=f"IMPA Voltage Calibration - Amplitude for {target}",
         xaxis_title="Voltage (V)",
@@ -155,19 +188,29 @@ def plot_impa_voltage_calibration(
         height=400,
     )
     # Plot IQ-plane
+    max_amplitude = np.max(amplitude_forward)
+    if amplitude_backward is not None:
+        max_amplitude = max(max_amplitude, np.max(amplitude_backward))
     fig_iq = viz.make_figure()
     fig_iq.add_scatter(
-        x=amplitude * np.cos(phase),
-        y=amplitude * np.sin(phase),
+        x=amplitude_forward * np.cos(phase_forward),
+        y=amplitude_forward * np.sin(phase_forward),
         mode="lines+markers",
-        name="IQ-plane",
+        name="Forward",
     )
+    if amplitude_backward is not None:
+        fig_iq.add_scatter(
+            x=amplitude_backward * np.cos(phase_backward),
+            y=amplitude_backward * np.sin(phase_backward),
+            mode="lines+markers",
+            name="Backward",
+        )
     fig_iq.add_shape(
         type="line",
         x0=0,
         y0=0,
-        x1=np.max(amplitude) * np.cos(phase_offset),
-        y1=np.max(amplitude) * np.sin(phase_offset),
+        x1=max_amplitude * np.cos(phase_offset),
+        y1=max_amplitude * np.sin(phase_offset),
         line=dict(color="black", dash="dash"),
         name="Phase Offset",
     )
@@ -183,16 +226,16 @@ def plot_impa_voltage_calibration(
     fig_phase = viz.make_figure()
     fig_phase.add_scatter(
         x=voltage_range,
-        y=shifted_phase,
+        y=shifted_phase_forward,
         mode="lines+markers",
-        name="Phase (rad)",
+        name="Forward",
     )
-    if best_peak_voltage is not None:
-        fig_phase.add_vline(
-            x=best_peak_voltage,
-            line=dict(color="black", dash="dash"),
-            annotation_text=f"Best Peak Voltage: {best_peak_voltage:.3f} V",
-            annotation_position="top right",
+    if shifted_phase_backward is not None:
+        fig_phase.add_scatter(
+            x=backward_voltage_range,
+            y=shifted_phase_backward,
+            mode="lines+markers",
+            name="Backward",
         )
     fig_phase.update_layout(
         title=f"IMPA Voltage Calibration - Phase for {target}",
@@ -205,10 +248,17 @@ def plot_impa_voltage_calibration(
     fig_phase_diff = viz.make_figure()
     fig_phase_diff.add_scatter(
         x=0.5 * (voltage_range[:-1] + voltage_range[1:]),
-        y=np.diff(shifted_phase),
+        y=np.diff(shifted_phase_forward),
         mode="lines+markers",
-        name="Phase Difference (rad)",
+        name="Forward",
     )
+    if shifted_phase_backward is not None:
+        fig_phase_diff.add_scatter(
+            x=0.5 * (backward_voltage_range[:-1] + backward_voltage_range[1:]),
+            y=np.diff(shifted_phase_backward),
+            mode="lines+markers",
+            name="Backward",
+        )
     fig_phase_diff.update_layout(
         title=f"IMPA Voltage Calibration - Phase Difference for {target}",
         xaxis_title="Voltage (V)",
@@ -233,14 +283,7 @@ def display_impa_voltage_calibration(
         for fig in (result.figures or {}).values():
             fig.show()
     print("IMPA Voltage Calibration Result:")
-    print(f"Peak Voltages (V): {result.data['analysis']['peak_voltages']}")
-    print(
-        f"Peak Shifted Phases (rad): {result.data['analysis']['peak_shifted_phases']}"
-    )
-    print(f"Best Peak Voltage (V): {result.data['analysis']['best_peak_voltage']}")
-    print(
-        f"Best Peak Shifted Phase (rad): {result.data['analysis']['best_peak_shifted_phase']}"
-    )
+    print(f"Phase Offset (rad): {result.data['analysis']['phase_offset']}")
 
 
 def impa_voltage_calibration(
@@ -249,6 +292,7 @@ def impa_voltage_calibration(
     target: str,
     dc_bias_controller,
     voltage_range: ArrayLike,
+    enable_backward_sweep: bool,
     shot_interval: float,
     n_shots: int,
     plot: bool = True,
@@ -260,6 +304,7 @@ def impa_voltage_calibration(
         target=target,
         dc_bias_controller=dc_bias_controller,
         voltage_range=voltage_range,
+        enable_backward_sweep=enable_backward_sweep,
         shot_interval=shot_interval,
         n_shots=n_shots,
     )
