@@ -40,6 +40,12 @@ rows is compensated. The pump frequency is applied per row with
 is the PUMP channel label; the pump-on schedules depend only on the pump
 amplitude and are reused across rows.
 
+The DC bias voltage is the outermost sweep axis: ``voltage_range``
+accepts a scalar or a list, and the full pump frequency x amplitude
+sweep (including the pump-off reference) is repeated for each voltage.
+The best (voltage, frequency, amplitude) combination over all sweeps is
+reported.
+
 Pump LO control
 ---------------
 The sweep frequencies are grouped into consecutive subranges such that
@@ -85,7 +91,7 @@ Example
         pump_ramptime=32.0,
         readout_amplitude=None,
         dc_bias_controller=dc_bias_controller,
-        voltage=0.1,
+        voltage_range=0.1,
         shot_interval=150 * 1024,
         n_shots=1024,
     )
@@ -198,13 +204,18 @@ def run_impa_pump_pulse_calibration(
     pump_ramptime: float,
     readout_amplitude: float | None,
     dc_bias_controller,
-    voltage: float,
+    voltage_range: ArrayLike,
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
 ):
     _validate_dc_bias_controller(dc_bias_controller)
-    _validate_voltage_range(dc_bias_controller, [voltage])
+    voltage_range = np.atleast_1d(np.asarray(voltage_range, dtype=float))
+    if voltage_range.size == 0:
+        raise ValueError("voltage_range must not be empty.")
+    if not np.all(np.isfinite(voltage_range)):
+        raise ValueError("voltage_range must contain only finite values.")
+    _validate_voltage_range(dc_bias_controller, voltage_range)
     pump_frequency_range = np.atleast_1d(np.asarray(pump_frequency_range, dtype=float))
     pump_amplitude_range = np.atleast_1d(np.asarray(pump_amplitude_range, dtype=float))
     if exp.system_manager.backend_kind == BACKEND_KIND_QUEL3:
@@ -342,48 +353,65 @@ def run_impa_pump_pulse_calibration(
         f"Voltage sweep rate for mux '{mux}': {dc_bias_controller.voltage_sweep_rate(mux=mux)} V/s"
     )
     try:
-        dc_bias_controller.voltage(mux=mux, voltage_in_volts=voltage)
-        with tqdm(
-            total=len(pump_frequency_range),
-            desc=f"IMPA pump pulse calibration : {target}",
-        ) as progress_bar:
-            for subrange, lo, cnco, f_mix in pump_lo_groups:
-                print(
-                    f"Pump LO = {lo / 1e9} GHz, CNCO = {cnco / 1e9} GHz "
-                    f"(mixing frequency {f_mix / 1e9} GHz) for "
-                    f"{subrange[0]}-{subrange[-1]} GHz"
-                )
-                with exp.system_manager.modified_backend_settings(
-                    label=mux,
-                    lo_freq=lo,
-                    cnco_freq=cnco,
-                    fnco_freq=0,
-                ):
-                    for frequency in subrange:
-                        with exp.modified_frequencies({mux: float(frequency)}):
-                            # Pump-off reference per frequency row (drift tracking).
-                            results_readout_off_pump_off.append(
-                                execute(ps_readout_off_pump_off)
-                            )
-                            results_readout_on_pump_off.append(
-                                execute(ps_readout_on_pump_off)
-                            )
-                            row_readout_off_pump_on = []
-                            row_readout_on_pump_on = []
-                            for ps_readout_off_pump_on, ps_readout_on_pump_on in zip(
-                                ps_readout_off_pump_on_list,
-                                ps_readout_on_pump_on_list,
-                                strict=True,
-                            ):
-                                row_readout_off_pump_on.append(
-                                    execute(ps_readout_off_pump_on)
+        for voltage in voltage_range:
+            dc_bias_controller.voltage(mux=mux, voltage_in_volts=float(voltage))
+            v_results_readout_off_pump_off = []
+            v_results_readout_on_pump_off = []
+            v_results_readout_off_pump_on = []
+            v_results_readout_on_pump_on = []
+            with tqdm(
+                total=len(pump_frequency_range),
+                desc=f"IMPA pump pulse calibration : {target}, {voltage} V",
+            ) as progress_bar:
+                for subrange, lo, cnco, f_mix in pump_lo_groups:
+                    print(
+                        f"Pump LO = {lo / 1e9} GHz, CNCO = {cnco / 1e9} GHz "
+                        f"(mixing frequency {f_mix / 1e9} GHz) for "
+                        f"{subrange[0]}-{subrange[-1]} GHz"
+                    )
+                    with exp.system_manager.modified_backend_settings(
+                        label=mux,
+                        lo_freq=lo,
+                        cnco_freq=cnco,
+                        fnco_freq=0,
+                    ):
+                        for frequency in subrange:
+                            with exp.modified_frequencies({mux: float(frequency)}):
+                                # Pump-off reference per frequency row
+                                # (drift tracking).
+                                v_results_readout_off_pump_off.append(
+                                    execute(ps_readout_off_pump_off)
                                 )
-                                row_readout_on_pump_on.append(
-                                    execute(ps_readout_on_pump_on)
+                                v_results_readout_on_pump_off.append(
+                                    execute(ps_readout_on_pump_off)
                                 )
-                            results_readout_off_pump_on.append(row_readout_off_pump_on)
-                            results_readout_on_pump_on.append(row_readout_on_pump_on)
-                        progress_bar.update(1)
+                                row_readout_off_pump_on = []
+                                row_readout_on_pump_on = []
+                                for (
+                                    ps_readout_off_pump_on,
+                                    ps_readout_on_pump_on,
+                                ) in zip(
+                                    ps_readout_off_pump_on_list,
+                                    ps_readout_on_pump_on_list,
+                                    strict=True,
+                                ):
+                                    row_readout_off_pump_on.append(
+                                        execute(ps_readout_off_pump_on)
+                                    )
+                                    row_readout_on_pump_on.append(
+                                        execute(ps_readout_on_pump_on)
+                                    )
+                                v_results_readout_off_pump_on.append(
+                                    row_readout_off_pump_on
+                                )
+                                v_results_readout_on_pump_on.append(
+                                    row_readout_on_pump_on
+                                )
+                            progress_bar.update(1)
+            results_readout_off_pump_off.append(v_results_readout_off_pump_off)
+            results_readout_on_pump_off.append(v_results_readout_on_pump_off)
+            results_readout_off_pump_on.append(v_results_readout_off_pump_on)
+            results_readout_on_pump_on.append(v_results_readout_on_pump_on)
     finally:
         dc_bias_controller.voltage(mux=mux, voltage_in_volts=original_voltage)
         print(
@@ -398,7 +426,7 @@ def run_impa_pump_pulse_calibration(
         "pump_buffer_time": pump_buffer_time,
         "pump_ramptime": pump_ramptime,
         "readout_amplitude": readout_amplitude,
-        "voltage": voltage,
+        "voltage_range": voltage_range,
         "shot_interval": shot_interval,
         "n_shots": n_shots,
         "pump_lo_subranges": [
@@ -424,33 +452,35 @@ def analyze_impa_pump_pulse_calibration(
     target: str,
     pump_frequency_range: ArrayLike,
     pump_amplitude_range: ArrayLike,
+    voltage_range: ArrayLike,
     run_result,
 ):
     pump_frequency_range = np.atleast_1d(np.asarray(pump_frequency_range, dtype=float))
     pump_amplitude_range = np.atleast_1d(np.asarray(pump_amplitude_range, dtype=float))
+    voltage_range = np.atleast_1d(np.asarray(voltage_range, dtype=float))
     qubit = exp.ctx.resolve_qubit_label(target)
     iq_readout_off_pump_off = np.array(
         [
-            _extract_iq_shots(res, qubit=qubit)
-            for res in run_result["results_readout_off_pump_off"]
+            [_extract_iq_shots(res, qubit=qubit) for res in rows]
+            for rows in run_result["results_readout_off_pump_off"]
         ]
     )
     iq_readout_on_pump_off = np.array(
         [
-            _extract_iq_shots(res, qubit=qubit)
-            for res in run_result["results_readout_on_pump_off"]
+            [_extract_iq_shots(res, qubit=qubit) for res in rows]
+            for rows in run_result["results_readout_on_pump_off"]
         ]
     )
     iq_readout_off_pump_on = np.array(
         [
-            [_extract_iq_shots(res, qubit=qubit) for res in row]
-            for row in run_result["results_readout_off_pump_on"]
+            [[_extract_iq_shots(res, qubit=qubit) for res in row] for row in rows]
+            for rows in run_result["results_readout_off_pump_on"]
         ]
     )
     iq_readout_on_pump_on = np.array(
         [
-            [_extract_iq_shots(res, qubit=qubit) for res in row]
-            for row in run_result["results_readout_on_pump_on"]
+            [[_extract_iq_shots(res, qubit=qubit) for res in row] for row in rows]
+            for rows in run_result["results_readout_on_pump_on"]
         ]
     )
 
@@ -466,21 +496,26 @@ def analyze_impa_pump_pulse_calibration(
     with np.errstate(divide="ignore", invalid="ignore"):
         snr_off = signal_off / noise_off
         snr_on = signal_on / noise_on
-        snr_gain = snr_on / snr_off[:, np.newaxis]
+        snr_gain = snr_on / snr_off[:, :, np.newaxis]
         snr_gain_db = 20 * np.log10(snr_gain)
     invalid_reference = ~np.isfinite(snr_off) | (snr_off <= 0)
     if np.any(invalid_reference):
+        invalid_points = [
+            (float(voltage_range[i]), float(pump_frequency_range[j]))
+            for i, j in zip(*np.where(invalid_reference), strict=True)
+        ]
         print(
             "[WARN] invalid pump-off reference SNR at "
-            f"{pump_frequency_range[invalid_reference]} GHz; "
-            "the SNR gain is NaN at the affected frequencies."
+            f"(voltage V, frequency GHz) = {invalid_points}; "
+            "the SNR gain is NaN at the affected points."
         )
-        snr_gain[invalid_reference, :] = np.nan
-        snr_gain_db[invalid_reference, :] = np.nan
+        snr_gain[invalid_reference] = np.nan
+        snr_gain_db[invalid_reference] = np.nan
     finite_snr_gain_db = np.where(np.isfinite(snr_gain_db), snr_gain_db, np.nan)
     if np.all(np.isnan(finite_snr_gain_db)):
         print("[WARN] no finite SNR gain value; the best point is undefined.")
         best_index = None
+        best_voltage = None
         best_pump_frequency = None
         best_pump_amplitude = None
         best_snr_gain_db = None
@@ -489,8 +524,9 @@ def analyze_impa_pump_pulse_calibration(
         best_index = np.unravel_index(
             np.nanargmax(finite_snr_gain_db), finite_snr_gain_db.shape
         )
-        best_pump_frequency = float(pump_frequency_range[best_index[0]])
-        best_pump_amplitude = float(pump_amplitude_range[best_index[1]])
+        best_voltage = float(voltage_range[best_index[0]])
+        best_pump_frequency = float(pump_frequency_range[best_index[1]])
+        best_pump_amplitude = float(pump_amplitude_range[best_index[2]])
         best_snr_gain_db = float(snr_gain_db[best_index])
         best_snr_on = float(snr_on[best_index])
     return {
@@ -511,6 +547,7 @@ def analyze_impa_pump_pulse_calibration(
         "snr_gain": snr_gain,
         "snr_gain_db": snr_gain_db,
         "best_index": best_index,
+        "best_voltage": best_voltage,
         "best_pump_frequency": best_pump_frequency,
         "best_pump_amplitude": best_pump_amplitude,
         "best_snr_gain_db": best_snr_gain_db,
@@ -524,85 +561,97 @@ def plot_impa_pump_pulse_calibration(
     target: str,
     pump_frequency_range: ArrayLike,
     pump_amplitude_range: ArrayLike,
+    voltage_range: ArrayLike,
     analysis_result,
 ):
     pump_frequency_range = np.atleast_1d(np.asarray(pump_frequency_range, dtype=float))
     pump_amplitude_range = np.atleast_1d(np.asarray(pump_amplitude_range, dtype=float))
+    voltage_range = np.atleast_1d(np.asarray(voltage_range, dtype=float))
     snr_gain_db = analysis_result["snr_gain_db"]
     snr_on = analysis_result["snr_on"]
     snr_off = analysis_result["snr_off"]
+    best_index = analysis_result["best_index"]
     best_pump_frequency = analysis_result["best_pump_frequency"]
     best_pump_amplitude = analysis_result["best_pump_amplitude"]
 
-    # Plot SNR gain heatmap
     # Clamp the color range at 0 dB so that all non-positive gains share
-    # the same color.
+    # the same color; the range is shared by all voltages for
+    # comparability.
     finite_gain_db = snr_gain_db[np.isfinite(snr_gain_db)]
     gain_zmax = float(finite_gain_db.max()) if finite_gain_db.size > 0 else 1.0
     if gain_zmax <= 0.0:
         gain_zmax = 1.0
-    fig_snr_gain = viz.make_figure()
-    fig_snr_gain.add_heatmap(
-        x=pump_amplitude_range,
-        y=pump_frequency_range,
-        z=snr_gain_db,
-        zmin=0.0,
-        zmax=gain_zmax,
-        colorscale="Viridis",
-        colorbar=dict(title=dict(text="SNR gain (dB)", side="right")),
-    )
-    if best_pump_amplitude is not None:
-        fig_snr_gain.add_scatter(
-            x=[best_pump_amplitude],
-            y=[best_pump_frequency],
-            mode="markers",
-            marker=dict(symbol="x", color="red", size=10),
-            name="Best",
-            showlegend=False,
+    figures = {}
+    for voltage_index, voltage in enumerate(voltage_range):
+        # Plot SNR gain heatmap
+        fig_snr_gain = viz.make_figure()
+        fig_snr_gain.add_heatmap(
+            x=pump_amplitude_range,
+            y=pump_frequency_range,
+            z=snr_gain_db[voltage_index],
+            zmin=0.0,
+            zmax=gain_zmax,
+            colorscale="Viridis",
+            colorbar=dict(title=dict(text="SNR gain (dB)", side="right")),
         )
-    fig_snr_gain.update_layout(
-        title=f"IMPA Pump Pulse Calibration - SNR Gain for {target}",
-        xaxis_title="Pump amplitude (a.u.)",
-        yaxis_title="Pump frequency (GHz)",
-        width=600,
-        height=400,
-    )
-    # Plot pump-on SNR heatmap
-    fig_snr_on = viz.make_figure()
-    fig_snr_on.add_heatmap(
-        x=pump_amplitude_range,
-        y=pump_frequency_range,
-        z=snr_on,
-        colorscale="Viridis",
-        colorbar=dict(title=dict(text="SNR (pump on)", side="right")),
-    )
-    fig_snr_on.update_layout(
-        title=f"IMPA Pump Pulse Calibration - Pump-on SNR for {target}",
-        xaxis_title="Pump amplitude (a.u.)",
-        yaxis_title="Pump frequency (GHz)",
-        width=600,
-        height=400,
-    )
-    # Plot pump-off reference SNR
-    fig_snr_off = viz.make_figure()
-    fig_snr_off.add_scatter(
-        x=pump_frequency_range,
-        y=snr_off,
-        mode="lines+markers",
-        name="SNR (pump off)",
-    )
-    fig_snr_off.update_layout(
-        title=f"IMPA Pump Pulse Calibration - Pump-off Reference SNR for {target}",
-        xaxis_title="Pump frequency (GHz)",
-        yaxis_title="SNR (pump off)",
-        width=600,
-        height=400,
-    )
-    return {
-        "snr_gain": fig_snr_gain,
-        "snr_on": fig_snr_on,
-        "snr_off": fig_snr_off,
-    }
+        if best_index is not None and best_index[0] == voltage_index:
+            fig_snr_gain.add_scatter(
+                x=[best_pump_amplitude],
+                y=[best_pump_frequency],
+                mode="markers",
+                marker=dict(symbol="x", color="red", size=10),
+                name="Best",
+                showlegend=False,
+            )
+        fig_snr_gain.update_layout(
+            title=(
+                f"IMPA Pump Pulse Calibration - SNR Gain for {target} at {voltage} V"
+            ),
+            xaxis_title="Pump amplitude (a.u.)",
+            yaxis_title="Pump frequency (GHz)",
+            width=600,
+            height=400,
+        )
+        # Plot pump-on SNR heatmap
+        fig_snr_on = viz.make_figure()
+        fig_snr_on.add_heatmap(
+            x=pump_amplitude_range,
+            y=pump_frequency_range,
+            z=snr_on[voltage_index],
+            colorscale="Viridis",
+            colorbar=dict(title=dict(text="SNR (pump on)", side="right")),
+        )
+        fig_snr_on.update_layout(
+            title=(
+                f"IMPA Pump Pulse Calibration - Pump-on SNR for {target} at {voltage} V"
+            ),
+            xaxis_title="Pump amplitude (a.u.)",
+            yaxis_title="Pump frequency (GHz)",
+            width=600,
+            height=400,
+        )
+        # Plot pump-off reference SNR
+        fig_snr_off = viz.make_figure()
+        fig_snr_off.add_scatter(
+            x=pump_frequency_range,
+            y=snr_off[voltage_index],
+            mode="lines+markers",
+            name="SNR (pump off)",
+        )
+        fig_snr_off.update_layout(
+            title=(
+                f"IMPA Pump Pulse Calibration - Pump-off Reference SNR for "
+                f"{target} at {voltage} V"
+            ),
+            xaxis_title="Pump frequency (GHz)",
+            yaxis_title="SNR (pump off)",
+            width=600,
+            height=400,
+        )
+        figures[f"snr_gain_{voltage_index}"] = fig_snr_gain
+        figures[f"snr_on_{voltage_index}"] = fig_snr_on
+        figures[f"snr_off_{voltage_index}"] = fig_snr_off
+    return figures
 
 
 def display_impa_pump_pulse_calibration(
@@ -619,19 +668,28 @@ def display_impa_pump_pulse_calibration(
     if best_index is None:
         print("No finite SNR gain value; the best point is undefined.")
         return
+    print(f"Best Voltage (V): {analysis['best_voltage']}")
     print(f"Best Pump Frequency (GHz): {analysis['best_pump_frequency']}")
     print(f"Best Pump Amplitude (a.u.): {analysis['best_pump_amplitude']}")
     print(f"Best SNR Gain (dB): {analysis['best_snr_gain_db']:.3f}")
     print(f"SNR (pump on) at Best Point: {analysis['best_snr_on']:.4f}")
-    print(f"SNR (pump off) at Best Frequency: {analysis['snr_off'][best_index[0]]:.4f}")
-    n_frequencies, n_amplitudes = analysis["snr_gain_db"].shape
-    if best_index[0] in (0, n_frequencies - 1) or best_index[1] in (
+    print(
+        "SNR (pump off) at Best Point: "
+        f"{analysis['snr_off'][best_index[0], best_index[1]]:.4f}"
+    )
+    n_voltages, n_frequencies, n_amplitudes = analysis["snr_gain_db"].shape
+    if best_index[1] in (0, n_frequencies - 1) or best_index[2] in (
         0,
         n_amplitudes - 1,
     ):
         print(
             "[WARN] The best point lies on the sweep boundary; "
             "consider extending the sweep range."
+        )
+    if n_voltages > 1 and best_index[0] in (0, n_voltages - 1):
+        print(
+            "[WARN] The best voltage lies on the sweep boundary; "
+            "consider extending the voltage range."
         )
 
 
@@ -645,14 +703,16 @@ def impa_pump_pulse_calibration(
     pump_ramptime: float,
     readout_amplitude: float | None,
     dc_bias_controller,
-    voltage: float,
+    voltage_range: ArrayLike,
     shot_interval: float,
     n_shots: int,
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ):
     _validate_dc_bias_controller(dc_bias_controller)
-    _validate_voltage_range(dc_bias_controller, [voltage])
+    _validate_voltage_range(
+        dc_bias_controller, np.atleast_1d(np.asarray(voltage_range, dtype=float))
+    )
     run_result = run_impa_pump_pulse_calibration(
         exp=exp,
         target=target,
@@ -662,18 +722,20 @@ def impa_pump_pulse_calibration(
         pump_ramptime=pump_ramptime,
         readout_amplitude=readout_amplitude,
         dc_bias_controller=dc_bias_controller,
-        voltage=voltage,
+        voltage_range=voltage_range,
         shot_interval=shot_interval,
         n_shots=n_shots,
         plot_pulse_schedule=plot_pulse_schedule,
     )
     pump_frequency_range = run_result["pump_frequency_range"]
     pump_amplitude_range = run_result["pump_amplitude_range"]
+    voltage_range = run_result["voltage_range"]
     analysis_result = analyze_impa_pump_pulse_calibration(
         exp=exp,
         target=target,
         pump_frequency_range=pump_frequency_range,
         pump_amplitude_range=pump_amplitude_range,
+        voltage_range=voltage_range,
         run_result=run_result,
     )
     figures = plot_impa_pump_pulse_calibration(
@@ -681,12 +743,13 @@ def impa_pump_pulse_calibration(
         target=target,
         pump_frequency_range=pump_frequency_range,
         pump_amplitude_range=pump_amplitude_range,
+        voltage_range=voltage_range,
         analysis_result=analysis_result,
     )
     data = {
         "pump_frequency_range": pump_frequency_range,
         "pump_amplitude_range": pump_amplitude_range,
-        "voltage": voltage,
+        "voltage_range": voltage_range,
         "raw": run_result,
         "analysis": analysis_result,
     }
