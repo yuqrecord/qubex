@@ -17,7 +17,9 @@ combination of readout pulse on/off and pump pulse on/off:
 - readout on  / pump on
 
 "No pulse" is realized as a zero-amplitude pulse so that all four
-schedules have identical timing and capture windows.
+schedules have identical timing and capture windows. The readout-on
+schedules use ``readout_amplitude`` as the readout pulse amplitude
+(``None`` uses the calibrated readout amplitude).
 
 - Signal: distance in the IQ plane between the shot means of the
   readout-on and readout-off measurements, evaluated separately for
@@ -67,6 +69,7 @@ Example
         pump_amplitude_range=np.linspace(0.1, 1.0, 10),
         pump_buffer_time=128.0,
         pump_ramptime=32.0,
+        readout_amplitude=None,
         dc_bias_controller=dc_bias_controller,
         voltage=0.1,
         shot_interval=150 * 1024,
@@ -112,6 +115,7 @@ def _build_pulse_schedule(
     pump_buffer_time: float,
     pump_amplitude: float,
     pump_ramptime: float,
+    readout_amplitude: float | None,
     plot_pulse_schedule: bool = True,
 ) -> qx.PulseSchedule:
     qubit = exp.ctx.resolve_qubit_label(target)
@@ -119,7 +123,7 @@ def _build_pulse_schedule(
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     readout_pulse = exp.readout(
         target,
-        amplitude=None if send_readout_pulse else 0.0,
+        amplitude=readout_amplitude if send_readout_pulse else 0.0,
     )
     schedule = qx.PulseSchedule()
     with schedule as ps:
@@ -166,6 +170,7 @@ def run_impa_pump_pulse_calibration(
     pump_amplitude_range: ArrayLike,
     pump_buffer_time: float,
     pump_ramptime: float,
+    readout_amplitude: float | None,
     dc_bias_controller,
     voltage: float,
     shot_interval: float,
@@ -187,6 +192,7 @@ def run_impa_pump_pulse_calibration(
         pump_buffer_time=pump_buffer_time,
         pump_amplitude=0.0,
         pump_ramptime=pump_ramptime,
+        readout_amplitude=readout_amplitude,
         plot_pulse_schedule=plot_pulse_schedule,
     )
     ps_readout_on_pump_off = _build_pulse_schedule(
@@ -197,6 +203,7 @@ def run_impa_pump_pulse_calibration(
         pump_buffer_time=pump_buffer_time,
         pump_amplitude=0.0,
         pump_ramptime=pump_ramptime,
+        readout_amplitude=readout_amplitude,
         plot_pulse_schedule=plot_pulse_schedule,
     )
     # The pump-on schedules depend only on the amplitude; the pump
@@ -211,6 +218,7 @@ def run_impa_pump_pulse_calibration(
             pump_buffer_time=pump_buffer_time,
             pump_amplitude=float(amplitude),
             pump_ramptime=pump_ramptime,
+            readout_amplitude=readout_amplitude,
             plot_pulse_schedule=plot_pulse_schedule and index == 0,
         )
         for index, amplitude in enumerate(pump_amplitude_range)
@@ -224,6 +232,7 @@ def run_impa_pump_pulse_calibration(
             pump_buffer_time=pump_buffer_time,
             pump_amplitude=float(amplitude),
             pump_ramptime=pump_ramptime,
+            readout_amplitude=readout_amplitude,
             plot_pulse_schedule=plot_pulse_schedule and index == 0,
         )
         for index, amplitude in enumerate(pump_amplitude_range)
@@ -281,6 +290,7 @@ def run_impa_pump_pulse_calibration(
         "pump_amplitude_range": pump_amplitude_range,
         "pump_buffer_time": pump_buffer_time,
         "pump_ramptime": pump_ramptime,
+        "readout_amplitude": readout_amplitude,
         "voltage": voltage,
         "shot_interval": shot_interval,
         "n_shots": n_shots,
@@ -516,6 +526,7 @@ def impa_pump_pulse_calibration(
     pump_amplitude_range: ArrayLike,
     pump_buffer_time: float,
     pump_ramptime: float,
+    readout_amplitude: float | None,
     dc_bias_controller,
     voltage: float,
     shot_interval: float,
@@ -532,6 +543,7 @@ def impa_pump_pulse_calibration(
         pump_amplitude_range=pump_amplitude_range,
         pump_buffer_time=pump_buffer_time,
         pump_ramptime=pump_ramptime,
+        readout_amplitude=readout_amplitude,
         dc_bias_controller=dc_bias_controller,
         voltage=voltage,
         shot_interval=shot_interval,
