@@ -33,12 +33,26 @@ schedules use ``readout_amplitude`` as the readout pulse amplitude
   dB as ``20 * log10(snr_on / snr_off)``, which equals ``10 * log10``
   of the power SNR ratio.
 
-The pump-off reference (A, B) is measured once per pump frequency row,
-so ``snr_off`` is a vector over frequency and slow readout drift between
+The pump-off reference is measured once per pump frequency row, so
+``snr_off`` is a vector over frequency and slow readout drift between
 rows is compensated. The pump frequency is applied per row with
 ``exp.modified_frequencies({mux: pump_frequency})``, where the mux label
 is the PUMP channel label; the pump-on schedules depend only on the pump
 amplitude and are reused across rows.
+
+Pump LO control
+---------------
+The sweep frequencies are grouped into consecutive subranges such that
+every point stays within +/-200 MHz of the actual mixing frequency
+(LO + CNCO) programmed for its group; the pump port LO/CNCO is set
+explicitly per group with ``modified_backend_settings`` and restored
+afterwards. ``pump_frequency_range`` must therefore be non-empty,
+finite, and strictly increasing. The pump port has a dedicated LO, so
+retuning does not affect the readout channel; note, however, that on
+some box types the pump LO chip is shared with the monitor-in line, and
+each retune re-initializes the AWG/capture units of the whole box, so
+avoid concurrent use of the same box. The QuEL-3 backend provides no
+pump LO control and is not supported (RuntimeError).
 
 Timing
 ------
@@ -83,7 +97,19 @@ from tqdm.auto import tqdm
 
 import qubex as qx
 import qubex.visualization as viz
+from qubex.backend.backend_controller import BACKEND_KIND_QUEL3
 from qubex.experiment.models import Result
+from qubex.system import MixingUtil
+from qubex.system.quel1.quel1_system_constants import CNCO_CENTER_READ_HZ
+
+# The pump LO/CNCO is retuned whenever the next sweep point would sit
+# more than this far from the actual programmed mixing frequency.
+PUMP_LO_MAX_DETUNING_HZ = 200_000_000
+# Mirrors ExperimentSystem._configure_pump_port.
+PUMP_SSB = "U"
+# Hardware LO limits; outside this range the LO is silently mis-programmed.
+PUMP_LO_MIN_HZ = 1_875_000_000
+PUMP_LO_MAX_HZ = 15_000_000_000
 
 
 def _validate_dc_bias_controller(dc_bias_controller) -> None:
@@ -181,6 +207,65 @@ def run_impa_pump_pulse_calibration(
     _validate_voltage_range(dc_bias_controller, [voltage])
     pump_frequency_range = np.atleast_1d(np.asarray(pump_frequency_range, dtype=float))
     pump_amplitude_range = np.atleast_1d(np.asarray(pump_amplitude_range, dtype=float))
+    if exp.system_manager.backend_kind == BACKEND_KIND_QUEL3:
+        raise RuntimeError(
+            "Explicit pump LO control is not supported on the QuEL-3 backend."
+        )
+    if pump_frequency_range.size == 0:
+        raise ValueError("pump_frequency_range must not be empty.")
+    if not np.all(np.isfinite(pump_frequency_range)):
+        raise ValueError("pump_frequency_range must contain only finite values.")
+    if pump_frequency_range.ndim != 1 or not np.all(np.diff(pump_frequency_range) > 0):
+        raise ValueError("pump_frequency_range must be strictly increasing.")
+
+    # Group consecutive frequencies so that every point stays within
+    # PUMP_LO_MAX_DETUNING_HZ of the actual mixing frequency (LO + CNCO)
+    # programmed for its group; the pump LO is retuned once per group.
+    pump_lo_groups = []
+    start = 0
+    while start < len(pump_frequency_range):
+        end = start + 1
+        lo, cnco, f_mix = MixingUtil.calc_lo_cnco(
+            float(pump_frequency_range[start]) * 1e9,
+            ssb=PUMP_SSB,
+            cnco_center=CNCO_CENTER_READ_HZ,
+        )
+        while end < len(pump_frequency_range):
+            f_center = (pump_frequency_range[start] + pump_frequency_range[end]) / 2
+            candidate = MixingUtil.calc_lo_cnco(
+                float(f_center) * 1e9,
+                ssb=PUMP_SSB,
+                cnco_center=CNCO_CENTER_READ_HZ,
+            )
+            # The range is ascending, so checking both end points suffices.
+            detuning = max(
+                abs(pump_frequency_range[start] * 1e9 - candidate[2]),
+                abs(pump_frequency_range[end] * 1e9 - candidate[2]),
+            )
+            if detuning > PUMP_LO_MAX_DETUNING_HZ:
+                break
+            lo, cnco, f_mix = candidate
+            end += 1
+        pump_lo_groups.append((pump_frequency_range[start:end], lo, cnco, f_mix))
+        start = end
+    for subrange, lo, cnco, f_mix in pump_lo_groups:
+        if (
+            lo is None
+            or not np.isfinite(lo)
+            or not np.isfinite(cnco)
+            or not np.isfinite(f_mix)
+        ):
+            raise ValueError(
+                f"Invalid pump LO settings (lo={lo}, cnco={cnco}, f_mix={f_mix}) "
+                f"for {subrange[0]}-{subrange[-1]} GHz."
+            )
+        if not PUMP_LO_MIN_HZ <= lo <= PUMP_LO_MAX_HZ:
+            raise ValueError(
+                f"The pump LO frequency {lo / 1e9} GHz for "
+                f"{subrange[0]}-{subrange[-1]} GHz is outside the supported range "
+                f"[{PUMP_LO_MIN_HZ / 1e9}, {PUMP_LO_MAX_HZ / 1e9}] GHz."
+            )
+
     qubit = exp.ctx.resolve_qubit_label(target)
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
 
@@ -258,25 +343,47 @@ def run_impa_pump_pulse_calibration(
     )
     try:
         dc_bias_controller.voltage(mux=mux, voltage_in_volts=voltage)
-        for frequency in tqdm(
-            pump_frequency_range,
+        with tqdm(
+            total=len(pump_frequency_range),
             desc=f"IMPA pump pulse calibration : {target}",
-        ):
-            with exp.modified_frequencies({mux: float(frequency)}):
-                # Pump-off reference per frequency row (drift tracking).
-                results_readout_off_pump_off.append(execute(ps_readout_off_pump_off))
-                results_readout_on_pump_off.append(execute(ps_readout_on_pump_off))
-                row_readout_off_pump_on = []
-                row_readout_on_pump_on = []
-                for ps_readout_off_pump_on, ps_readout_on_pump_on in zip(
-                    ps_readout_off_pump_on_list,
-                    ps_readout_on_pump_on_list,
-                    strict=True,
+        ) as progress_bar:
+            for subrange, lo, cnco, f_mix in pump_lo_groups:
+                print(
+                    f"Pump LO = {lo / 1e9} GHz, CNCO = {cnco / 1e9} GHz "
+                    f"(mixing frequency {f_mix / 1e9} GHz) for "
+                    f"{subrange[0]}-{subrange[-1]} GHz"
+                )
+                with exp.system_manager.modified_backend_settings(
+                    label=mux,
+                    lo_freq=lo,
+                    cnco_freq=cnco,
+                    fnco_freq=0,
                 ):
-                    row_readout_off_pump_on.append(execute(ps_readout_off_pump_on))
-                    row_readout_on_pump_on.append(execute(ps_readout_on_pump_on))
-                results_readout_off_pump_on.append(row_readout_off_pump_on)
-                results_readout_on_pump_on.append(row_readout_on_pump_on)
+                    for frequency in subrange:
+                        with exp.modified_frequencies({mux: float(frequency)}):
+                            # Pump-off reference per frequency row (drift tracking).
+                            results_readout_off_pump_off.append(
+                                execute(ps_readout_off_pump_off)
+                            )
+                            results_readout_on_pump_off.append(
+                                execute(ps_readout_on_pump_off)
+                            )
+                            row_readout_off_pump_on = []
+                            row_readout_on_pump_on = []
+                            for ps_readout_off_pump_on, ps_readout_on_pump_on in zip(
+                                ps_readout_off_pump_on_list,
+                                ps_readout_on_pump_on_list,
+                                strict=True,
+                            ):
+                                row_readout_off_pump_on.append(
+                                    execute(ps_readout_off_pump_on)
+                                )
+                                row_readout_on_pump_on.append(
+                                    execute(ps_readout_on_pump_on)
+                                )
+                            results_readout_off_pump_on.append(row_readout_off_pump_on)
+                            results_readout_on_pump_on.append(row_readout_on_pump_on)
+                        progress_bar.update(1)
     finally:
         dc_bias_controller.voltage(mux=mux, voltage_in_volts=original_voltage)
         print(
@@ -294,6 +401,16 @@ def run_impa_pump_pulse_calibration(
         "voltage": voltage,
         "shot_interval": shot_interval,
         "n_shots": n_shots,
+        "pump_lo_subranges": [
+            {
+                "lo_freq": lo,
+                "cnco_freq": cnco,
+                "f_mix": f_mix,
+                "frequency_start": float(subrange[0]),
+                "frequency_stop": float(subrange[-1]),
+            }
+            for subrange, lo, cnco, f_mix in pump_lo_groups
+        ],
         "results_readout_off_pump_off": results_readout_off_pump_off,
         "results_readout_on_pump_off": results_readout_on_pump_off,
         "results_readout_off_pump_on": results_readout_off_pump_on,
