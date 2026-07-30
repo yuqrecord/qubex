@@ -97,6 +97,9 @@ from .post_selected_measurement.assignment_fidelity import (
 from .post_selected_measurement.quantum_efficiency import (
     post_selected_quantum_efficiency_experiment,
 )
+from .post_selected_measurement.qnd_fidelity import (
+    qnd_fidelity_experiment,
+)
 
 __all__ = [
     "analyze_chevron_matched_transform",
@@ -171,4 +174,5 @@ __all__ = [
     "skew_check_qr",
     "post_selected_assignment_fidelity_experiment",
     "post_selected_quantum_efficiency_experiment",
+    "qnd_fidelity_experiment",
 ]
