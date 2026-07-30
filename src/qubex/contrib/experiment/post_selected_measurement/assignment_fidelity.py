@@ -121,23 +121,42 @@ def run_post_selected_assignment_fidelity(
     readout_pulse: Waveform | None = None,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
+    pump_buffer_time: float,
+    pump_ramptime: float,
+    pump_amplitude: float,
     shot_interval: float,
     n_shots: int,
     plot_pulse_schedule: bool = True,
 ):
     qubit = exp.ctx.qubits[target].label
     resonator = exp.ctx.resonators[target].label
+    mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
     padded_readout_pulse = readout_pulse.padded(
         readout_pulse.duration + exp.readout_post_margin
     )
+    barrier_labels = [qubit, resonator]
+    pump_duration = (
+        2 * padded_readout_pulse.duration
+        + waittime_after_readout_pulse
+        + exp.drag_pi_pulse[qubit].duration
+        + waittime_after_ctrl_pulse
+        + 2 * pump_buffer_time
+    )
     result = dict()
     for state in ["g", "e"]:
         schedule = qx.PulseSchedule()
         with schedule as s:
+            s.add(
+                mux,
+                qx.pulse.FlatTop(
+                    duration=pump_duration, tau=pump_ramptime, amplitude=pump_amplitude
+                ),
+            )
+            s.add(resonator, qx.pulse.Blank(pump_buffer_time))
             s.add(resonator, padded_readout_pulse)
-            s.barrier()
+            s.barrier(labels=barrier_labels)
             s.add(
                 qubit,
                 qx.pulse.Blank(waittime_after_readout_pulse - exp.readout_post_margin),
@@ -147,8 +166,9 @@ def run_post_selected_assignment_fidelity(
             else:
                 s.add(qubit, qx.pulse.Blank(exp.drag_pi_pulse[qubit].duration))
             s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
-            s.barrier()
+            s.barrier(labels=barrier_labels)
             s.add(resonator, padded_readout_pulse)
+            s.add(resonator, qx.pulse.Blank(pump_buffer_time))
         if plot_pulse_schedule:
             schedule.plot(title=f"Pulse Schedule |{state}>")
         result[state] = exp.execute(
@@ -655,6 +675,9 @@ def post_selected_assignment_fidelity_experiment(
     readout_pulse: Waveform | None = None,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
+    pump_buffer_time: float,
+    pump_ramptime: float,
+    pump_amplitude: float,
     shot_interval: float,
     n_train: int,
     n_test: int,
@@ -683,6 +706,9 @@ def post_selected_assignment_fidelity_experiment(
         readout_pulse=readout_pulse,
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
+        pump_buffer_time=pump_buffer_time,
+        pump_ramptime=pump_ramptime,
+        pump_amplitude=pump_amplitude,
         shot_interval=shot_interval,
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
