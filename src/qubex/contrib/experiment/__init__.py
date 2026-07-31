@@ -97,6 +97,9 @@ from .post_selected_measurement.assignment_fidelity import (
 from .post_selected_measurement.quantum_efficiency import (
     post_selected_quantum_efficiency_experiment,
 )
+from .post_selected_measurement.qnd_fidelity import (
+    qnd_fidelity_experiment,
+)
 
 from .impa_calibration.impa_voltage_calibration import (
     impa_voltage_calibration,
@@ -180,4 +183,5 @@ __all__ = [
     "post_selected_quantum_efficiency_experiment",
     "impa_voltage_calibration",
     "impa_pump_pulse_calibration",
+    "qnd_fidelity_experiment",
 ]
