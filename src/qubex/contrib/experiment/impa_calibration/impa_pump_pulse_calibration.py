@@ -46,6 +46,11 @@ sweep (including the pump-off reference) is repeated for each voltage.
 The best (voltage, frequency, amplitude) combination over all sweeps is
 reported.
 
+In addition to the per-voltage SNR heatmaps, an IQ-plane scatter figure
+(``iq_best``) of the four single-shot clouds at the best point (readout
+off/on x pump off/on) is produced, with each cloud mean marked by a
+black cross; the figure is omitted when the best point is undefined.
+
 Pump LO control
 ---------------
 The sweep frequencies are grouped into consecutive subranges such that
@@ -571,6 +576,7 @@ def plot_impa_pump_pulse_calibration(
     snr_on = analysis_result["snr_on"]
     snr_off = analysis_result["snr_off"]
     best_index = analysis_result["best_index"]
+    best_voltage = analysis_result["best_voltage"]
     best_pump_frequency = analysis_result["best_pump_frequency"]
     best_pump_amplitude = analysis_result["best_pump_amplitude"]
 
@@ -651,6 +657,61 @@ def plot_impa_pump_pulse_calibration(
         figures[f"snr_gain_{voltage_index}"] = fig_snr_gain
         figures[f"snr_on_{voltage_index}"] = fig_snr_on
         figures[f"snr_off_{voltage_index}"] = fig_snr_off
+    # Plot the IQ shot clouds at the best point; omitted when the best
+    # point is undefined.
+    if best_index is not None:
+        v_idx, f_idx, a_idx = best_index
+        iq_clouds = {
+            "readout off / pump off": analysis_result["iq_readout_off_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout on / pump off": analysis_result["iq_readout_on_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout off / pump on": analysis_result["iq_readout_off_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+            "readout on / pump on": analysis_result["iq_readout_on_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+        }
+        cloud_means = {
+            "readout off / pump off": analysis_result["mean_readout_off_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout on / pump off": analysis_result["mean_readout_on_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout off / pump on": analysis_result["mean_readout_off_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+            "readout on / pump on": analysis_result["mean_readout_on_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+        }
+        fig_iq_best = viz.make_iq_scatter_figure(
+            iq_clouds,
+            title=(
+                f"IMPA Pump Pulse Calibration - IQ Shots at Best Point for {target}"
+                f"<br><sup>V = {best_voltage:.4g} V, "
+                f"pump frequency = {best_pump_frequency:.6g} GHz, "
+                f"pump amplitude = {best_pump_amplitude:.4g} a.u.</sup>"
+            ),
+            width=600,
+            height=400,
+        )
+        # The signal is defined from the cloud means; mark them so the
+        # readout-on/off displacement is visible at a glance.
+        for name, mean in cloud_means.items():
+            fig_iq_best.add_scatter(
+                x=[float(np.real(mean))],
+                y=[float(np.imag(mean))],
+                mode="markers",
+                marker=dict(size=10, color="black", symbol="x"),
+                name=f"mean : {name}",
+                showlegend=False,
+            )
+        figures["iq_best"] = fig_iq_best
     return figures
 
 
