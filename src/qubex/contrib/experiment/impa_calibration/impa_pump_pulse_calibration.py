@@ -587,7 +587,10 @@ def plot_impa_pump_pulse_calibration(
     gain_zmax = float(finite_gain_db.max()) if finite_gain_db.size > 0 else 1.0
     if gain_zmax <= 0.0:
         gain_zmax = 1.0
-    figures = {}
+    # One figure per voltage, collected as lists under a single key.
+    figures_snr_gain = []
+    figures_snr_on = []
+    figures_snr_off = []
     for voltage_index, voltage in enumerate(voltage_range):
         # Plot SNR gain heatmap
         fig_snr_gain = viz.make_figure()
@@ -654,9 +657,14 @@ def plot_impa_pump_pulse_calibration(
             width=600,
             height=400,
         )
-        figures[f"snr_gain_{voltage_index}"] = fig_snr_gain
-        figures[f"snr_on_{voltage_index}"] = fig_snr_on
-        figures[f"snr_off_{voltage_index}"] = fig_snr_off
+        figures_snr_gain.append(fig_snr_gain)
+        figures_snr_on.append(fig_snr_on)
+        figures_snr_off.append(fig_snr_off)
+    figures = {
+        "snr_gain": figures_snr_gain,
+        "snr_on": figures_snr_on,
+        "snr_off": figures_snr_off,
+    }
     # Plot the IQ shot clouds at the best point; omitted when the best
     # point is undefined.
     if best_index is not None:
@@ -721,8 +729,10 @@ def display_impa_pump_pulse_calibration(
     plot: bool = True,
 ):
     if plot:
-        for fig in (result.figures or {}).values():
-            fig.show()
+        # Values are either a single figure or a list of per-voltage figures.
+        for entry in (result.figures or {}).values():
+            for fig in entry if isinstance(entry, list) else [entry]:
+                fig.show()
     analysis = result.data["analysis"]
     print("IMPA Pump Pulse Calibration Result:")
     best_index = analysis["best_index"]
