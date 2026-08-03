@@ -51,6 +51,16 @@ In addition to the per-voltage SNR heatmaps, an IQ-plane scatter figure
 off/on x pump off/on) is produced, with each cloud mean marked by a
 black cross; the figure is omitted when the best point is undefined.
 
+The same figure is available for *any* swept point through
+``display_impa_pump_pulse_calibration_iq_shots``, which takes the result
+and the index of each swept parameter, shows the IQ scatter, and reports
+the parameter values and the SNR at that point
+(``plot_impa_pump_pulse_calibration_iq_shots`` returns the figure
+instead of showing it). These per-point figures are built on demand and
+are deliberately not stored in the result, because keeping one figure
+per (voltage, frequency, amplitude) combination would make the result
+very large; the single shots they are built from are already stored.
+
 Pump LO control
 ---------------
 The sweep frequencies are grouped into consecutive subranges such that
@@ -100,6 +110,17 @@ Example
         shot_interval=150 * 1024,
         n_shots=1024,
     )
+
+    from qubex.contrib.experiment.impa_calibration.impa_pump_pulse_calibration import (
+        display_impa_pump_pulse_calibration_iq_shots,
+    )
+
+    display_impa_pump_pulse_calibration_iq_shots(
+        result=result,
+        voltage_index=0,
+        pump_frequency_index=3,
+        pump_amplitude_index=2,
+    )
 """
 
 import numpy as np
@@ -141,6 +162,17 @@ def _validate_dc_bias_controller(dc_bias_controller) -> None:
 def _validate_voltage_range(dc_bias_controller, voltage_range: ArrayLike) -> None:
     for voltage in voltage_range:
         dc_bias_controller.validate_voltage(voltage)
+
+
+def _validate_sweep_index(*, name: str, value, size: int) -> int:
+    # Sweep indices are user-facing coordinates, so Python-style negative
+    # indexing is rejected instead of silently selecting another point.
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer, got {value!r}.")
+    index = int(value)
+    if not 0 <= index < size:
+        raise ValueError(f"{name} must be in the range [0, {size - 1}], got {index}.")
+    return index
 
 
 def _build_pulse_schedule(
@@ -560,6 +592,125 @@ def analyze_impa_pump_pulse_calibration(
     }
 
 
+def _select_iq_point(
+    analysis_result,
+    *,
+    voltage_range: ArrayLike,
+    pump_frequency_range: ArrayLike,
+    pump_amplitude_range: ArrayLike,
+    index,
+):
+    # Collect everything needed to plot one swept point; the pump-off
+    # quantities are indexed by (voltage, frequency) only.
+    v_idx, f_idx, a_idx = (int(i) for i in index)
+    return {
+        "index": (v_idx, f_idx, a_idx),
+        "voltage": float(voltage_range[v_idx]),
+        "pump_frequency": float(pump_frequency_range[f_idx]),
+        "pump_amplitude": float(pump_amplitude_range[a_idx]),
+        "iq_clouds": {
+            "readout off / pump off": analysis_result["iq_readout_off_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout on / pump off": analysis_result["iq_readout_on_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout off / pump on": analysis_result["iq_readout_off_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+            "readout on / pump on": analysis_result["iq_readout_on_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+        },
+        "cloud_means": {
+            "readout off / pump off": analysis_result["mean_readout_off_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout on / pump off": analysis_result["mean_readout_on_pump_off"][
+                v_idx, f_idx
+            ],
+            "readout off / pump on": analysis_result["mean_readout_off_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+            "readout on / pump on": analysis_result["mean_readout_on_pump_on"][
+                v_idx, f_idx, a_idx
+            ],
+        },
+        "snr_off": float(analysis_result["snr_off"][v_idx, f_idx]),
+        "snr_on": float(analysis_result["snr_on"][v_idx, f_idx, a_idx]),
+        "snr_gain_db": float(analysis_result["snr_gain_db"][v_idx, f_idx, a_idx]),
+    }
+
+
+def _select_iq_point_from_result(
+    result: Result,
+    *,
+    voltage_index,
+    pump_frequency_index,
+    pump_amplitude_index,
+):
+    voltage_range = np.atleast_1d(np.asarray(result.data["voltage_range"], dtype=float))
+    pump_frequency_range = np.atleast_1d(
+        np.asarray(result.data["pump_frequency_range"], dtype=float)
+    )
+    pump_amplitude_range = np.atleast_1d(
+        np.asarray(result.data["pump_amplitude_range"], dtype=float)
+    )
+    index = (
+        _validate_sweep_index(
+            name="voltage_index", value=voltage_index, size=len(voltage_range)
+        ),
+        _validate_sweep_index(
+            name="pump_frequency_index",
+            value=pump_frequency_index,
+            size=len(pump_frequency_range),
+        ),
+        _validate_sweep_index(
+            name="pump_amplitude_index",
+            value=pump_amplitude_index,
+            size=len(pump_amplitude_range),
+        ),
+    )
+    point = _select_iq_point(
+        result.data["analysis"],
+        voltage_range=voltage_range,
+        pump_frequency_range=pump_frequency_range,
+        pump_amplitude_range=pump_amplitude_range,
+        index=index,
+    )
+    return result.data["raw"]["target"], point
+
+
+def _make_iq_shots_figure(*, target: str, point, at_best: bool):
+    label = "at Best Point " if at_best else ""
+    fig = viz.make_iq_scatter_figure(
+        point["iq_clouds"],
+        title=(
+            f"IMPA Pump Pulse Calibration - IQ Shots {label}for {target}"
+            f"<br><sup>V = {point['voltage']:.4g} V, "
+            f"pump frequency = {point['pump_frequency']:.6g} GHz, "
+            f"pump amplitude = {point['pump_amplitude']:.4g} a.u.<br>"
+            f"SNR (pump off) = {point['snr_off']:.4g}, "
+            f"SNR (pump on) = {point['snr_on']:.4g}, "
+            f"SNR gain = {point['snr_gain_db']:.4g} dB</sup>"
+        ),
+        width=600,
+        height=400,
+    )
+    # The signal is defined from the cloud means; mark them so the
+    # readout-on/off displacement is visible at a glance.
+    for name, mean in point["cloud_means"].items():
+        fig.add_scatter(
+            x=[float(np.real(mean))],
+            y=[float(np.imag(mean))],
+            mode="markers",
+            marker=dict(size=10, color="black", symbol="x"),
+            name=f"mean : {name}",
+            showlegend=False,
+        )
+    return fig
+
+
 def plot_impa_pump_pulse_calibration(
     exp: qx.Experiment,
     *,
@@ -576,7 +727,6 @@ def plot_impa_pump_pulse_calibration(
     snr_on = analysis_result["snr_on"]
     snr_off = analysis_result["snr_off"]
     best_index = analysis_result["best_index"]
-    best_voltage = analysis_result["best_voltage"]
     best_pump_frequency = analysis_result["best_pump_frequency"]
     best_pump_amplitude = analysis_result["best_pump_amplitude"]
 
@@ -668,58 +818,17 @@ def plot_impa_pump_pulse_calibration(
     # Plot the IQ shot clouds at the best point; omitted when the best
     # point is undefined.
     if best_index is not None:
-        v_idx, f_idx, a_idx = best_index
-        iq_clouds = {
-            "readout off / pump off": analysis_result["iq_readout_off_pump_off"][
-                v_idx, f_idx
-            ],
-            "readout on / pump off": analysis_result["iq_readout_on_pump_off"][
-                v_idx, f_idx
-            ],
-            "readout off / pump on": analysis_result["iq_readout_off_pump_on"][
-                v_idx, f_idx, a_idx
-            ],
-            "readout on / pump on": analysis_result["iq_readout_on_pump_on"][
-                v_idx, f_idx, a_idx
-            ],
-        }
-        cloud_means = {
-            "readout off / pump off": analysis_result["mean_readout_off_pump_off"][
-                v_idx, f_idx
-            ],
-            "readout on / pump off": analysis_result["mean_readout_on_pump_off"][
-                v_idx, f_idx
-            ],
-            "readout off / pump on": analysis_result["mean_readout_off_pump_on"][
-                v_idx, f_idx, a_idx
-            ],
-            "readout on / pump on": analysis_result["mean_readout_on_pump_on"][
-                v_idx, f_idx, a_idx
-            ],
-        }
-        fig_iq_best = viz.make_iq_scatter_figure(
-            iq_clouds,
-            title=(
-                f"IMPA Pump Pulse Calibration - IQ Shots at Best Point for {target}"
-                f"<br><sup>V = {best_voltage:.4g} V, "
-                f"pump frequency = {best_pump_frequency:.6g} GHz, "
-                f"pump amplitude = {best_pump_amplitude:.4g} a.u.</sup>"
+        figures["iq_best"] = _make_iq_shots_figure(
+            target=target,
+            point=_select_iq_point(
+                analysis_result,
+                voltage_range=voltage_range,
+                pump_frequency_range=pump_frequency_range,
+                pump_amplitude_range=pump_amplitude_range,
+                index=best_index,
             ),
-            width=600,
-            height=400,
+            at_best=True,
         )
-        # The signal is defined from the cloud means; mark them so the
-        # readout-on/off displacement is visible at a glance.
-        for name, mean in cloud_means.items():
-            fig_iq_best.add_scatter(
-                x=[float(np.real(mean))],
-                y=[float(np.imag(mean))],
-                mode="markers",
-                marker=dict(size=10, color="black", symbol="x"),
-                name=f"mean : {name}",
-                showlegend=False,
-            )
-        figures["iq_best"] = fig_iq_best
     return figures
 
 
@@ -762,6 +871,50 @@ def display_impa_pump_pulse_calibration(
             "[WARN] The best voltage lies on the sweep boundary; "
             "consider extending the voltage range."
         )
+
+
+def plot_impa_pump_pulse_calibration_iq_shots(
+    *,
+    result: Result,
+    voltage_index: int,
+    pump_frequency_index: int,
+    pump_amplitude_index: int,
+):
+    # Built on demand from the stored single shots; the figure is not
+    # added to `result.figures` (see the module description).
+    target, point = _select_iq_point_from_result(
+        result,
+        voltage_index=voltage_index,
+        pump_frequency_index=pump_frequency_index,
+        pump_amplitude_index=pump_amplitude_index,
+    )
+    return _make_iq_shots_figure(target=target, point=point, at_best=False)
+
+
+def display_impa_pump_pulse_calibration_iq_shots(
+    *,
+    result: Result,
+    voltage_index: int,
+    pump_frequency_index: int,
+    pump_amplitude_index: int,
+    plot: bool = True,
+):
+    target, point = _select_iq_point_from_result(
+        result,
+        voltage_index=voltage_index,
+        pump_frequency_index=pump_frequency_index,
+        pump_amplitude_index=pump_amplitude_index,
+    )
+    if plot:
+        _make_iq_shots_figure(target=target, point=point, at_best=False).show()
+    print("IMPA Pump Pulse Calibration - IQ Shots:")
+    print(f"Index (voltage, frequency, amplitude): {point['index']}")
+    print(f"Voltage (V): {point['voltage']}")
+    print(f"Pump Frequency (GHz): {point['pump_frequency']}")
+    print(f"Pump Amplitude (a.u.): {point['pump_amplitude']}")
+    print(f"SNR (pump off): {point['snr_off']:.4f}")
+    print(f"SNR (pump on): {point['snr_on']:.4f}")
+    print(f"SNR Gain (dB): {point['snr_gain_db']:.3f}")
 
 
 def impa_pump_pulse_calibration(
