@@ -1,12 +1,12 @@
 """
 QND-fidelity measurement with two consecutive readouts.
 
-For each sequence ("standard" and "mist") and each prepared state (|g> and
-|e>) the qubit is optionally prepared with the DRAG pi pulse and then read
-out twice:
+For each sequence ("standard" and "mist_sensitive") and each prepared state
+(|g> and |e>) the qubit is optionally prepared with the DRAG pi pulse and
+then read out twice:
 
-- standard: [prep] -- readout -- wait -- readout
-- mist:     [prep] -- readout -- wait -- drag_pi_pulse -- readout
+- standard:       [prep] -- readout -- wait -- readout
+- mist_sensitive: [prep] -- readout -- wait -- drag_pi_pulse -- readout
 
 Both readouts are classified shot by shot with a pre-trained
 :class:`.assignment_fidelity.Classifier`. The readout pulse and the
@@ -23,20 +23,20 @@ conditional distribution of the second outcome forms one row of
     qnd_matrix[i][j] = P(second readout = j | first readout = i)
 
 The QND fidelity is the diagonal entry for the standard sequence (the second
-readout should repeat the first) and the anti-diagonal entry for the mist
-sequence (the pi pulse before the second readout should flip the outcome).
-If a measurement-induced state transition (MIST) occurs during the first
-readout, the pi pulse of the mist sequence cannot flip the state back, so
-the shot is correctly counted as non-QND -- the standard sequence alone
-would count it as QND.
+readout should repeat the first) and the anti-diagonal entry for the
+mist_sensitive sequence (the pi pulse before the second readout should flip
+the outcome). If a measurement-induced state transition (MIST) occurs during
+the first readout, the pi pulse of the mist_sensitive sequence cannot flip
+the state back, so the shot is correctly counted as non-QND -- the standard
+sequence alone would count it as QND.
 
 Caveats:
 
 - The binary g/e classifier cannot flag leakage (e.g. the f state) or other
-  out-of-distribution signals; the mist sequence is a MIST-sensitive proxy,
-  not a direct transition or leakage measurement.
-- The inter-readout spacing of the mist sequence is longer than that of the
-  standard sequence by the pi-pulse duration plus
+  out-of-distribution signals; the mist_sensitive sequence is a MIST-sensitive
+  proxy, not a direct transition or leakage measurement.
+- The inter-readout spacing of the mist_sensitive sequence is longer than that
+  of the standard sequence by the pi-pulse duration plus
   ``waittime_after_ctrl_pulse``; the actual spacings are stored in the
   result data (``inter_readout_spacing``).
 """
@@ -49,7 +49,7 @@ from qxpulse import Waveform
 
 MIN_CONDITIONED_SHOTS = 10
 
-SEQUENCES = ["standard", "mist"]
+SEQUENCES = ["standard", "mist_sensitive"]
 STATES = ["g", "e"]
 STATE_INDEX = {"g": 0, "e": 1}
 
@@ -84,7 +84,7 @@ def _validate_readout_pulse_start_position(
         )
     for sequence in SEQUENCES:
         inter_readout_spacing = readout_duration + waittime_after_readout_pulse
-        if sequence == "mist":
+        if sequence == "mist_sensitive":
             inter_readout_spacing += drag_pi_pulse_duration + waittime_after_ctrl_pulse
         if inter_readout_spacing % capture_sampling_period != 0:
             raise ValueError(
@@ -157,7 +157,7 @@ def run_qnd_fidelity(
                         waittime_after_readout_pulse - exp.readout_post_margin
                     ),
                 )
-                if sequence == "mist":
+                if sequence == "mist_sensitive":
                     s.add(qubit, drag_pi_pulse)
                 else:
                     s.add(qubit, qx.pulse.Blank(drag_pi_pulse.duration))
@@ -403,7 +403,7 @@ def qnd_fidelity_experiment(
     drag_pi_pulse_duration = exp.drag_pi_pulse[qubit].duration
     inter_readout_spacing = {
         "standard": readout_pulse.duration + waittime_after_readout_pulse,
-        "mist": readout_pulse.duration
+        "mist_sensitive": readout_pulse.duration
         + waittime_after_readout_pulse
         + drag_pi_pulse_duration
         + waittime_after_ctrl_pulse,
