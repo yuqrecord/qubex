@@ -155,7 +155,7 @@ def ckp_sequence_v2(
     if qubit_drive_detuning is None:
         qubit_drive_detuning = 0.0
     if qubit_pi_pulse is None:
-        qubit_pi_pulse = exp.pulse.get_hpi_pulse(target).repeated(2)
+        qubit_pi_pulse = exp.x180(exp.ctx.resolve_qubit_label(target))
     if qubit_drive_scale is None:
         qubit_drive_scale = 0.8
     if qubit_drive_duration is None:
