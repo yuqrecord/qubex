@@ -13,6 +13,13 @@ Pulse sequence
     qubit     : [pi or blank][wait] | [Blank(max(0, +offset))][qubit drive]
     resonator : [     blank      ] | [Blank(max(0, -offset))][resonator drive][Blank(waittime_before_readout)][readout]
 
+- The qubit drive is the calibrated ge pi pulse (``Experiment.x180``)
+  detuned by ``qubit_drive_detuning``, so its shape, amplitude and
+  duration come from the calibration and are not free parameters. The
+  waveform itself is stored in the result under
+  ``data["parameters"]["qubit_drive_pulse"]`` so it can be inspected or
+  plotted afterwards (``.name``, ``.duration``, ``.times``, ``.values``,
+  ``.plot()``).
 - ``qubit_drive_time_offset = (qubit drive start) - (resonator drive start)``.
   Negative values start the qubit drive before the resonator drive.
 - ``waittime_after_pi_pulse`` is inserted between the state-preparation
@@ -49,11 +56,13 @@ spectroscopy drive always applied on the ge control channel
   |e> -> |g> is observed as a peak
 
 The readout signal versus qubit drive frequency is fitted with a
-Lorentzian to extract the resonance ``f0``. The AC Stark shift is
-referenced to a state- and offset-resolved *no-drive* measurement: for
-every (state, time offset) a spectroscopy trace is acquired with the
-resonator drive amplitude set to zero but otherwise identical timing,
-and
+Lorentzian to extract the resonance ``f0``. Because the probe is a pi
+pulse, the observed line is strongly power broadened: its width is set
+by the pi pulse Rabi frequency (of order ``1 / duration``) rather than
+by the qubit linewidth. The AC Stark shift is referenced to a state- and
+offset-resolved *no-drive* measurement: for every (state, time offset) a
+spectroscopy trace is acquired with the resonator drive amplitude set to
+zero but otherwise identical timing, and
 
     shift = f0_driven - f0_no_drive
 
@@ -163,6 +172,21 @@ def _validate_flat_top(
         )
 
 
+def _qubit_drive_waveform(exp: Experiment, target: str) -> Waveform:
+    """Return the calibrated ge pi pulse used as the spectroscopy probe."""
+    return exp.x180(exp.ctx.resolve_qubit_label(target))
+
+
+def _validate_qubit_drive_duration(duration: float) -> None:
+    # The duration is not a user parameter: it comes from the calibrated
+    # pi pulse. It is still checked because it enters the timing constraint.
+    _validate_finite_scalar("qubit_drive_duration", duration)
+    if duration <= 0:
+        raise ValueError(
+            f"The calibrated pi pulse has a non-positive duration ({duration} ns)."
+        )
+
+
 def _validate_state(name: str, value: str) -> None:
     if value not in STATE_LABELS:
         raise ValueError(f"`{name}` must be one of {STATE_LABELS}, got {value!r}.")
@@ -211,9 +235,7 @@ def _validate_timing_constraint(
 def _validate_run_parameters(
     *,
     qubit_initial_state: str,
-    qubit_drive_amplitude: float,
     qubit_drive_duration: float,
-    qubit_drive_ramptime: float,
     qubit_drive_detuning_range: ArrayLike,
     qubit_drive_time_offset: float,
     resonator_drive_amplitude: float,
@@ -227,24 +249,17 @@ def _validate_run_parameters(
     allow_zero_resonator_drive: bool,
 ) -> None:
     _validate_state("qubit_initial_state", qubit_initial_state)
-    _validate_amplitude("qubit_drive_amplitude", qubit_drive_amplitude, allow_zero=True)
     _validate_amplitude(
         "resonator_drive_amplitude",
         resonator_drive_amplitude,
         allow_zero=allow_zero_resonator_drive,
     )
-    _validate_time_on_grid("qubit_drive_duration", qubit_drive_duration)
-    _validate_time_on_grid("qubit_drive_ramptime", qubit_drive_ramptime)
+    _validate_qubit_drive_duration(qubit_drive_duration)
     _validate_time_on_grid("resonator_drive_duration", resonator_drive_duration)
     _validate_time_on_grid("resonator_drive_ramptime", resonator_drive_ramptime)
     _validate_time_on_grid("qubit_drive_time_offset", qubit_drive_time_offset)
     _validate_time_on_grid("waittime_after_pi_pulse", waittime_after_pi_pulse)
     _validate_time_on_grid("waittime_before_readout", waittime_before_readout)
-    _validate_flat_top(
-        "qubit_drive",
-        duration=qubit_drive_duration,
-        ramptime=qubit_drive_ramptime,
-    )
     _validate_flat_top(
         "resonator_drive",
         duration=resonator_drive_duration,
@@ -290,9 +305,6 @@ def ac_stark_spectroscopy_sequence(
     *,
     target: str,
     qubit_initial_state: Literal["g", "e"],
-    qubit_drive_amplitude: float,
-    qubit_drive_duration: float,
-    qubit_drive_ramptime: float,
     qubit_drive_detuning: float,
     qubit_drive_time_offset: float,
     resonator_drive_amplitude: float,
@@ -318,17 +330,12 @@ def ac_stark_spectroscopy_sequence(
         Target qubit name or label.
     qubit_initial_state : {"g", "e"}
         Qubit state prepared before the drives. "e" uses the calibrated
-        DRAG pi pulse when available (``exp.pulse.x180``).
-    qubit_drive_amplitude : float
-        Amplitude of the qubit spectroscopy drive.
-    qubit_drive_duration : float
-        Duration of the qubit drive in ns.
-    qubit_drive_ramptime : float
-        Ramp time (flat-top tau) of the qubit drive in ns.
+        ge pi pulse (``Experiment.x180``).
     qubit_drive_detuning : float
         Detuning of the qubit drive from the calibrated ge transition
-        frequency (GHz). The spectroscopy drive is always applied on the
-        ge control channel, for both preparation states.
+        frequency (GHz). The qubit drive is the calibrated ge pi pulse
+        (``Experiment.x180``) detuned by this amount, always applied on
+        the ge control channel for both preparation states.
     qubit_drive_time_offset : float
         Start time of the qubit drive relative to the resonator drive
         start (ns). Negative values start the qubit drive first.
@@ -361,17 +368,13 @@ def ac_stark_spectroscopy_sequence(
     qubit_delay = max(0.0, qubit_drive_time_offset)
     resonator_delay = max(0.0, -qubit_drive_time_offset)
 
-    qubit_drive_pulse = FlatTop(
-        duration=qubit_drive_duration,
-        amplitude=qubit_drive_amplitude,
-        tau=qubit_drive_ramptime,
-    ).detuned(qubit_drive_detuning)
+    pi_pulse = _qubit_drive_waveform(exp, target)
+    qubit_drive_pulse = pi_pulse.detuned(qubit_drive_detuning)
     resonator_drive_pulse = FlatTop(
         duration=resonator_drive_duration,
         amplitude=resonator_drive_amplitude,
         tau=resonator_drive_ramptime,
     ).detuned(resonator_drive_detuning)
-    pi_pulse = exp.pulse.x180(qubit)
 
     with PulseSchedule() as ps:
         if qubit_initial_state == "e":
@@ -445,9 +448,6 @@ def run_ac_stark_spectroscopy(
     *,
     target: str,
     qubit_initial_state: Literal["g", "e"],
-    qubit_drive_amplitude: float,
-    qubit_drive_duration: float,
-    qubit_drive_ramptime: float,
     qubit_drive_detuning_range: ArrayLike,
     qubit_drive_time_offset: float,
     resonator_drive_amplitude: float,
@@ -479,16 +479,11 @@ def run_ac_stark_spectroscopy(
         Qubit state prepared before the drives. Both states probe the ge
         transition on the ge control channel: "g" measures ge absorption,
         "e" measures ge stimulated emission after a pi pulse.
-    qubit_drive_amplitude : float
-        Amplitude of the qubit spectroscopy drive.
-    qubit_drive_duration : float
-        Duration of the qubit drive in ns.
-    qubit_drive_ramptime : float
-        Ramp time of the qubit drive in ns.
     qubit_drive_detuning_range : ArrayLike
         Sweep values of the qubit drive detuning from the calibrated ge
-        transition frequency (GHz). At least 5 distinct points are
-        required.
+        transition frequency (GHz). The probe is the calibrated ge pi
+        pulse (``Experiment.x180``) detuned by each of these values. At
+        least 5 distinct points are required.
     qubit_drive_time_offset : float
         Qubit drive start time relative to the resonator drive start (ns).
     resonator_drive_amplitude : float
@@ -529,13 +524,14 @@ def run_ac_stark_spectroscopy(
         ``MultipleMeasureResult`` objects returned by
         ``Experiment.execute``, one per detuning point), labels,
         ``nominal_frequency`` (the calibrated ge transition frequency),
-        and an echo of the drive parameters.
+        ``qubit_drive_pulse`` (the ``Experiment.x180`` waveform used as
+        the probe, before detuning) and an echo of the drive parameters.
     """
+    qubit_drive_pulse = _qubit_drive_waveform(exp, target)
+    qubit_drive_duration = float(qubit_drive_pulse.duration)
     _validate_run_parameters(
         qubit_initial_state=qubit_initial_state,
-        qubit_drive_amplitude=qubit_drive_amplitude,
         qubit_drive_duration=qubit_drive_duration,
-        qubit_drive_ramptime=qubit_drive_ramptime,
         qubit_drive_detuning_range=qubit_drive_detuning_range,
         qubit_drive_time_offset=qubit_drive_time_offset,
         resonator_drive_amplitude=resonator_drive_amplitude,
@@ -571,9 +567,6 @@ def run_ac_stark_spectroscopy(
             exp,
             target=target,
             qubit_initial_state=qubit_initial_state,
-            qubit_drive_amplitude=qubit_drive_amplitude,
-            qubit_drive_duration=qubit_drive_duration,
-            qubit_drive_ramptime=qubit_drive_ramptime,
             qubit_drive_detuning=float(detuning),
             qubit_drive_time_offset=qubit_drive_time_offset,
             resonator_drive_amplitude=resonator_drive_amplitude,
@@ -621,9 +614,7 @@ def run_ac_stark_spectroscopy(
         "frequency_range": nominal_frequency + detuning_range,
         "iq": np.asarray(iq_values, dtype=complex),
         "measure_results": measure_results,
-        "qubit_drive_amplitude": qubit_drive_amplitude,
-        "qubit_drive_duration": qubit_drive_duration,
-        "qubit_drive_ramptime": qubit_drive_ramptime,
+        "qubit_drive_pulse": qubit_drive_pulse,
         "qubit_drive_time_offset": qubit_drive_time_offset,
         "resonator_drive_amplitude": resonator_drive_amplitude,
         "resonator_drive_duration": resonator_drive_duration,
@@ -715,7 +706,8 @@ def analyze_ac_stark_spectroscopy(
     qubit_initial_state : {"g", "e"}
         Prepared qubit state; fixes the expected line polarity.
     qubit_drive_duration : float
-        Qubit drive duration in ns, used for the linewidth initial guess.
+        Duration of the pi pulse used as the probe (ns), used for the
+        linewidth initial guess.
     rabi_param : RabiParam
         Calibrated GE Rabi parameters used to normalize the IQ data.
 
@@ -819,9 +811,6 @@ def ac_stark_spectroscopy(
     *,
     target: str,
     qubit_initial_states: Collection[Literal["g", "e"]] | str,
-    qubit_drive_amplitude: float,
-    qubit_drive_duration: float,
-    qubit_drive_ramptime: float,
     qubit_drive_detuning_range: ArrayLike,
     qubit_drive_time_offset_range: float | ArrayLike,
     resonator_drive_amplitude_range: float | ArrayLike,
@@ -861,16 +850,12 @@ def ac_stark_spectroscopy(
     qubit_initial_states : Collection[{"g", "e"}] | str
         Preparation states to measure, e.g. ``["g"]`` or ``["g", "e"]``.
         Both states probe the ge transition.
-    qubit_drive_amplitude : float
-        Amplitude of the qubit spectroscopy drive.
-    qubit_drive_duration : float
-        Duration of the qubit drive in ns.
-    qubit_drive_ramptime : float
-        Ramp time (flat-top tau) of the qubit drive in ns.
     qubit_drive_detuning_range : ArrayLike
         Sweep values of the qubit drive detuning from the calibrated ge
-        transition frequency (GHz). Always swept; at least 5 distinct
-        points are required.
+        transition frequency (GHz). The probe is the calibrated ge pi
+        pulse (``Experiment.x180``) detuned by each of these values;
+        its shape, amplitude and duration are not free parameters.
+        Always swept; at least 5 distinct points are required.
     qubit_drive_time_offset_range : float | ArrayLike
         Sweep axis: qubit drive start relative to the resonator drive
         start (ns). A scalar or a list; negative values are allowed.
@@ -916,7 +901,9 @@ def ac_stark_spectroscopy(
         ``MultipleMeasureResult`` objects from ``Experiment.execute`` as
         object arrays: ``measure_results`` (state, amplitude, offset,
         detuning) and ``no_drive_measure_results`` (state, offset,
-        detuning).
+        detuning). ``data["parameters"]["qubit_drive_pulse"]`` holds the
+        ``Experiment.x180`` waveform used as the probe (before detuning);
+        its name, duration and samples are read off the waveform itself.
     """
     if isinstance(qubit_initial_states, str):
         states = [qubit_initial_states]
@@ -935,6 +922,13 @@ def ac_stark_spectroscopy(
         np.asarray(resonator_drive_amplitude_range, dtype=float)
     )
     offset_range = np.atleast_1d(np.asarray(qubit_drive_time_offset_range, dtype=float))
+    # The probe is the calibrated ge pi pulse, so its duration is fixed by
+    # the calibration and only enters the timing constraint. The waveform
+    # itself is stored in the result so that the probe actually played can
+    # be inspected afterwards.
+    qubit_drive_pulse = _qubit_drive_waveform(exp, target)
+    qubit_drive_duration = float(qubit_drive_pulse.duration)
+    _validate_qubit_drive_duration(qubit_drive_duration)
     for amplitude in amplitude_range:
         _validate_amplitude(
             "resonator_drive_amplitude_range", float(amplitude), allow_zero=False
@@ -1003,9 +997,6 @@ def ac_stark_spectroscopy(
                 exp,
                 target=target,
                 qubit_initial_state=state,  # type: ignore[arg-type]
-                qubit_drive_amplitude=qubit_drive_amplitude,
-                qubit_drive_duration=qubit_drive_duration,
-                qubit_drive_ramptime=qubit_drive_ramptime,
                 qubit_drive_detuning_range=detuning_range,
                 qubit_drive_time_offset=float(offset),
                 resonator_drive_amplitude=0.0,
@@ -1052,9 +1043,6 @@ def ac_stark_spectroscopy(
                     exp,
                     target=target,
                     qubit_initial_state=state,  # type: ignore[arg-type]
-                    qubit_drive_amplitude=qubit_drive_amplitude,
-                    qubit_drive_duration=qubit_drive_duration,
-                    qubit_drive_ramptime=qubit_drive_ramptime,
                     qubit_drive_detuning_range=detuning_range,
                     qubit_drive_time_offset=float(offset),
                     resonator_drive_amplitude=float(amplitude),
@@ -1134,9 +1122,7 @@ def ac_stark_spectroscopy(
             "dispersive_shift": dispersive_shift,
         },
         "parameters": {
-            "qubit_drive_amplitude": qubit_drive_amplitude,
-            "qubit_drive_duration": qubit_drive_duration,
-            "qubit_drive_ramptime": qubit_drive_ramptime,
+            "qubit_drive_pulse": qubit_drive_pulse,
             "resonator_drive_duration": resonator_drive_duration,
             "resonator_drive_ramptime": resonator_drive_ramptime,
             "resonator_drive_detuning": resonator_drive_detuning,
@@ -1609,6 +1595,12 @@ def display_ac_stark_spectroscopy(result: Result, *, plot: bool = True) -> None:
     print(
         "nominal qubit frequency (ge): "
         f"{data['calibration']['nominal_qubit_frequency_ge']:.6f} GHz"
+    )
+    qubit_drive_pulse = data["parameters"]["qubit_drive_pulse"]
+    print(
+        "qubit drive pulse  : "
+        f"{qubit_drive_pulse.name} ({qubit_drive_pulse.duration:g} ns, "
+        f"max |amplitude| = {np.max(np.abs(qubit_drive_pulse.values)):.4f})"
     )
     if dispersive_shift is not None:
         print(f"dispersive shift   : {1000 * dispersive_shift:+.3f} MHz (chi)")
