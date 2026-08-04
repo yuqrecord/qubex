@@ -103,7 +103,10 @@ from .experiment.thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
 
-from .experiment.ac_stark_spectroscopy import ac_stark_spectroscopy
+from .experiment.ac_stark_spectroscopy import (
+    ac_stark_spectroscopy_arbitrary_readout_drive,
+    ac_stark_spectroscopy_flattop_readout_drive,
+)
 
 __all__ = [
     "analyze_chevron_matched_transform",
@@ -175,5 +178,6 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
-    "ac_stark_spectroscopy",
+    "ac_stark_spectroscopy_arbitrary_readout_drive",
+    "ac_stark_spectroscopy_flattop_readout_drive",
 ]
