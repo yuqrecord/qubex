@@ -116,7 +116,10 @@ from .experiment.impa_calibration.impa_pump_pulse_calibration import (
     impa_pump_pulse_calibration,
 )
 
-from .experiment.ac_stark_spectroscopy import ac_stark_spectroscopy
+from .experiment.ac_stark_spectroscopy import (
+    ac_stark_spectroscopy_arbitrary_readout_drive,
+    ac_stark_spectroscopy_flattop_readout_drive,
+)
 
 from .experiment.skew_check_qr import skew_check_qr
 
@@ -190,8 +193,9 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
-    "ac_stark_spectroscopy",
     "skew_check_qr",
     "post_selected_assignment_fidelity_experiment",
     "post_selected_quantum_efficiency_experiment",
+    "ac_stark_spectroscopy_arbitrary_readout_drive",
+    "ac_stark_spectroscopy_flattop_readout_drive",
 ]

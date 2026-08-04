@@ -87,7 +87,10 @@ from .superconducting_gap import get_resistance_charge, get_superconducting_gap
 from .thermal_excitation_characterization import (
     thermal_excitation_via_rabi,
 )
-from .ac_stark_spectroscopy import ac_stark_spectroscopy
+from .ac_stark_spectroscopy import (
+    ac_stark_spectroscopy_arbitrary_readout_drive,
+    ac_stark_spectroscopy_flattop_readout_drive,
+)
 
 from .skew_check_qr import skew_check_qr
 
@@ -177,11 +180,12 @@ __all__ = [
     "sweep_readout_snr",
     "thermal_excitation_via_rabi",
     "visualize_graph",
-    "ac_stark_spectroscopy",
     "skew_check_qr",
     "post_selected_assignment_fidelity_experiment",
     "post_selected_quantum_efficiency_experiment",
     "impa_voltage_calibration",
     "impa_pump_pulse_calibration",
     "qnd_fidelity_experiment",
+    "ac_stark_spectroscopy_arbitrary_readout_drive",
+    "ac_stark_spectroscopy_flattop_readout_drive",
 ]
