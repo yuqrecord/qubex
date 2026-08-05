@@ -155,11 +155,11 @@ def run_post_selected_assignment_fidelity(
                 ),
             )
             s.add(resonator, qx.pulse.Blank(pump_buffer_time))
-            s.add(resonator, padded_readout_pulse)
             s.barrier(labels=barrier_labels)
+            s.add(resonator, padded_readout_pulse)
             s.add(
                 qubit,
-                qx.pulse.Blank(waittime_after_readout_pulse - exp.readout_post_margin),
+                qx.pulse.Blank(readout_pulse.duration + waittime_after_readout_pulse),
             )
             if state == "e":
                 s.add(qubit, exp.drag_pi_pulse[qubit])
