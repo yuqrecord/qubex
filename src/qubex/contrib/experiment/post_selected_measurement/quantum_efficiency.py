@@ -23,19 +23,20 @@ combined through the fitted scalings
 
 - ``|rho01|(epsilon) = b * exp(-epsilon^2 / (2 * sigma_m^2))``
 - ``SNR(epsilon) = a * epsilon``
-- ``eta = a^2 * sigma_m^2``
+- ``eta = a^2 * sigma_m^2 / 2``
 
 The SNR convention is the one used in :mod:`.assignment_fidelity`:
 
-    ``SNR = |mu_e - mu_g| / sqrt(var_g + var_e)``
+    ``SNR = |mu_e - mu_g| / sqrt((var_g + var_e) / 2)``
 
-evaluated on the post-selected test set with the moment-based estimator.
-Note that :mod:`qubex.contrib.experiment.quantum_efficiency_measurement`
-uses ``SNR = |mu_e - mu_g| / (0.5 * (sigma_g + sigma_e))`` and accordingly
-``eta = a^2 * sigma_m^2 / 2``; for equal state variances both conventions
-give the same ``eta``. The pointwise diagnostic in this module is
-``eta_i = SNR_i^2 / (2 * beta_m_i)`` with ``beta_m_i = -log(rho01_i / b)``
-(not the ``SNR^2 / (4 * beta_m)`` expression of the other convention).
+evaluated on the post-selected test set with the moment-based estimator, so
+that ``SNR = |mu_e - mu_g| / sigma`` for equal state variances. Note that
+:mod:`qubex.contrib.experiment.quantum_efficiency_measurement` uses
+``SNR = |mu_e - mu_g| / (0.5 * (sigma_g + sigma_e))``; the two conventions
+coincide only for equal state variances (in general
+``sqrt((var_g + var_e) / 2) != 0.5 * (sigma_g + sigma_e)``), and both lead to
+the same ``eta = a^2 * sigma_m^2 / 2``. The pointwise diagnostic is
+``eta_i = SNR_i^2 / (4 * beta_m_i)`` with ``beta_m_i = -log(rho01_i / b)``.
 
 Differences from ``quantum_efficiency_measurement.py``:
 
@@ -55,7 +56,7 @@ low-amplitude points via ``readout_amplitude_range`` and inspect the
 ``post_selection_rate`` figure and the retained shot counts.
 
 The error of ``eta`` is propagated as
-``eta_err = sqrt((2*a*sigma_m^2*a_err)^2 + (2*a^2*sigma_m*sigma_m_err)^2)``,
+``eta_err = sqrt((a*sigma_m^2*a_err)^2 + (a^2*sigma_m*sigma_m_err)^2)``,
 treating the two fits as uncorrelated.
 """
 
@@ -84,7 +85,7 @@ __all__ = [
     "run_readout_induced_dephasing",
 ]
 
-SNR_CONVENTION = "abs(mu_e - mu_g) / sqrt(var_g + var_e)"
+SNR_CONVENTION = "abs(mu_e - mu_g) / sqrt((var_g + var_e) / 2)"
 GRID_TOLERANCE = 1e-9
 MIN_READOUT_AMPLITUDES = 3
 MIN_RAMSEY_PHASES = 8
@@ -728,18 +729,15 @@ def analyze_post_selected_quantum_efficiency(
     a_err = float(snr_fit["a_err"])
     sigma_m = float(envelope_fit["sigma_m"])
     sigma_m_err = float(envelope_fit["sigma_m_err"])
-    quantum_efficiency = a**2 * sigma_m**2
+    quantum_efficiency = a**2 * sigma_m**2 / 2
     quantum_efficiency_err = float(
-        np.sqrt(
-            (2.0 * a * sigma_m**2 * a_err) ** 2
-            + (2.0 * a**2 * sigma_m * sigma_m_err) ** 2
-        )
+        np.sqrt((a * sigma_m**2 * a_err) ** 2 + (a**2 * sigma_m * sigma_m_err) ** 2)
     )
     pointwise_quantum_efficiency = np.full_like(amplitudes, np.nan)
     valid = beta_m > 0
     pointwise_quantum_efficiency[valid] = snr_values["after_post_selection"]["test"][
         valid
-    ] ** 2 / (2.0 * beta_m[valid])
+    ] ** 2 / (4.0 * beta_m[valid])
 
     return {
         "target": target,
@@ -879,7 +877,7 @@ def plot_post_selected_quantum_efficiency(*, analysis_result):
     overview.update_layout(
         title=_title_with_subtitle(
             f"Post-selected quantum efficiency : {target}",
-            "η = a²σ<sub>m</sub>², SNR after post-selection (test set)",
+            "η = a²σ<sub>m</sub>²/2, SNR after post-selection (test set)",
         ),
         width=600,
         height=400,
@@ -1019,7 +1017,7 @@ def plot_post_selected_quantum_efficiency(*, analysis_result):
     pointwise_figure.update_layout(
         title=_title_with_subtitle(
             f"Pointwise quantum efficiency : {target}",
-            "diagnostic only; η_i = SNR_i²/(2β_m,i), NaN where β_m ≤ 0",
+            "diagnostic only; η_i = SNR_i²/(4β_m,i), NaN where β_m ≤ 0",
         ),
         xaxis_title="Readout amplitude",
         yaxis_title="η",
