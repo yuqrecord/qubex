@@ -111,15 +111,15 @@ def run_qnd_fidelity(
     qubit = exp.ctx.qubits[target].label
     resonator = exp.ctx.resonators[target].label
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
-    if waittime_after_readout_pulse < exp.readout_post_margin:
+    drag_pi_pulse = exp.drag_pi_pulse[qubit]
+    if waittime_after_readout_pulse + drag_pi_pulse.duration < exp.readout_post_margin:
         raise ValueError(
-            f"`waittime_after_readout_pulse` ({waittime_after_readout_pulse} ns) must "
+            f"`waittime_after_readout_pulse` ({waittime_after_readout_pulse} ns) + `drag_pi_pulse.duration` ({drag_pi_pulse.duration} ns) must "
             f"be >= `exp.readout_post_margin` ({exp.readout_post_margin} ns)."
         )
     padded_readout_pulse = readout_pulse.padded(
         readout_pulse.duration + exp.readout_post_margin
     )
-    drag_pi_pulse = exp.drag_pi_pulse[qubit]
     barrier_labels = [qubit, resonator]
     result = dict()
     for sequence in SEQUENCES:
@@ -150,11 +150,10 @@ def run_qnd_fidelity(
                 s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
                 s.barrier(labels=barrier_labels)
                 s.add(resonator, padded_readout_pulse)
-                s.barrier(labels=barrier_labels)
                 s.add(
                     qubit,
                     qx.pulse.Blank(
-                        waittime_after_readout_pulse - exp.readout_post_margin
+                        readout_pulse.duration + waittime_after_readout_pulse
                     ),
                 )
                 if sequence == "mist_sensitive":
