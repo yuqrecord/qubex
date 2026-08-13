@@ -25,6 +25,10 @@ from .experiment.ef_measurement_with_one_channel import (
     calibrate_cr_pi_pulse,
     obtain_anharmonicity_with_cr,
 )
+from .experiment.efh_ramsey_experiment import (
+    ef_ramsey_experiment,
+    fh_ramsey_experiment,
+)
 from .experiment.gf_calibration import (
     calibrate_gf_hpi_pulse,
     calibrate_gf_pi_pulse,
@@ -33,6 +37,12 @@ from .experiment.gf_calibration import (
     gf_rabi_experiment,
     gf_ramsey_experiment,
     obtain_gf_rabi_params,
+)
+from .experiment.measure_efh_chevron_pattern import (
+    estimate_ef_frequency_from_chevron,
+    estimate_ef_frequency_from_chevron_adaptive,
+    estimate_fh_frequency_from_chevron,
+    estimate_fh_frequency_from_chevron_adaptive,
 )
 from .experiment.measurement_induced_decay import (
     measurement_induced_decay_experiment,
@@ -94,6 +104,10 @@ from .experiment.simultaneous_coherence_measurement import (
 from .experiment.simultaneous_qubit_spectroscopy import (
     simultaneous_qubit_spectroscopy,
 )
+from .experiment.spin_lock_spectroscopy import (
+    spin_lock_sequence,
+    spin_lock_spectroscopy,
+)
 from .experiment.stark_characterization import (
     stark_ramsey_experiment,
     stark_t1_experiment,
@@ -103,7 +117,7 @@ from .experiment.superconducting_gap import (
     get_superconducting_gap,
 )
 from .experiment.thermal_excitation_characterization import (
-    thermal_excitation_via_rabi,
+    measure_thermal_excitation,
 )
 from .experiment.post_selected_measurement.assignment_fidelity import (
     post_selected_assignment_fidelity_experiment,
@@ -150,8 +164,14 @@ __all__ = [
     "create_measurement_rounds",
     "create_mqc_sequence",
     "decompose_cr_crosstalk",
+    "ef_ramsey_experiment",
+    "estimate_ef_frequency_from_chevron",
+    "estimate_ef_frequency_from_chevron_adaptive",
+    "estimate_fh_frequency_from_chevron",
+    "estimate_fh_frequency_from_chevron_adaptive",
     "estimate_qubit_frequency_from_chevron",
     "estimate_qubit_frequency_from_chevron_adaptive",
+    "fh_ramsey_experiment",
     "filtered_ckp_experiment",
     "fit_readout_parameters",
     "fourier_analysis",
@@ -170,6 +190,7 @@ __all__ = [
     "measure_cr_crosstalk",
     "measure_ghz_state",
     "measure_graph_state",
+    "measure_thermal_excitation",
     "measurement_induced_decay_experiment",
     "measurement_induced_decay_v2",
     "measurement_induced_dephasing",
@@ -192,10 +213,11 @@ __all__ = [
     "rzx_gate_property",
     "simultaneous_coherence_measurement",
     "simultaneous_qubit_spectroscopy",
+    "spin_lock_sequence",
+    "spin_lock_spectroscopy",
     "stark_ramsey_experiment",
     "stark_t1_experiment",
     "sweep_readout_snr",
-    "thermal_excitation_via_rabi",
     "visualize_graph",
     "skew_check_qr",
     "post_selected_assignment_fidelity_experiment",
