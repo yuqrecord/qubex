@@ -374,7 +374,7 @@ def test_get_hpi_pulse_raises_calibration_error_for_unknown_amplitude() -> None:
         raise KeyError(qubit)
 
     ctx = SimpleNamespace(
-        targets={},
+        targets={"Q99-hi": SimpleNamespace(type=TargetType.CTRL_HI)},
         calib_note=SimpleNamespace(
             get_hpi_param=lambda *_args, **_kwargs: None,
             get_drag_hpi_param=lambda *_args, **_kwargs: None,
@@ -404,7 +404,7 @@ def test_get_hpi_pulse_raises_calibration_error_for_unresolvable_target() -> Non
         raise ValueError(label)
 
     ctx = SimpleNamespace(
-        targets={},
+        targets={"bogus": SimpleNamespace(type=TargetType.CTRL_HI)},
         calib_note=SimpleNamespace(get_hpi_param=lambda *_args, **_kwargs: None),
         calibration_valid_days=14,
         resolve_qubit_label=_unresolvable,
@@ -414,3 +414,53 @@ def test_get_hpi_pulse_raises_calibration_error_for_unresolvable_target() -> Non
 
     with pytest.raises(CalibrationMissingError, match="could not be resolved"):
         service.get_hpi_pulse("bogus")
+
+
+def test_get_hpi_pulse_keeps_raw_lookup_for_non_transition_targets() -> None:
+    """Given a readout target, when falling back, then no qubit amplitude is invented."""
+
+    def _qubit_keyed(label: str) -> float:
+        return {"Q00": 0.4}[label]
+
+    ctx = SimpleNamespace(
+        targets={"RQ00": SimpleNamespace(type=TargetType.READ)},
+        calib_note=SimpleNamespace(get_hpi_param=lambda *_args, **_kwargs: None),
+        calibration_valid_days=14,
+        resolve_qubit_label=lambda _label: "Q00",
+        params=SimpleNamespace(
+            get_control_amplitude=_qubit_keyed,
+            get_transition_control_amplitude=lambda qubit, _transition: _qubit_keyed(
+                qubit
+            ),
+        ),
+    )
+    service = PulseService(experiment_context=cast(Any, ctx))
+
+    # "RQ00" must not be resolved to "Q00": building a control pulse for a
+    # readout target would silently succeed with the qubit's amplitude.
+    with pytest.raises(KeyError):
+        service.get_hpi_pulse("RQ00")
+
+
+def test_get_hpi_pulse_keeps_raw_lookup_for_unregistered_labels() -> None:
+    """Given an unregistered label, when falling back, then the historical lookup is kept."""
+
+    def _qubit_keyed(label: str) -> float:
+        return {"Q00": 0.4}[label]
+
+    ctx = SimpleNamespace(
+        targets={},
+        calib_note=SimpleNamespace(get_hpi_param=lambda *_args, **_kwargs: None),
+        calibration_valid_days=14,
+        resolve_qubit_label=lambda _label: "Q00",
+        params=SimpleNamespace(
+            get_control_amplitude=_qubit_keyed,
+            get_transition_control_amplitude=lambda qubit, _transition: _qubit_keyed(
+                qubit
+            ),
+        ),
+    )
+    service = PulseService(experiment_context=cast(Any, ctx))
+
+    with pytest.raises(KeyError):
+        service.get_hpi_pulse("Q00-hi")

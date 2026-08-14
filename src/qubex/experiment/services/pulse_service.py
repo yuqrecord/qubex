@@ -312,6 +312,12 @@ class PulseService:
 
     def _default_control_amplitude(self, target: str) -> float:
         """Return the uncalibrated control amplitude for a target label."""
+        transition = _resolve_transition(self.ctx.targets.get(target))
+        if transition is None:
+            # Targets that do not drive a transition (readout, CR, unregistered
+            # labels) keep the historical lookup so that no control amplitude is
+            # silently invented for them.
+            return self.ctx.params.get_control_amplitude(target)
         try:
             qubit = self.ctx.resolve_qubit_label(target)
         except (KeyError, ValueError):
@@ -319,10 +325,7 @@ class PulseService:
                 message="Target label could not be resolved to a qubit.",
                 target=target,
             ) from None
-        transition = _resolve_transition(self.ctx.targets.get(target))
         try:
-            if transition is None:
-                return self.ctx.params.get_control_amplitude(qubit)
             return self.ctx.params.get_transition_control_amplitude(qubit, transition)
         except KeyError:
             raise CalibrationMissingError(
