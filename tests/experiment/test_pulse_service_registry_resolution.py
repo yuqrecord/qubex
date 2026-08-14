@@ -7,10 +7,12 @@ from typing import Any, cast
 
 import pytest
 
+from qubex.experiment.experiment_exceptions import CalibrationMissingError
 from qubex.experiment.models.rabi_param import RabiParam
 from qubex.experiment.services import pulse_service as pulse_service_module
 from qubex.experiment.services.pulse_service import PulseService
 from qubex.pulse import Arbitrary
+from qubex.system.control_parameters import ControlParameters
 from qubex.system.target_type import TargetType
 
 
@@ -123,6 +125,9 @@ def test_calc_control_amplitude_resolves_qubit_for_ef_target() -> None:
         params=SimpleNamespace(
             get_control_amplitude=lambda _qubit: 0.0,
             get_ef_control_amplitude=lambda qubit: 0.5 if qubit == "Q17" else 0.0,
+            get_transition_control_amplitude=lambda qubit, transition: (
+                0.5 if qubit == "Q17" and transition == "ef" else 0.0
+            ),
         ),
     )
     service = PulseService(experiment_context=cast(Any, ctx))
@@ -149,6 +154,9 @@ def test_unavailable_target_rabi_params_still_support_control_amplitude() -> Non
         params=SimpleNamespace(
             get_control_amplitude=lambda qubit: 0.5 if qubit == "Q17" else None,
             get_ef_control_amplitude=lambda _qubit: None,
+            get_transition_control_amplitude=lambda qubit, _transition: (
+                0.5 if qubit == "Q17" else None
+            ),
         ),
     )
     service = PulseService(experiment_context=cast(Any, ctx))
@@ -178,7 +186,12 @@ def test_ef_rabi_params_resolves_ge_labels_via_target_registry() -> None:
         ge_targets={},
         ef_targets={"custom-ef-target": object()},
         get_rabi_param=lambda target: _make_rabi_param(target, 0.1),
-        targets={"custom-ef-target": SimpleNamespace(is_ef=True)},
+        targets={
+            "custom-ef-target": SimpleNamespace(
+                is_ef=True,
+                type=TargetType.CTRL_EF,
+            )
+        },
     )
     service = PulseService(experiment_context=cast(Any, ctx))
 
@@ -274,3 +287,130 @@ def test_readout_rejects_conflicting_ramp_aliases() -> None:
             ramp_time=16.0,
             ramptime=20.0,
         )
+
+
+def test_rabi_params_include_every_transition_target() -> None:
+    """Given transition targets, when listing Rabi params, then all transitions are kept."""
+    targets = {
+        label: SimpleNamespace(type=target_type)
+        for label, target_type in (
+            ("Q00", TargetType.CTRL_GE),
+            ("Q00-ef", TargetType.CTRL_EF),
+            ("Q00-hi", TargetType.CTRL_HI),
+            ("Q00-mn", TargetType.CTRL_MN),
+            ("RQ00", TargetType.READ),
+            ("Q00-CR", TargetType.CTRL_CR),
+        )
+    }
+    ctx = SimpleNamespace(
+        targets=targets,
+        get_rabi_param=lambda target: _make_rabi_param(target, 0.1),
+    )
+    service = PulseService(experiment_context=cast(Any, ctx))
+
+    assert set(service.rabi_params) == {"Q00", "Q00-ef", "Q00-hi", "Q00-mn"}
+
+
+@pytest.mark.parametrize(
+    ("transition", "expected"),
+    [("ge", 0.4), ("ef", 0.4 / 2**0.5), ("hi", 0.2), ("mn", 0.4 / 3.0)],
+)
+def test_transition_control_amplitude_scales_with_matrix_element(
+    transition: str,
+    expected: float,
+) -> None:
+    """Given a transition, when deriving amplitude, then it scales as 1/sqrt(n + 1)."""
+    params = ControlParameters(
+        frequency_margin={},
+        control_amplitude={"Q00": 0.4},
+        readout_amplitude={},
+        control_vatt={},
+        readout_vatt={},
+        pump_vatt={},
+        control_fsc={},
+        readout_fsc={},
+        pump_fsc={},
+        capture_delay={},
+        capture_delay_word={},
+        jpa_params={},
+    )
+
+    amplitude = params.get_transition_control_amplitude(
+        "Q00",
+        cast(Any, transition),
+    )
+
+    assert amplitude == pytest.approx(expected)
+    assert params.get_ef_control_amplitude("Q00") == pytest.approx(0.4 / 2**0.5)
+
+
+def test_get_hpi_pulse_falls_back_to_qubit_keyed_amplitude() -> None:
+    """Given an uncalibrated transition target, when building a pulse, then the qubit amplitude is used."""
+    ctx = SimpleNamespace(
+        targets={"Q00-hi": SimpleNamespace(type=TargetType.CTRL_HI)},
+        calib_note=SimpleNamespace(get_hpi_param=lambda *_args, **_kwargs: None),
+        calibration_valid_days=14,
+        resolve_qubit_label=lambda label: "Q00" if label == "Q00-hi" else label,
+        params=SimpleNamespace(
+            get_control_amplitude=lambda qubit: 0.4 if qubit == "Q00" else None,
+            get_transition_control_amplitude=(
+                lambda qubit, transition: (
+                    0.2 if qubit == "Q00" and transition == "hi" else None
+                )
+            ),
+        ),
+    )
+    service = PulseService(experiment_context=cast(Any, ctx))
+
+    pulse = service.get_hpi_pulse("Q00-hi")
+
+    assert pulse.values[len(pulse.values) // 2].real == pytest.approx(0.2)
+
+
+def test_get_hpi_pulse_raises_calibration_error_for_unknown_amplitude() -> None:
+    """Given a qubit without control amplitude, when building a pulse, then calibration error is raised."""
+
+    def _missing_amplitude(qubit: str) -> float:
+        raise KeyError(qubit)
+
+    ctx = SimpleNamespace(
+        targets={},
+        calib_note=SimpleNamespace(
+            get_hpi_param=lambda *_args, **_kwargs: None,
+            get_drag_hpi_param=lambda *_args, **_kwargs: None,
+        ),
+        calibration_valid_days=14,
+        resolve_qubit_label=lambda _label: "Q99",
+        params=SimpleNamespace(
+            get_control_amplitude=_missing_amplitude,
+            get_transition_control_amplitude=lambda qubit, _transition: (
+                _missing_amplitude(qubit)
+            ),
+        ),
+    )
+    service = PulseService(experiment_context=cast(Any, ctx))
+
+    with pytest.raises(CalibrationMissingError, match="Control amplitude"):
+        service.get_hpi_pulse("Q99-hi")
+
+    with pytest.raises(CalibrationMissingError):
+        service.x90("Q99-hi")
+
+
+def test_get_hpi_pulse_raises_calibration_error_for_unresolvable_target() -> None:
+    """Given an unresolvable label, when building a pulse, then calibration error is raised."""
+
+    def _unresolvable(label: str) -> str:
+        raise ValueError(label)
+
+    ctx = SimpleNamespace(
+        targets={},
+        calib_note=SimpleNamespace(get_hpi_param=lambda *_args, **_kwargs: None),
+        calibration_valid_days=14,
+        resolve_qubit_label=_unresolvable,
+        params=SimpleNamespace(),
+    )
+    service = PulseService(experiment_context=cast(Any, ctx))
+
+    with pytest.raises(CalibrationMissingError, match="could not be resolved"):
+        service.get_hpi_pulse("bogus")

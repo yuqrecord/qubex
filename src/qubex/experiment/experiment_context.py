@@ -47,6 +47,7 @@ from qubex.system import (
 )
 from qubex.system.config_paths import resolve_default_calibration_note_path
 from qubex.system.target_type import TargetType
+from qubex.system.transition import TransitionName
 from qubex.typing import ConfigurationMode, TargetMap
 from qubex.version import get_version
 
@@ -860,6 +861,10 @@ class ExperimentContext:
         """Resolve readout label through the experiment system."""
         return self.experiment_system.resolve_read_label(label)
 
+    def resolve_transition_label(self, label: str, transition: TransitionName) -> str:
+        """Resolve a transition label through the experiment system."""
+        return self.experiment_system.resolve_transition_label(label, transition)
+
     def resolve_ge_label(self, label: str) -> str:
         """Resolve GE label through the experiment system."""
         return self.experiment_system.resolve_ge_label(label)
@@ -871,6 +876,30 @@ class ExperimentContext:
     def resolve_fh_label(self, label: str) -> str:
         """Resolve FH label through the experiment system."""
         return self.experiment_system.resolve_fh_label(label)
+
+    def resolve_hi_label(self, label: str) -> str:
+        """Resolve HI label through the experiment system."""
+        return self.experiment_system.resolve_hi_label(label)
+
+    def resolve_ij_label(self, label: str) -> str:
+        """Resolve IJ label through the experiment system."""
+        return self.experiment_system.resolve_ij_label(label)
+
+    def resolve_jk_label(self, label: str) -> str:
+        """Resolve JK label through the experiment system."""
+        return self.experiment_system.resolve_jk_label(label)
+
+    def resolve_kl_label(self, label: str) -> str:
+        """Resolve KL label through the experiment system."""
+        return self.experiment_system.resolve_kl_label(label)
+
+    def resolve_lm_label(self, label: str) -> str:
+        """Resolve LM label through the experiment system."""
+        return self.experiment_system.resolve_lm_label(label)
+
+    def resolve_mn_label(self, label: str) -> str:
+        """Resolve MN label through the experiment system."""
+        return self.experiment_system.resolve_mn_label(label)
 
     def ordered_qubit_labels(self, labels: Sequence[str]) -> list[str]:
         """Resolve labels to qubits while preserving first appearance order."""
@@ -1063,6 +1092,12 @@ class ExperimentContext:
             TargetType.CTRL_GE,
             TargetType.CTRL_EF,
             TargetType.CTRL_FH,
+            TargetType.CTRL_HI,
+            TargetType.CTRL_IJ,
+            TargetType.CTRL_JK,
+            TargetType.CTRL_KL,
+            TargetType.CTRL_LM,
+            TargetType.CTRL_MN,
             TargetType.CTRL_2Q,
             TargetType.CTRL_CR,
             TargetType.UNKNOWN,

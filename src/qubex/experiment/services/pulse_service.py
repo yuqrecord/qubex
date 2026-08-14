@@ -27,10 +27,22 @@ from qubex.experiment.experiment_constants import (
 from qubex.experiment.experiment_context import ExperimentContext
 from qubex.experiment.experiment_exceptions import CalibrationMissingError
 from qubex.experiment.models.rabi_param import RabiParam
-from qubex.system.target_type import TargetType
+from qubex.system.target_type import TRANSITION_BY_TARGET_TYPE, TargetType
+from qubex.system.transition import TransitionName
 from qubex.typing import TargetMap
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_transition(target: object) -> TransitionName | None:
+    """Return the transition driven by a target, or None for other targets."""
+    transition = getattr(target, "transition", None)
+    if transition is not None:
+        return transition
+    target_type = getattr(target, "type", None)
+    if isinstance(target_type, TargetType):
+        return TRANSITION_BY_TARGET_TYPE.get(target_type)
+    return None
 
 
 class PulseService:
@@ -74,10 +86,10 @@ class PulseService:
 
     @property
     def rabi_params(self) -> dict[str, RabiParam]:
-        """Return stored Rabi parameters for GE and EF targets."""
+        """Return stored Rabi parameters for transition-control targets."""
         params: dict[str, RabiParam] = {}
         for label, target in self.ctx.targets.items():
-            if not (getattr(target, "is_ge", False) or getattr(target, "is_ef", False)):
+            if _resolve_transition(target) is None:
                 continue
             param = self.ctx.get_rabi_param(label)
             if param is not None:
@@ -149,8 +161,12 @@ class PulseService:
         qubit = self.ctx.resolve_qubit_label(target)
         if rabi_amplitude_ratio is None:
             rabi_param = self.ctx.get_rabi_param(target)
-            if self.ctx.targets[target].type == TargetType.CTRL_EF:
-                default_amplitude = self.ctx.params.get_ef_control_amplitude(qubit)
+            transition = _resolve_transition(self.ctx.targets[target])
+            if transition is not None:
+                default_amplitude = self.ctx.params.get_transition_control_amplitude(
+                    qubit,
+                    transition,
+                )
             else:
                 default_amplitude = self.ctx.params.get_control_amplitude(qubit)
 
@@ -290,9 +306,29 @@ class PulseService:
         else:
             return FlatTop(
                 duration=HPI_DURATION,
-                amplitude=self.ctx.params.get_control_amplitude(target),
+                amplitude=self._default_control_amplitude(target),
                 tau=HPI_RAMPTIME,
             )
+
+    def _default_control_amplitude(self, target: str) -> float:
+        """Return the uncalibrated control amplitude for a target label."""
+        try:
+            qubit = self.ctx.resolve_qubit_label(target)
+        except (KeyError, ValueError):
+            raise CalibrationMissingError(
+                message="Target label could not be resolved to a qubit.",
+                target=target,
+            ) from None
+        transition = _resolve_transition(self.ctx.targets.get(target))
+        try:
+            if transition is None:
+                return self.ctx.params.get_control_amplitude(qubit)
+            return self.ctx.params.get_transition_control_amplitude(qubit, transition)
+        except KeyError:
+            raise CalibrationMissingError(
+                message=f"Control amplitude for qubit `{qubit}` is not defined.",
+                target=target,
+            ) from None
 
     def get_pi_pulse(
         self,

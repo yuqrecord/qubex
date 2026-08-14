@@ -317,6 +317,58 @@ def test_load_control_frequency_fh(tmp_path: Path):
     assert math.isclose(q1.control_frequency_fh, 5.2, rel_tol=0, abs_tol=1e-9)
 
 
+def test_load_control_frequency_of_higher_transitions(tmp_path: Path):
+    """Given higher control frequencies, when loading config, then overrides win over derivation."""
+    config_dir, params_dir, chip_id = _make_minimal_files(tmp_path)
+    _write_yaml(
+        params_dir / "control_frequency.yaml",
+        {
+            "meta": {"unit": "GHz"},
+            "data": {"Q0": 5.0, "Q1": 6.0},
+        },
+    )
+    _write_yaml(
+        params_dir / "control_frequency_ef.yaml",
+        {
+            "meta": {"unit": "GHz"},
+            "data": {"Q0": 4.7, "Q1": 5.6},
+        },
+    )
+    _write_yaml(
+        params_dir / "control_frequency_hi.yaml",
+        {
+            "meta": {"unit": "GHz"},
+            "data": {0: 4.05},
+        },
+    )
+    _write_yaml(
+        params_dir / "control_frequency_mn.yaml",
+        {
+            "meta": {"unit": "GHz"},
+            "data": {"Q0": 2.55},
+        },
+    )
+
+    loader = ConfigLoader(
+        system_id=chip_id,
+        config_dir=config_dir,
+        params_dir=params_dir,
+    )
+    quantum_system = loader.get_experiment_system().quantum_system
+
+    q0 = quantum_system.get_qubit("Q0")
+    q1 = quantum_system.get_qubit("Q1")
+    # Stored overrides win, including the numeric qubit key form.
+    assert math.isclose(q0.control_frequency_hi, 4.05, rel_tol=0, abs_tol=1e-9)
+    assert math.isclose(q0.control_frequency_mn, 2.55, rel_tol=0, abs_tol=1e-9)
+    # Unset transitions derive from `f_ge + n * (f_ef - f_ge)`.
+    assert math.isclose(q0.control_frequency_ij, 3.8, rel_tol=0, abs_tol=1e-9)
+    assert math.isclose(q1.control_frequency_hi, 4.8, rel_tol=0, abs_tol=1e-9)
+    assert math.isclose(q1.control_frequency_mn, 2.8, rel_tol=0, abs_tol=1e-9)
+    # Existing transitions are unaffected.
+    assert math.isclose(q0.control_frequency_fh, 4.4, rel_tol=0, abs_tol=1e-9)
+
+
 def test_load_uses_empty_measurement_defaults_when_file_is_missing(
     tmp_path: Path,
 ) -> None:

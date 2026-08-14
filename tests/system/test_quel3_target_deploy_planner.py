@@ -10,6 +10,9 @@ import pytest
 
 from qubex.backend.quel3.models import InstrumentDeployRequest
 from qubex.system.quel3 import Quel3SystemSynchronizer, Quel3TargetDeployPlanner
+from qubex.system.quel3.quel3_control_parameter_defaults import (
+    DEFAULT_FREQUENCY_MARGIN_GHZ,
+)
 from qubex.system.target_type import TargetType
 
 
@@ -389,3 +392,60 @@ def test_quel3_synchronizer_does_not_cache_experiment_system_for_push() -> None:
     )
 
     assert planner_calls == [pushed_experiment_system]
+
+
+@pytest.mark.parametrize(
+    "target_type",
+    [
+        TargetType.CTRL_HI,
+        TargetType.CTRL_IJ,
+        TargetType.CTRL_JK,
+        TargetType.CTRL_KL,
+        TargetType.CTRL_LM,
+        TargetType.CTRL_MN,
+    ],
+)
+def test_higher_transition_targets_deploy_as_transmitters(
+    target_type: TargetType,
+) -> None:
+    """Given higher transition targets, planner should deploy them as transmitters."""
+    planner = Quel3TargetDeployPlanner()
+    ctrl_port = SimpleNamespace(id="BOX1.CTRL0", box_id="BOX1", number=2)
+    label = f"Q00-{target_type.value.removeprefix('CTRL_').lower()}"
+    experiment_system = SimpleNamespace(
+        gen_targets={
+            label: SimpleNamespace(
+                label=label,
+                frequency=4.1,
+                type=target_type,
+                channel=SimpleNamespace(port=ctrl_port),
+            )
+        },
+        wiring_info=SimpleNamespace(read_in=[]),
+        control_params=SimpleNamespace(
+            get_frequency_margin=lambda _target_type: 0.1,
+        ),
+        get_box=lambda box_id: SimpleNamespace(id=box_id, name="quel3-02-a01"),
+        get_mux_by_readout_port=lambda _port: None,
+    )
+
+    requests = planner.build_deploy_requests(
+        experiment_system=cast(Any, experiment_system),
+        box_ids=["BOX1"],
+    )
+
+    assert len(requests) == 1
+    assert requests[0].role == "TRANSMITTER"
+
+
+def test_quel3_frequency_margin_defaults_cover_higher_transitions() -> None:
+    """Higher transition target types should have an explicit frequency margin default."""
+    for target_type in (
+        TargetType.CTRL_HI,
+        TargetType.CTRL_IJ,
+        TargetType.CTRL_JK,
+        TargetType.CTRL_KL,
+        TargetType.CTRL_LM,
+        TargetType.CTRL_MN,
+    ):
+        assert DEFAULT_FREQUENCY_MARGIN_GHZ[target_type.value] == 0.1

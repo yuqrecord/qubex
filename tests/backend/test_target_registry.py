@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -117,6 +117,44 @@ def test_target_registry_resolves_qubit_and_phase_labels() -> None:
     assert registry.resolve_ef_label("RQ00") == "Q00-ef"
     assert registry.resolve_fh_label("RQ00") == "Q00-fh"
     assert registry.resolve_read_label("Q00-ef") == "RQ00"
+
+
+def test_target_registry_resolves_registered_higher_transitions() -> None:
+    """Given registered higher targets, when resolving, then registered labels are returned."""
+    qubit = _make_qubit("Q00")
+    channel = _make_gen_channel()
+    hi = Target.new_hi_target(qubit=qubit, channel=channel)
+    mn = Target.new_mn_target(qubit=qubit, channel=channel)
+
+    registry = TargetRegistry(gen_targets=[hi, mn])
+
+    assert registry.resolve_transition_label("Q00", "hi") == "Q00-hi"
+    assert registry.resolve_transition_label("Q00-mn", "hi") == "Q00-hi"
+    assert registry.resolve_hi_label("Q00") == "Q00-hi"
+    assert registry.resolve_ij_label("Q00", allow_legacy=True) == "Q00-ij"
+    assert registry.resolve_jk_label("Q00", allow_legacy=True) == "Q00-jk"
+    assert registry.resolve_kl_label("Q00", allow_legacy=True) == "Q00-kl"
+    assert registry.resolve_lm_label("Q00", allow_legacy=True) == "Q00-lm"
+    assert registry.resolve_mn_label("Q00") == "Q00-mn"
+
+
+def test_target_registry_requires_registration_without_legacy_fallback() -> None:
+    """Given unregistered higher targets, when legacy is off, then resolution raises."""
+    registry = _build_registry()
+
+    with pytest.raises(ValueError, match="HI target is not registered"):
+        registry.resolve_hi_label("Q00")
+
+    assert registry.resolve_hi_label("Q00", allow_legacy=True) == "Q00-hi"
+    assert registry.resolve_mn_label("RQ00", allow_legacy=True) == "Q00-mn"
+
+
+def test_target_registry_rejects_unknown_transition() -> None:
+    """Given an unsupported transition, when resolving, then a descriptive error is raised."""
+    registry = _build_registry()
+
+    with pytest.raises(ValueError, match="Unsupported transition"):
+        registry.resolve_transition_label("Q00", cast(Any, "no"))
 
 
 def test_target_registry_resolves_cr_labels() -> None:

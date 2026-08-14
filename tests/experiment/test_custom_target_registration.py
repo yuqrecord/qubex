@@ -337,6 +337,12 @@ def test_register_custom_target_rejects_unexpected_deprecated_options() -> None:
     ("target_type", "expected_attr"),
     [
         (TargetType.CTRL_FH, "_qubit"),
+        (TargetType.CTRL_HI, "_qubit"),
+        (TargetType.CTRL_IJ, "_qubit"),
+        (TargetType.CTRL_JK, "_qubit"),
+        (TargetType.CTRL_KL, "_qubit"),
+        (TargetType.CTRL_LM, "_qubit"),
+        (TargetType.CTRL_MN, "_qubit"),
         (TargetType.CTRL_2Q, "_qubit"),
         (TargetType.READ, "_resonator"),
         (TargetType.PUMP, "_mux"),

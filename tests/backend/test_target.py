@@ -8,6 +8,12 @@ import pytest
 
 from qubex.system import Mux, Qubit, Resonator, Target, TargetType
 from qubex.system.control_system import GenChannel, GenPort, PortType
+from qubex.system.transition import (
+    LEVEL_NAMES,
+    TRANSITION_NAMES,
+    TransitionName,
+    transition_index,
+)
 
 
 def _make_gen_channel(*, sideband: Literal["U", "L"]) -> GenChannel:
@@ -120,3 +126,126 @@ def test_fh_target_uses_qubit_fh_frequency():
     assert target.type == TargetType.CTRL_FH
     assert target.is_fh is True
     assert target.frequency == pytest.approx(4.4)
+
+
+def test_transition_names_match_level_ladder():
+    """Transition names should be the adjacent level-name pairs."""
+    assert len(TRANSITION_NAMES) == len(LEVEL_NAMES) - 1
+    for index, transition in enumerate(TRANSITION_NAMES):
+        assert transition == LEVEL_NAMES[index] + LEVEL_NAMES[index + 1]
+        assert transition_index(transition) == index
+
+
+def test_transition_index_rejects_unknown_transition():
+    """Unknown transition names should raise a descriptive error."""
+    with pytest.raises(ValueError, match="Unsupported transition"):
+        transition_index("no")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("transition", TRANSITION_NAMES)
+def test_transition_label_helpers_cover_every_transition(transition: TransitionName):
+    """Every transition should build a label and parse back to its qubit."""
+    expected = "Q00" if transition == "ge" else f"Q00-{transition}"
+
+    assert Target.transition_label("Q00", transition) == expected
+    assert Target.transition_label("Q00-ef", transition) == expected
+    assert Target.qubit_label(expected) == "Q00"
+
+
+def test_named_transition_label_helpers_match_generic_helper():
+    """Named label helpers should agree with the generic helper."""
+    assert Target.hi_label("Q00") == "Q00-hi"
+    assert Target.ij_label("Q00") == "Q00-ij"
+    assert Target.jk_label("Q00") == "Q00-jk"
+    assert Target.kl_label("Q00") == "Q00-kl"
+    assert Target.lm_label("Q00") == "Q00-lm"
+    assert Target.mn_label("Q00") == "Q00-mn"
+
+
+@pytest.mark.parametrize("transition", TRANSITION_NAMES)
+def test_new_transition_target_uses_transition_metadata(transition: TransitionName):
+    """Transition targets should carry the matching label, type, and frequency."""
+    qubit = _make_qubit("Q00")
+    channel = _make_gen_channel(sideband="L")
+
+    target = Target.new_transition_target(
+        transition=transition,
+        qubit=qubit,
+        channel=channel,
+    )
+
+    assert target.label == Target.transition_label("Q00", transition)
+    assert target.type is TargetType[f"CTRL_{transition.upper()}"]
+    assert target.transition == transition
+    assert target.is_transition is True
+    assert target.object is qubit
+    assert target.channel is channel
+    assert target.frequency == pytest.approx(qubit.get_control_frequency(transition))
+
+
+def test_named_transition_target_predicates():
+    """Named transition predicates should follow the target type."""
+    qubit = _make_qubit("Q00")
+    channel = _make_gen_channel(sideband="L")
+
+    hi_target = Target.new_hi_target(qubit=qubit, channel=channel)
+    mn_target = Target.new_mn_target(qubit=qubit, channel=channel)
+
+    assert hi_target.is_hi is True
+    assert hi_target.is_mn is False
+    assert mn_target.is_mn is True
+    assert mn_target.is_ij is False
+
+
+def test_non_transition_target_has_no_transition():
+    """Readout targets should not report a transition."""
+    resonator = _make_resonator("RQ00", "Q00")
+    channel = _make_gen_channel(sideband="L")
+
+    target = Target.new_read_target(resonator=resonator, channel=channel)
+
+    assert target.transition is None
+    assert target.is_transition is False
+
+
+def test_qubit_control_frequency_derives_higher_transitions():
+    """Higher transitions should follow `f_ge + n * (f_ef - f_ge)` by default."""
+    qubit = _make_qubit("Q00")
+
+    assert qubit.get_control_frequency("ge") == pytest.approx(5.0)
+    assert qubit.get_control_frequency("ef") == pytest.approx(4.7)
+    assert qubit.get_control_frequency("fh") == pytest.approx(4.4)
+    assert qubit.control_frequency_hi == pytest.approx(4.1)
+    assert qubit.control_frequency_ij == pytest.approx(3.8)
+    assert qubit.control_frequency_jk == pytest.approx(3.5)
+    assert qubit.control_frequency_kl == pytest.approx(3.2)
+    assert qubit.control_frequency_lm == pytest.approx(2.9)
+    assert qubit.control_frequency_mn == pytest.approx(2.6)
+
+
+def test_qubit_control_frequency_prefers_stored_override():
+    """A stored override should win over the derived transition frequency."""
+    qubit = _make_qubit("Q00")
+    qubit.transition_control_frequency_values = {"hi": 4.05, "mn": 2.55}
+
+    assert qubit.control_frequency_hi == pytest.approx(4.05)
+    assert qubit.control_frequency_mn == pytest.approx(2.55)
+    assert qubit.control_frequency_ij == pytest.approx(3.8)
+    assert qubit.frequency == pytest.approx(5.0)
+    assert qubit.control_frequency_ef == pytest.approx(4.7)
+    assert qubit.control_frequency_fh == pytest.approx(4.4)
+
+
+def test_qubit_control_frequency_falls_back_to_bare_frequency():
+    """Derived higher frequencies should use the bare frequency when GE is unset."""
+    qubit = Qubit(
+        index=0,
+        label="Q00",
+        chip_id="chip",
+        resonator="RQ00",
+        _bare_frequency=5.0,
+        _anharmonicity=-0.3,
+    )
+
+    assert qubit.get_control_frequency("ef") == pytest.approx(4.7)
+    assert qubit.get_control_frequency("hi") == pytest.approx(4.1)
