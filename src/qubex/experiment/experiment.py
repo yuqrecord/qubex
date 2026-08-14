@@ -55,7 +55,8 @@ from qubex.system import (
     SystemManager,
     Target,
 )
-from qubex.system.target_type import TargetType
+from qubex.system.target_type import TRANSITION_TARGET_TYPES, TargetType
+from qubex.system.transition import TransitionName, is_transition_name
 from qubex.typing import (
     ConfigurationMode,
     FrequencyLike,
@@ -872,6 +873,84 @@ class Experiment:
             target_qubit_label=target_qubit_label,
             metadata=metadata,
             target_type=target_type,
+            update_backend_settings=update_backend_settings,
+        )
+
+    def register_transition_target(
+        self,
+        *,
+        qubit: str,
+        transition: TransitionName,
+        channel_number: int,
+        frequency: float | None = None,
+        update_backend_settings: bool | None = None,
+    ) -> None:
+        """
+        Register a transition target on the port of the qubit's GE target.
+
+        The target label and control frequency are derived from the transition,
+        and the target is placed on the box and port that already host the GE
+        target of the qubit.
+
+        Parameters
+        ----------
+        qubit : str
+            Qubit label, or any target label that resolves to a qubit.
+        transition : TransitionName
+            Transition to register, such as `"ef"` or `"hi"`. `"ge"` is not
+            accepted because the GE target is built from the configuration.
+        channel_number : int
+            Channel number on the GE target port to assign to the transition.
+        frequency : float | None, optional
+            Control frequency in GHz. Defaults to the frequency derived from
+            the transition.
+        update_backend_settings : bool | None, optional
+            Whether to update the channel NCO and push it to the box. Defaults
+            to False.
+        """
+        if not is_transition_name(transition):
+            raise ValueError(f"Unsupported transition `{transition}`.")
+        if transition == "ge":
+            raise ValueError(
+                "GE targets are built from the system configuration and cannot "
+                "be registered as transition targets."
+            )
+
+        qubit_label = self.ctx.resolve_qubit_label(qubit)
+        label = self.ctx.resolve_transition_label(qubit_label, transition)
+        if label in self.ctx.targets:
+            raise ValueError(f"Target `{label}` is already registered.")
+
+        try:
+            ge_target = self.ctx.targets[self.ctx.resolve_ge_label(qubit_label)]
+        except KeyError:
+            raise ValueError(
+                f"GE target is not registered for qubit `{qubit_label}`."
+            ) from None
+
+        port = ge_target.channel.port
+        if not isinstance(port.number, int):
+            raise TypeError(
+                f"Port `{port.id}` is addressed by a port number pair and "
+                "cannot host transition targets."
+            )
+
+        if frequency is None:
+            frequency = self.ctx.qubits[qubit_label].get_control_frequency(transition)
+        if not np.isfinite(frequency):
+            raise ValueError(
+                f"Control frequency of `{label}` could not be derived. "
+                "Pass `frequency` explicitly."
+            )
+
+        return self.register_custom_target(
+            label=label,
+            frequency=frequency,
+            box_id=port.box_id,
+            port_number=port.number,
+            channel_number=channel_number,
+            qubit_label=qubit_label,
+            target_type=TRANSITION_TARGET_TYPES[transition],
             update_backend_settings=update_backend_settings,
         )
 
