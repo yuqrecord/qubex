@@ -40,7 +40,7 @@ from .quel1.quel1_system_constants import (
 from .target import CapTarget, Target
 from .target_registry import TargetRegistry
 from .target_type import TargetType
-from .transition import TransitionName
+from .transition import TRANSITION_NAMES, TransitionName
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +166,18 @@ class ExperimentSystem:
         return [target for target in self.gen_targets.values() if target.is_fh]
 
     @property
+    def transition_targets(self) -> list[Target]:
+        """Return the single-qubit transition targets, grouped by transition."""
+        grouped: dict[TransitionName, list[Target]] = {
+            transition: [] for transition in TRANSITION_NAMES
+        }
+        for target in self.gen_targets.values():
+            transition = target.transition
+            if transition is not None:
+                grouped[transition].append(target)
+        return [target for targets in grouped.values() for target in targets]
+
+    @property
     def cr_targets(self) -> list[Target]:
         """Return the cr targets."""
         return [target for target in self.gen_targets.values() if target.is_cr]
@@ -178,9 +190,7 @@ class ExperimentSystem:
     @property
     def ctrl_targets(self) -> list[Target]:
         """Return the control targets."""
-        return (
-            self.ge_targets + self.ef_targets + self.fh_targets + self.two_qubit_targets
-        )
+        return self.transition_targets + self.two_qubit_targets
 
     @property
     def read_out_targets(self) -> list[Target]:
