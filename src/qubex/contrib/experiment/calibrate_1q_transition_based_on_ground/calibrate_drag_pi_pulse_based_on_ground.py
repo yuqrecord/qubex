@@ -26,8 +26,9 @@ whose difference
 
 crosses zero exactly at `delta = 0`. `eta` only scales the gain: the tipping
 pulse's own amplitude error cancels *exactly*. Both branches contain the same
-pulses in the same numbers, so they need no padding and their leakage and
-relaxation match.
+pulses in the same numbers, so their leakage and relaxation match. The half-pi
+calibrations are built the same way, with the pulse under test acting as its own
+tipping pulse.
 
 *Beta pass.* The same ladder wraps the error-amplification sequence of
 `CalibrationService.calibrate_drag_beta`::
@@ -235,10 +236,7 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
     )
 
     prep_pulses = _core.resolve_prep_pulses(exp, ladder)
-    repetitions: dict[_core.Branch, int] = {
-        _core.BRANCH_MINUS: 2 * n_rotations,
-        _core.BRANCH_PLUS: 2 * n_rotations,
-    }
+    repetitions = 2 * n_rotations
     make_pulse = _make_pulse(duration=duration, beta=beta)
     acquisition_diffs, acquisition_branches = _core.build_acquisition_plan(diffs)
     sequence = _core.build_branch_sequence(
@@ -249,8 +247,9 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
         acquisition_diffs=acquisition_diffs,
         acquisition_branches=acquisition_branches,
         repetitions=repetitions,
-        tipping_pulse=tipping_pulse,
-        pad_duration=0.0,
+        # The tipping pulse must not be swept: its own angle error only cancels
+        # exactly while it stays fixed across the whole sweep.
+        make_tipping_pulse=lambda _amplitude: tipping_pulse,
     )
 
     if plot_pulse_schedule:
@@ -263,7 +262,6 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
                     branch=branch,
                     repetitions=repetitions,
                     tipping_pulse=tipping_pulse,
-                    pad_duration=0.0,
                 )
                 for branch in _core.BRANCHES
             },
@@ -292,7 +290,6 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
         "beta": beta,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
-        "pad_duration": 0.0,
         "tipping_pulse": tipping_pulse,
         "amplitude_diff_range": diffs,
         "amplitude_range": initial_amplitude + diffs,

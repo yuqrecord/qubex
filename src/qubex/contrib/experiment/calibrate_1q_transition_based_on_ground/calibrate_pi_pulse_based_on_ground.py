@@ -29,9 +29,9 @@ crosses zero exactly at `delta = 0`. Note that `eta` only scales the gain: the
 tipping pulse's own amplitude error cancels *exactly*, not merely to first order.
 
 Both branches contain the same pulses in the same numbers and differ only in the
-sign of the tipping pulse, so they have identical duration and need no padding.
-That also makes leakage and relaxation match between the branches, which the
-half-pi family cannot do.
+sign of the tipping pulse, so they have identical duration and their leakage and
+relaxation match. The half-pi calibrations are built the same way, with the
+pulse under test acting as its own tipping pulse.
 
 Starting point
 --------------
@@ -204,10 +204,7 @@ def run_calibrate_pi_pulse_based_on_ground(
     )
 
     prep_pulses = _core.resolve_prep_pulses(exp, ladder)
-    repetitions: dict[_core.Branch, int] = {
-        _core.BRANCH_MINUS: 2 * n_rotations,
-        _core.BRANCH_PLUS: 2 * n_rotations,
-    }
+    repetitions = 2 * n_rotations
     make_pulse = _make_pulse(duration=duration, ramptime=ramptime)
     acquisition_diffs, acquisition_branches = _core.build_acquisition_plan(diffs)
     sequence = _core.build_branch_sequence(
@@ -218,8 +215,9 @@ def run_calibrate_pi_pulse_based_on_ground(
         acquisition_diffs=acquisition_diffs,
         acquisition_branches=acquisition_branches,
         repetitions=repetitions,
-        tipping_pulse=tipping_pulse,
-        pad_duration=0.0,
+        # The tipping pulse must not be swept: its own angle error only cancels
+        # exactly while it stays fixed across the whole sweep.
+        make_tipping_pulse=lambda _amplitude: tipping_pulse,
     )
 
     if plot_pulse_schedule:
@@ -232,7 +230,6 @@ def run_calibrate_pi_pulse_based_on_ground(
                     branch=branch,
                     repetitions=repetitions,
                     tipping_pulse=tipping_pulse,
-                    pad_duration=0.0,
                 )
                 for branch in _core.BRANCHES
             },
@@ -258,7 +255,6 @@ def run_calibrate_pi_pulse_based_on_ground(
         "ramptime": ramptime,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
-        "pad_duration": 0.0,
         "tipping_pulse": tipping_pulse,
         "amplitude_diff_range": diffs,
         "amplitude_range": initial_amplitude + diffs,

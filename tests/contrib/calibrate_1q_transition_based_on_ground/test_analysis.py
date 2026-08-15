@@ -12,7 +12,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
 )
-from qubex.pulse import Drag
+from qubex.pulse import Drag, FlatTop
 from qubex.system.transition import TRANSITION_NAMES, TransitionName
 
 QUBIT = "Q00"
@@ -470,3 +470,44 @@ def test_chevron_analysis_raises_when_too_few_rows_fit() -> None:
             run_result=run_result,
             rabi_fit_r2_threshold=1.5,
         )
+
+
+@pytest.mark.parametrize(
+    "pulse",
+    [
+        FlatTop(duration=DURATION, amplitude=0.3, tau=RAMPTIME),
+        Drag(duration=16.0, amplitude=0.3, beta=0.7),
+    ],
+    ids=["flat_top", "drag"],
+)
+def test_inverted_leading_pulse_matches_the_dropped_repetitions(pulse: Any) -> None:
+    """Given a signed leading pulse, when built, then the rotation is unchanged."""
+    n_rotations = 3
+    repetitions = 4 * n_rotations
+    bodies = {
+        branch: _core.build_branch_body(
+            pulse=pulse,
+            branch=branch,
+            repetitions=repetitions,
+            tipping_pulse=pulse,
+        )
+        for branch in _core.BRANCHES
+    }
+
+    # The total rotation is what the unequal-repetition construction would give.
+    assert float(bodies[_core.BRANCH_MINUS].real.sum()) == pytest.approx(
+        float(pulse.repeated(repetitions - 1).real.sum())
+    )
+    assert float(bodies[_core.BRANCH_PLUS].real.sum()) == pytest.approx(
+        float(pulse.repeated(repetitions + 1).real.sum())
+    )
+
+    # ...but the branches now carry the same pulse count and the same duration,
+    # so nothing that accumulates per pulse can bias the crossing.
+    assert len(bodies[_core.BRANCH_MINUS].values) == len(
+        bodies[_core.BRANCH_PLUS].values
+    )
+    assert bodies[_core.BRANCH_MINUS].duration == bodies[_core.BRANCH_PLUS].duration
+    assert len(bodies[_core.BRANCH_PLUS].values) == len(
+        pulse.repeated(repetitions + 1).values
+    )

@@ -14,15 +14,22 @@ Amplitude and beta are correlated, so they are refined by coordinate descent ove
 `n_iterations` passes.
 
 *Amplitude pass.* The qubit is climbed to the lower level of the transition, the
-DRAG pulse under test is repeated `4 n - 1` and `4 n + 1` times, the ladder is
-climbed back down and the qubit is read out. With a per-pulse angle error `eps`
-the two normalized signals are `sin((4n - 1) eps)` and `-sin((4n + 1) eps)`,
-whose difference
+DRAG pulse under test opens the train with a sign that selects the branch and is
+then repeated `4 n` more times, the ladder is climbed back down and the qubit is
+read out::
+
+    X_ge -> ... -> [-+drag] -> [drag] * 4n -> ... -> X_ge
+
+The two branches therefore realize `(4n - 1) theta` and `(4n + 1) theta`. With a
+per-pulse angle error `eps` the normalized signals are `sin((4n - 1) eps)` and
+`-sin((4n + 1) eps)`, whose difference
 
     d(eps) = 2 sin(4 n eps) cos(eps)  ~  8 n eps
 
-crosses zero exactly at `eps = 0`. The shorter branch is padded with an idle
-`Blank` of two pulse durations placed between the train and the un-preparation.
+crosses zero exactly at `eps = 0`. Inverting the leading pulse rather than
+dropping two keeps `4n + 1` pulses of identical duration in both branches, which
+matters here more than anywhere else in the package: leakage accumulates per
+pulse and a branch-dependent *offset* is exactly what moves the crossing.
 
 *Beta pass.* The same ladder wraps the error-amplification sequence of
 `CalibrationService.calibrate_drag_beta`::
@@ -53,10 +60,12 @@ Assumptions and caveats
   difference signal grows extra zero crossings. This is validated, not clipped.
 - `beta_range` is a set of offsets *from the current beta*, matching
   `Experiment.calibrate_drag_beta`.
-- Leakage out of the driven two-level subspace does not cancel in the branch
-  difference and accumulates with the pulse count, which differs between the
-  half-pi branches. That is precisely what the interleaved beta calibration is
-  for; keep `n_rotations` moderate.
+- Matching the branches pulse for pulse removes the leading source of a
+  branch-dependent offset, but it does not stop leakage from eating the contrast
+  as `n_rotations` grows. That is what the interleaved beta calibration is for;
+  keep `n_rotations` moderate. What remains uncancelled is any asymmetry between
+  the `+X` and the `-X` leading pulse, which biases the crossing by
+  `mu / (2 pi n)`.
 - Coordinate descent ends each pass with beta, so the reported amplitude was
   measured at the *previous* beta. Use enough iterations for both to settle.
 - Results are written to `exp.calib_note` under the transition label.
@@ -175,8 +184,8 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         DRAG coefficient used to seed beta when no matching DRAG calibration is
         stored.
     n_rotations : int
-        Number of full rotations `n`; the branches use `4n - 1` and `4n + 1`
-        pulses.
+        Number of full rotations `n`; both branches use a signed leading pulse
+        followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
     amplitude_diff_range : ArrayLike
         Amplitude offsets from the starting amplitude. Scalar or sequence.
     n_shots : int
@@ -216,11 +225,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
     )
 
     prep_pulses = _core.resolve_prep_pulses(exp, ladder)
-    repetitions: dict[_core.Branch, int] = {
-        _core.BRANCH_MINUS: 4 * n_rotations - 1,
-        _core.BRANCH_PLUS: 4 * n_rotations + 1,
-    }
-    pad_duration = 2 * duration
+    repetitions = 4 * n_rotations
     make_pulse = _make_pulse(duration=duration, beta=beta)
     acquisition_diffs, acquisition_branches = _core.build_acquisition_plan(diffs)
     sequence = _core.build_branch_sequence(
@@ -231,8 +236,9 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         acquisition_diffs=acquisition_diffs,
         acquisition_branches=acquisition_branches,
         repetitions=repetitions,
-        tipping_pulse=None,
-        pad_duration=pad_duration,
+        # The pulse under test tips onto the equator itself, so the leading
+        # pulse is swept along with the train.
+        make_tipping_pulse=make_pulse,
     )
 
     if plot_pulse_schedule:
@@ -244,8 +250,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
                     pulse=make_pulse(initial_amplitude),
                     branch=branch,
                     repetitions=repetitions,
-                    tipping_pulse=None,
-                    pad_duration=pad_duration,
+                    tipping_pulse=make_pulse(initial_amplitude),
                 )
                 for branch in _core.BRANCHES
             },
@@ -274,7 +279,6 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         "beta": beta,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
-        "pad_duration": pad_duration,
         "amplitude_diff_range": diffs,
         "amplitude_range": initial_amplitude + diffs,
         "initial_amplitude": initial_amplitude,

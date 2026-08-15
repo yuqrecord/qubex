@@ -21,42 +21,63 @@ full turns, which ideally land on the same point of the equator, so the
 *difference* of the two normalized signals crosses zero exactly at the correct
 amplitude with a gain proportional to `n`.
 
+All four build the two branches the same way: a signed `+-pi/2` *tipping* pulse,
+then `m` repetitions of the pulse under test with `m * theta_target = 2 pi n`.
+The branches differ only in the sign of the tipping pulse, so they always carry
+the same number of pulses and the same duration::
+
+    minus:  [-tip] [pulse] * m
+    plus :  [+tip] [pulse] * m
+
+- half-pi family: `theta_target = pi / 2`, `m = 4n`, and the tipping pulse is the
+  pulse under test itself, built at the swept amplitude. Its total angle is
+  `-theta + 4n theta = (4n - 1) theta` on the `minus` branch and `(4n + 1) theta`
+  on the `plus` branch, so inverting one pulse realizes exactly the same rotation
+  as dropping two would, without the pulse-count imbalance.
+- pi family: `theta_target = pi`, `m = 2n`, and the tipping pulse is the
+  transition's stored half-pi, held *fixed* across the sweep.
+
 Writing `A0` for the starting amplitude and `x` for the swept amplitude offset,
 the pulse under test has rotation angle `theta_target + eps` with
 `eps ~ theta_target * x / A0`, and
 
-- half-pi family, `4n - 1` versus `4n + 1` repetitions::
+- half-pi family, where the tipping pulse shares the swept error `eps`::
 
       d(eps) = sin((4n - 1) eps) + sin((4n + 1) eps)
              = 2 sin(4 n eps) cos(eps)  ~  8 n eps
 
-- pi family, a fixed `+-pi/2` tipping pulse followed by `2n` repetitions::
+- pi family, where the tipping pulse has its own fixed angle error `eta`::
 
       d(delta) = sin(2 n delta - eta) + sin(2 n delta + eta)
                = 2 sin(2 n delta) cos(eta)  ~  4 n delta
 
-where `eta` is the tipping pulse's own angle error. It cancels exactly, which is
-what lets the pi calibration run while the half-pi pulse is still coarse.
+`eta` cancels exactly rather than to first order, which is what lets the pi
+calibration run while the half-pi pulse is still coarse.
 
 Both families therefore share the difference slope `K = 4 pi n / A0` near the
 root, and both develop extra roots once `|x - x*| / A0` reaches `1 / (2n)`;
 `validate_amplitude_diff_range` enforces the conservative half of that bound.
 
-Three systematics drive the implementation choices here:
+Which imperfections survive into the result:
 
 - Any affine error in the normalization cancels in the difference, because
   `g z_minus + c = g z_plus + c` implies `z_minus = z_plus` for `g != 0`. Loss of
   contrast from imperfect ladder preparation is exactly such an affine error, so
   it costs precision but does not move the root. The two branches must therefore
   be normalized with the *same* `RabiParam`.
+- Even a *branch-dependent* gain leaves the root alone: both branch signals
+  vanish there, so `g_minus z_minus - g_plus z_plus` still crosses zero at the
+  same amplitude. Only a branch-dependent *offset* moves it, by
+  `dx / A0 = d(offset) / (4 pi n)`.
+- The leading source of such an offset would be a difference in pulse count -
+  leakage outside `{|k>, |k+1>}` and relaxation of the upper level accumulate per
+  pulse and do not cancel. That is why the branches are matched pulse for pulse
+  instead of differing by two repetitions. What remains is any asymmetry `mu`
+  between the `+X` and the `-X` tipping pulse, such as an IQ-mixer offset, which
+  biases the root by `mu / (2 pi n)` and is suppressed as `1 / n`.
 - A slow drift of the readout baseline does *not* cancel. The two branches are
   consequently interleaved point by point in ABBA order rather than measured as
   two consecutive sweeps.
-- Leakage outside `{|k>, |k+1>}` and relaxation of the upper level do not cancel
-  either, and they accumulate with the pulse count. The half-pi branches differ
-  by two pulses, so the shorter branch is padded with an idle `Blank` placed
-  *between the train and the un-preparation*: both branches then start every
-  un-prep pulse, and the readout, at the same absolute time.
 """
 
 from __future__ import annotations
@@ -73,7 +94,7 @@ import qubex.visualization as viz
 from qubex.analysis import FitStatus, fitting
 from qubex.experiment import Experiment
 from qubex.experiment.models import RabiParam
-from qubex.pulse import Blank, PulseArray, PulseSchedule, Waveform
+from qubex.pulse import PulseArray, PulseSchedule, Waveform
 from qubex.system.transition import (
     TRANSITION_NAMES,
     TransitionName,
@@ -452,10 +473,9 @@ def build_ground_referenced_schedule(
     ladder: TransitionLadder,
     prep_pulses: Sequence[Waveform],
     body: Waveform,
-    pad_duration: float = 0.0,
 ) -> PulseSchedule:
     """
-    Build `prep -> body -> pad -> un-prep` for one transition.
+    Build `prep -> body -> un-prep` for one transition.
 
     Parameters
     ----------
@@ -465,9 +485,6 @@ def build_ground_referenced_schedule(
         Pi pulses of the lower rungs, in preparation order.
     body : Waveform
         Waveform under test, played on the transition target.
-    pad_duration : float, optional
-        Idle time appended to the body so that branches of different length
-        reach the un-preparation, and the readout, at the same absolute time.
 
     Returns
     -------
@@ -479,18 +496,12 @@ def build_ground_referenced_schedule(
             f"`prep_pulses` has {len(prep_pulses)} entries but the {ladder.target!r} "
             f"ladder has {len(ladder.lower_labels)} lower rungs."
         )
-    if not np.isfinite(pad_duration) or pad_duration < 0:
-        raise ValueError(
-            f"`pad_duration` must be a non-negative number, got {pad_duration!r}."
-        )
 
     with PulseSchedule() as ps:
         for label, pulse in zip(ladder.lower_labels, prep_pulses, strict=True):
             ps.add(label, pulse)
             ps.barrier()
         ps.add(ladder.target, body)
-        if pad_duration > 0:
-            ps.add(ladder.target, Blank(pad_duration))
         ps.barrier()
         for label, pulse in zip(
             reversed(ladder.lower_labels),
@@ -732,36 +743,40 @@ def build_branch_body(
     *,
     pulse: Waveform,
     branch: Branch,
-    repetitions: dict[Branch, int],
-    tipping_pulse: Waveform | None,
+    repetitions: int,
+    tipping_pulse: Waveform,
 ) -> Waveform:
     """
     Build the drive of one branch at one amplitude.
+
+    The two branches differ only in the sign of the tipping pulse, so they carry
+    the same number of pulses and the same duration. Everything that accumulates
+    per pulse - leakage, relaxation, transients - is therefore matched between
+    them and cannot bias the crossing.
 
     Parameters
     ----------
     pulse : Waveform
         The pulse under test, already built at the swept amplitude.
     branch : Branch
-        Which of the two rotation counts to realize.
-    repetitions : dict[Branch, int]
-        Repetition count per branch.
-    tipping_pulse : Waveform | None
-        Fixed `+-pi/2` pulse prepended to the train (pi family), or None when the
-        pulse under test provides the quarter turn itself (half-pi family).
+        Which of the two rotation counts to realize, through the sign of the
+        tipping pulse.
+    repetitions : int
+        How many times the pulse under test follows the tipping pulse. It is the
+        same for both branches.
+    tipping_pulse : Waveform
+        The `+-pi/2` pulse that opens the train. The pi family holds it fixed
+        across the sweep; the half-pi family uses the pulse under test itself, so
+        that `-theta + m theta` realizes the shorter rotation without dropping
+        any pulse.
 
     Returns
     -------
     Waveform
         Concatenated drive of the branch.
     """
-    segments: list[Waveform] = []
-    if tipping_pulse is not None:
-        segments.append(
-            tipping_pulse.scaled(-1) if branch == BRANCH_MINUS else tipping_pulse
-        )
-    segments.append(pulse.repeated(repetitions[branch]))
-    return PulseArray(segments)
+    leading = tipping_pulse.scaled(-1) if branch == BRANCH_MINUS else tipping_pulse
+    return PulseArray([leading, pulse.repeated(repetitions)])
 
 
 def build_branch_schedule(
@@ -770,9 +785,8 @@ def build_branch_schedule(
     prep_pulses: Sequence[Waveform],
     pulse: Waveform,
     branch: Branch,
-    repetitions: dict[Branch, int],
-    tipping_pulse: Waveform | None,
-    pad_duration: float,
+    repetitions: int,
+    tipping_pulse: Waveform,
 ) -> PulseSchedule:
     """
     Build the ground-referenced schedule of one branch at one amplitude.
@@ -787,14 +801,10 @@ def build_branch_schedule(
         The pulse under test, already built at the swept amplitude.
     branch : Branch
         Which of the two rotation counts to realize.
-    repetitions : dict[Branch, int]
-        Repetition count per branch.
-    tipping_pulse : Waveform | None
-        Fixed `+-pi/2` pulse, or None.
-    pad_duration : float
-        Idle time appended to the `minus` branch's train so that both branches
-        reach the un-preparation after the same elapsed time. Ignored for the
-        `plus` branch.
+    repetitions : int
+        How many times the pulse under test follows the tipping pulse.
+    tipping_pulse : Waveform
+        The `+-pi/2` pulse that opens the train.
 
     Returns
     -------
@@ -810,7 +820,6 @@ def build_branch_schedule(
             repetitions=repetitions,
             tipping_pulse=tipping_pulse,
         ),
-        pad_duration=pad_duration if branch == BRANCH_MINUS else 0.0,
     )
 
 
@@ -822,9 +831,8 @@ def build_branch_sequence(
     initial_amplitude: float,
     acquisition_diffs: NDArray[np.float64],
     acquisition_branches: Sequence[Branch],
-    repetitions: dict[Branch, int],
-    tipping_pulse: Waveform | None,
-    pad_duration: float,
+    repetitions: int,
+    make_tipping_pulse: Callable[[float], Waveform],
 ) -> Callable[[float], PulseSchedule]:
     """
     Return the parametric sequence consumed by `sweep_parameter`.
@@ -848,12 +856,13 @@ def build_branch_sequence(
         Amplitude offset of every acquisition.
     acquisition_branches : Sequence[Branch]
         Branch of every acquisition.
-    repetitions : dict[Branch, int]
-        Repetition count per branch.
-    tipping_pulse : Waveform | None
-        Fixed `+-pi/2` pulse, or None.
-    pad_duration : float
-        Idle time appended to the `minus` branch's train.
+    repetitions : int
+        How many times the pulse under test follows the tipping pulse.
+    make_tipping_pulse : Callable[[float], Waveform]
+        Builds the tipping pulse at the same absolute amplitude the pulse under
+        test is built at. The half-pi family passes `make_pulse` itself; the pi
+        family passes a constant function, because its tipping error only
+        cancels exactly while the tipping pulse stays fixed across the sweep.
 
     Returns
     -------
@@ -865,14 +874,14 @@ def build_branch_sequence(
 
     def sequence(index: float) -> PulseSchedule:
         i = round(float(index))
+        amplitude = initial_amplitude + float(acquisition_diffs[i])
         return build_branch_schedule(
             ladder=ladder,
             prep_pulses=pulses,
-            pulse=make_pulse(initial_amplitude + float(acquisition_diffs[i])),
+            pulse=make_pulse(amplitude),
             branch=branches[i],
             repetitions=repetitions,
-            tipping_pulse=tipping_pulse,
-            pad_duration=pad_duration,
+            tipping_pulse=make_tipping_pulse(amplitude),
         )
 
     return sequence
@@ -1421,10 +1430,7 @@ def print_summary(data: dict[str, Any]) -> None:
     print_ladder(data)
     print(f"  duration            : {data['duration']} ns")
     print(f"  n_rotations         : {data['n_rotations']}")
-    print(
-        f"  repetitions         : {data['repetitions']['minus']} (n - 1/4) / "
-        f"{data['repetitions']['plus']} (n + 1/4)"
-    )
+    print(f"  train               : -/+ tipping pulse + {data['repetitions']} x pulse")
     print(f"  initial amplitude   : {data['initial_amplitude']:.9g}  [{source}]")
     print(
         f"  amplitude offset    : {data['amplitude_diff']:.9g} "

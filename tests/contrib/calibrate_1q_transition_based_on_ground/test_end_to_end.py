@@ -108,10 +108,11 @@ def test_hpi_calibration_finds_the_simulated_amplitude(
     assert exp.calib_note.hpi[target]["tau"] == RAMPTIME
 
 
-def test_hpi_branches_have_the_same_duration(
+def test_hpi_branches_are_matched(
     stub_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given the padded short branch, when swept, then both branches match in time."""
+    """Given the two branches, when swept, then they match in time and in drive."""
+    n_rotations = 2
     exp = stub_experiment_factory(
         transition="ef",
         envelope="flat_top",
@@ -128,7 +129,7 @@ def test_hpi_branches_have_the_same_duration(
         transition="ef",
         duration=DURATION,
         ramptime=RAMPTIME,
-        n_rotations=2,
+        n_rotations=n_rotations,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
         shot_interval=SHOT_INTERVAL,
@@ -136,8 +137,18 @@ def test_hpi_branches_have_the_same_duration(
         plot_pulse_schedule=False,
     )
 
-    durations = {schedule.duration for schedule in exp.sweep_calls[-1]["schedules"]}
-    assert len(durations) == 1
+    schedules = exp.sweep_calls[-1]["schedules"]
+    target = f"{QUBIT}-ef"
+    assert len({schedule.duration for schedule in schedules}) == 1
+    # No branch is padded with an idle Blank: every schedule drives the
+    # transition channel for the same number of samples, so leakage and
+    # relaxation accumulate equally on both branches.
+    driven = {
+        int(np.count_nonzero(schedule.get_sampled_sequences()[target]))
+        for schedule in schedules
+    }
+    assert len(driven) == 1
+    assert driven.pop() == (4 * n_rotations + 1) * int(DURATION / 2)
 
 
 def test_pi_calibration_finds_the_simulated_amplitude(

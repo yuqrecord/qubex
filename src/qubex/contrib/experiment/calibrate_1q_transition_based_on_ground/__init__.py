@@ -36,6 +36,14 @@ crossing is sharp where an extremum is flat, the sensitivity grows linearly with
 `n`, and any affine error in the normalization — including the loss of contrast
 that imperfect ladder preparation causes — drops out of the difference.
 
+All four build the two branches as a signed `+-pi/2` tipping pulse followed by
+the *same* number of repetitions of the pulse under test, so the branches carry
+the same pulse count and the same duration and everything that accumulates per
+pulse — leakage, relaxation, transients — is matched between them. The half-pi
+calibrations use the pulse under test as its own tipping pulse: inverting the
+leading pulse realizes `(4n - 1) theta` exactly as dropping two would, without
+the imbalance.
+
 All of them write their result to `exp.calib_note` under the *transition* label,
 for example `"Q00-fh"`. `chevron_pattern_based_on_ground` deliberately persists
 nothing, because the transition frequency belongs to the registered `Target`.

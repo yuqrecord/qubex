@@ -10,15 +10,16 @@ to the ground state.
 Method
 ------
 The qubit is climbed to the lower level of the transition, the pulse under test
-is repeated `4 n - 1` and `4 n + 1` times to drive the Bloch vector by (n - 1/4)
-and (n + 1/4) full turns, the ladder is climbed back down and the qubit is read
-out::
+opens the train with a sign that selects the branch and is then repeated `4 n`
+more times, the ladder is climbed back down and the qubit is read out::
 
-    X_ge -> ... -> [hpi] * (4n -+ 1) -> pad -> ... -> X_ge
+    X_ge -> ... -> [-+hpi] -> [hpi] * 4n -> ... -> X_ge
 
-Both branches ideally land on the equator, so their normalized signals are equal;
-with a per-pulse angle error `eps` they are `sin((4n - 1) eps)` and
-`-sin((4n + 1) eps)`, whose difference
+The `minus` branch therefore realizes `-theta + 4n theta = (4n - 1) theta` and
+the `plus` branch `(4n + 1) theta`, driving the Bloch vector by (n - 1/4) and
+(n + 1/4) full turns. Both ideally land on the equator, so their normalized
+signals are equal; with a per-pulse angle error `eps` they are
+`sin((4n - 1) eps)` and `-sin((4n + 1) eps)`, whose difference
 
     d(eps) = 2 sin(4 n eps) cos(eps)  ~  8 n eps
 
@@ -26,9 +27,12 @@ crosses zero exactly at `eps = 0` with a gain proportional to `n`. Sweeping the
 amplitude around its starting value and fitting `d` against a straight line
 therefore locates the amplitude, amplified by `n`.
 
-The shorter branch is padded with an idle `Blank` of two pulse durations, placed
-*between the train and the un-preparation*, so that both branches start every
-un-prep pulse, and the readout, at the same absolute time.
+Inverting the leading pulse rather than dropping two pulses gives exactly the
+same rotation angles, but leaves both branches with `4n + 1` pulses of identical
+duration. That matters because a branch-dependent *gain* leaves the crossing
+alone - both branch signals vanish there - while a branch-dependent *offset*
+moves it by `dx / A0 = d(offset) / (4 pi n)`, and a difference in pulse count is
+the easiest way to produce one: leakage and relaxation accumulate per pulse.
 
 Starting point
 --------------
@@ -49,11 +53,12 @@ Assumptions and caveats
 - The two branches are interleaved point by point so that a slow drift of the
   readout baseline, which does *not* cancel, is suppressed.
 - Loss of contrast from imperfect ladder preparation is an affine error and
-  cancels in the difference; it costs precision, not accuracy. Leakage out of
-  the driven two-level subspace does *not* cancel, and it accumulates with the
-  pulse count, which differs between the branches. Compare several
-  `n_rotations`; a result that drifts systematically with `n` indicates such an
-  effect rather than a pure pulse-area error.
+  cancels in the difference; it costs precision, not accuracy.
+- What the matched branches cannot cancel is an asymmetry between the `+X` and
+  the `-X` leading pulse, such as an IQ-mixer offset, which biases the crossing
+  by `mu / (2 pi n)`. Compare several `n_rotations`; a result that drifts
+  systematically with `n` indicates such an effect rather than a pure pulse-area
+  error.
 - The calibrated amplitude is written to `exp.calib_note` under the transition
   label. `calib_note` does not autosave; call `Experiment.save_calib_note`.
 """
@@ -149,8 +154,8 @@ def run_calibrate_hpi_pulse_based_on_ground(
     ramptime : float
         `FlatTop` ramp time in ns.
     n_rotations : int
-        Number of full rotations `n`; the branches use `4n - 1` and `4n + 1`
-        pulses.
+        Number of full rotations `n`; both branches use a signed leading pulse
+        followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
     amplitude_diff_range : ArrayLike
         Amplitude offsets from the starting amplitude. Scalar or sequence.
     n_shots : int
@@ -192,11 +197,7 @@ def run_calibrate_hpi_pulse_based_on_ground(
     )
 
     prep_pulses = _core.resolve_prep_pulses(exp, ladder)
-    repetitions: dict[_core.Branch, int] = {
-        _core.BRANCH_MINUS: 4 * n_rotations - 1,
-        _core.BRANCH_PLUS: 4 * n_rotations + 1,
-    }
-    pad_duration = 2 * duration
+    repetitions = 4 * n_rotations
     make_pulse = _make_pulse(duration=duration, ramptime=ramptime)
     acquisition_diffs, acquisition_branches = _core.build_acquisition_plan(diffs)
     sequence = _core.build_branch_sequence(
@@ -207,8 +208,9 @@ def run_calibrate_hpi_pulse_based_on_ground(
         acquisition_diffs=acquisition_diffs,
         acquisition_branches=acquisition_branches,
         repetitions=repetitions,
-        tipping_pulse=None,
-        pad_duration=pad_duration,
+        # The pulse under test tips onto the equator itself, so the leading
+        # pulse is swept along with the train.
+        make_tipping_pulse=make_pulse,
     )
 
     if plot_pulse_schedule:
@@ -220,8 +222,7 @@ def run_calibrate_hpi_pulse_based_on_ground(
                     pulse=make_pulse(initial_amplitude),
                     branch=branch,
                     repetitions=repetitions,
-                    tipping_pulse=None,
-                    pad_duration=pad_duration,
+                    tipping_pulse=make_pulse(initial_amplitude),
                 )
                 for branch in _core.BRANCHES
             },
@@ -247,7 +248,6 @@ def run_calibrate_hpi_pulse_based_on_ground(
         "ramptime": ramptime,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
-        "pad_duration": pad_duration,
         "amplitude_diff_range": diffs,
         "amplitude_range": initial_amplitude + diffs,
         "initial_amplitude": initial_amplitude,
