@@ -729,3 +729,62 @@ def test_drag_defaults_are_resolved_when_every_argument_is_omitted(
     assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
     assert len(payload["iterations"]) == _core.DEFAULT_N_ITERATIONS
     assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+
+
+def test_calibration_figures_are_plotted_against_the_amplitude_itself(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a calibration, when plotted, then the x axis is the amplitude, not the offset."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+    )
+
+    result = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    target = f"{QUBIT}-fh"
+    payload = result.data[target]
+    initial_amplitude = payload["initial_amplitude"]
+    for name in ("branches", "difference", "residuals"):
+        figure = result.figures[f"{target}:{name}"]
+        layout = figure.layout
+        assert layout.xaxis.title.text == "Amplitude (a.u.)"
+        for trace in figure.data:
+            # The offset axis is drawn by an invisible placeholder trace.
+            if trace.xaxis == "x2":
+                continue
+            np.testing.assert_allclose(
+                np.asarray(trace.x, dtype=np.float64),
+                payload["amplitude_range"],
+            )
+
+        # The top axis relabels the same range as offsets from the start.
+        assert layout.xaxis2.title.text == "Amplitude difference (a.u.)"
+        assert layout.xaxis2.side == "top"
+        assert layout.xaxis2.overlaying == "x"
+        np.testing.assert_allclose(
+            np.asarray(layout.xaxis2.range, dtype=np.float64),
+            np.asarray(layout.xaxis.range, dtype=np.float64) - initial_amplitude,
+        )
+
+    # The crossing is marked at the calibrated amplitude, not at the offset.
+    difference = result.figures[f"{target}:difference"]
+    assert difference.layout.shapes[-1].x0 == pytest.approx(payload["amplitude"])
+    assert f"{payload['amplitude']:.6g}" in difference.layout.annotations[0].text

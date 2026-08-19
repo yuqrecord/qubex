@@ -386,19 +386,22 @@ def plot_calibrate_drag_hpi_pulse_based_on_ground(
     figures = {
         "branches": _core.branches_figure(
             title=title,
-            amplitude_diff_range=data["amplitude_diff_range"],
+            amplitude_range=data["amplitude_range"],
+            initial_amplitude=data["initial_amplitude"],
             signal_minus=data["signal"][_core.BRANCH_MINUS],
             signal_plus=data["signal"][_core.BRANCH_PLUS],
             n_rotations=data["n_rotations"],
         ),
         "difference": _core.difference_figure(
             title=f"{title} : difference",
-            amplitude_diff_range=data["amplitude_diff_range"],
+            amplitude_range=data["amplitude_range"],
+            initial_amplitude=data["initial_amplitude"],
             analysis=data["fit"],
         ),
         "residuals": _core.residuals_figure(
             title=f"{title} : residuals",
-            amplitude_diff_range=data["amplitude_diff_range"],
+            amplitude_range=data["amplitude_range"],
+            initial_amplitude=data["initial_amplitude"],
             analysis=data["fit"],
         ),
         "iq": _core.iq_figure(

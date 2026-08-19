@@ -1526,10 +1526,67 @@ def analyze_beta_pass(
     }
 
 
+def _add_amplitude_difference_axis(
+    fig: go.Figure,
+    *,
+    amplitude_range: NDArray[np.float64],
+    initial_amplitude: float,
+) -> None:
+    """
+    Mirror the amplitude axis as an offset axis along the top of the figure.
+
+    The two axes differ by the constant starting amplitude, so the mirror is an
+    exact relabelling: the reader gets the absolute amplitude to write into a
+    calibration note along the bottom, and the offset the fit actually works in
+    along the top. Both ranges are pinned, because an overlaying axis does not
+    follow the autorange of the axis it overlays.
+
+    Parameters
+    ----------
+    fig : go.Figure
+        Figure whose primary x axis carries absolute amplitudes.
+    amplitude_range : NDArray[np.float64]
+        Absolute amplitudes plotted along the primary x axis.
+    initial_amplitude : float
+        Starting amplitude `A0` that the offsets are measured from.
+    """
+    low = float(np.min(amplitude_range))
+    high = float(np.max(amplitude_range))
+    span = high - low
+    margin = 0.05 * span if span > 0 else max(abs(high), 1.0) * 0.05
+    axis_range = (low - margin, high + margin)
+
+    # An overlaying axis is only drawn when a trace references it.
+    fig.add_scatter(
+        x=[axis_range[0] - initial_amplitude],
+        y=[None],
+        xaxis="x2",
+        mode="markers",
+        marker=dict(opacity=0),
+        showlegend=False,
+        hoverinfo="skip",
+    )
+    fig.update_layout(
+        # Pin the title to the container so the top axis title fits underneath.
+        title=dict(yref="container", y=0.97, yanchor="top"),
+        margin=dict(t=110),
+        height=440,
+        xaxis=dict(range=list(axis_range)),
+        xaxis2=dict(
+            title="Amplitude difference (a.u.)",
+            overlaying="x",
+            side="top",
+            range=[value - initial_amplitude for value in axis_range],
+            showgrid=False,
+        ),
+    )
+
+
 def branches_figure(
     *,
     title: str,
-    amplitude_diff_range: NDArray[np.float64],
+    amplitude_range: NDArray[np.float64],
+    initial_amplitude: float,
     signal_minus: NDArray[np.float64],
     signal_plus: NDArray[np.float64],
     n_rotations: int,
@@ -1537,13 +1594,13 @@ def branches_figure(
     """Build the per-branch signal figure."""
     fig = viz.make_figure()
     fig.add_scatter(
-        x=amplitude_diff_range,
+        x=amplitude_range,
         y=signal_minus,
         mode="lines+markers",
         name=f"{n_rotations} - 1/4 turns",
     )
     fig.add_scatter(
-        x=amplitude_diff_range,
+        x=amplitude_range,
         y=signal_plus,
         mode="lines+markers",
         name=f"{n_rotations} + 1/4 turns",
@@ -1551,10 +1608,15 @@ def branches_figure(
     fig.add_hline(y=0, line_dash="dot", line_width=1)
     fig.update_layout(
         title=title,
-        xaxis_title="Amplitude difference (a.u.)",
+        xaxis_title="Amplitude (a.u.)",
         yaxis_title="Normalized signal",
         width=600,
         height=400,
+    )
+    _add_amplitude_difference_axis(
+        fig,
+        amplitude_range=amplitude_range,
+        initial_amplitude=initial_amplitude,
     )
     return fig
 
@@ -1562,38 +1624,44 @@ def branches_figure(
 def difference_figure(
     *,
     title: str,
-    amplitude_diff_range: NDArray[np.float64],
+    amplitude_range: NDArray[np.float64],
+    initial_amplitude: float,
     analysis: dict[str, Any],
 ) -> go.Figure:
     """Build the difference figure with its linear fit and the crossing."""
     fig = viz.make_figure()
     fig.add_scatter(
-        x=amplitude_diff_range,
+        x=amplitude_range,
         y=analysis["difference"],
         mode="markers",
         name="difference",
     )
     fig.add_scatter(
-        x=amplitude_diff_range,
+        x=amplitude_range,
         y=analysis["fitted"],
         mode="lines",
         name="linear fit",
     )
     fig.add_hline(y=0, line_dash="dot", line_width=1)
-    fig.add_vline(x=analysis["amplitude_diff"], line_dash="dash")
+    fig.add_vline(x=analysis["amplitude"], line_dash="dash")
     fig.add_annotation(
-        x=analysis["amplitude_diff"],
+        x=analysis["amplitude"],
         y=0,
-        text=f"crossing: {analysis['amplitude_diff']:.6g}",
+        text=f"crossing: {analysis['amplitude']:.6g}",
         showarrow=True,
         arrowhead=1,
     )
     fig.update_layout(
         title=title,
-        xaxis_title="Amplitude difference (a.u.)",
+        xaxis_title="Amplitude (a.u.)",
         yaxis_title="Signal difference",
         width=600,
         height=400,
+    )
+    _add_amplitude_difference_axis(
+        fig,
+        amplitude_range=amplitude_range,
+        initial_amplitude=initial_amplitude,
     )
     return fig
 
@@ -1601,13 +1669,14 @@ def difference_figure(
 def residuals_figure(
     *,
     title: str,
-    amplitude_diff_range: NDArray[np.float64],
+    amplitude_range: NDArray[np.float64],
+    initial_amplitude: float,
     analysis: dict[str, Any],
 ) -> go.Figure:
     """Build the fit-residual figure."""
     fig = viz.make_figure()
     fig.add_scatter(
-        x=amplitude_diff_range,
+        x=amplitude_range,
         y=analysis["residuals"],
         mode="lines+markers",
         name="residual",
@@ -1615,10 +1684,15 @@ def residuals_figure(
     fig.add_hline(y=0, line_dash="dot", line_width=1)
     fig.update_layout(
         title=title,
-        xaxis_title="Amplitude difference (a.u.)",
+        xaxis_title="Amplitude (a.u.)",
         yaxis_title="Residual",
         width=600,
         height=400,
+    )
+    _add_amplitude_difference_axis(
+        fig,
+        amplitude_range=amplitude_range,
+        initial_amplitude=initial_amplitude,
     )
     return fig
 
