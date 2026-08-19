@@ -71,12 +71,12 @@ Assumptions and caveats
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 import numpy as np
 import plotly.graph_objects as go
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 
 from qubex.experiment import Experiment
 from qubex.experiment.models import Result
@@ -166,13 +166,13 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
     *,
     target: str,
     transition: TransitionName,
-    duration: float,
-    drag_coeff: float,
-    n_rotations: int,
-    amplitude_diff_range: ArrayLike,
-    n_shots: int,
-    shot_interval: float,
-    plot_pulse_schedule: bool = True,
+    duration: float | None = None,
+    drag_coeff: float | None = None,
+    n_rotations: int | None = None,
+    amplitude_diff_range: ArrayLike | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> dict[str, Any]:
     """
     Measure both rotation branches over the amplitude offsets, at fixed beta.
@@ -188,22 +188,27 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
         Qubit label, or any target label that resolves to a qubit.
     transition : TransitionName
         Transition to calibrate, `"ge"` through `"mn"`.
-    duration : float
-        Pulse duration in ns.
-    drag_coeff : float
+    duration : float | None, optional
+        Pulse duration in ns. Defaults to `_core.DEFAULT_DRAG_PI_DURATION`.
+    drag_coeff : float | None, optional
         DRAG coefficient used to seed beta when no matching DRAG calibration is
-        stored.
-    n_rotations : int
-        Number of full rotations `n`; both branches use `2n` pi pulses and differ
-        in the sign of the tipping pulse.
-    amplitude_diff_range : ArrayLike
+        stored. Defaults to `_core.DEFAULT_DRAG_COEFF`.
+    n_rotations : int | None, optional
+        Number of full rotations `n`; both branches use a signed leading pulse
+        followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
+        Defaults to `_core.DEFAULT_DRAG_N_ROTATIONS`.
+    amplitude_diff_range : ArrayLike | None, optional
         Amplitude offsets from the starting amplitude. Scalar or sequence.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the two branch schedules at zero offset.
+        Defaults to a symmetric sweep around the starting amplitude, built by
+        `_core.default_amplitude_diff_range`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the two branch schedules at zero offset. Defaults to
+        True.
 
     Returns
     -------
@@ -211,6 +216,19 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
         Raw payload consumed by
         `analyze_calibrate_drag_pi_pulse_based_on_ground`.
     """
+    if duration is None:
+        duration = _core.DEFAULT_DRAG_PI_DURATION
+    if drag_coeff is None:
+        drag_coeff = _core.DEFAULT_DRAG_COEFF
+    if n_rotations is None:
+        n_rotations = _core.DEFAULT_DRAG_N_ROTATIONS
+    if n_shots is None:
+        n_shots = _core.DEFAULT_N_SHOTS
+    if shot_interval is None:
+        shot_interval = _core.DEFAULT_SHOT_INTERVAL
+    if plot_pulse_schedule is None:
+        plot_pulse_schedule = True
+
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
     _core.validate_duration(duration)
@@ -228,6 +246,11 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
     )
     _core.validate_initial_amplitude(initial_amplitude)
 
+    if amplitude_diff_range is None:
+        amplitude_diff_range = _core.default_amplitude_diff_range(
+            initial_amplitude=initial_amplitude,
+            n_rotations=n_rotations,
+        )
     diffs = _core.resolve_sweep_range(amplitude_diff_range)
     _core.validate_amplitude_diff_range(
         diffs,
@@ -444,89 +467,66 @@ def display_calibrate_drag_pi_pulse_based_on_ground(
             )
 
 
-def calibrate_drag_pi_pulse_based_on_ground(
+def _calibrate_one_drag_pi(
     exp: Experiment,
     *,
-    target: str,
-    transition: TransitionName,
-    duration: float,
-    drag_coeff: float,
-    n_rotations: int,
-    amplitude_diff_range: ArrayLike,
+    ladder: _core.TransitionLadder,
+    duration: float | None,
+    drag_coeff: float | None,
+    n_rotations: int | None,
+    amplitude_diff_range: ArrayLike | None,
     n_iterations: int,
     calibrate_beta: bool,
-    beta_range: ArrayLike,
+    betas: NDArray[np.float64],
     n_turns: int,
     degree: int,
-    n_shots: int,
-    shot_interval: float,
-    plot: bool = True,
-    plot_pulse_schedule: bool = True,
-) -> Result:
+    n_shots: int | None,
+    shot_interval: float | None,
+    plot: bool,
+    plot_pulse_schedule: bool | None,
+) -> tuple[dict[str, Any], dict[str, go.Figure]]:
     """
-    Calibrate a transition's DRAG pi amplitude and beta, and store both.
-
-    Each iteration refines the amplitude against the zero crossing at the current
-    beta, writes it to the calibration note, and then — when `calibrate_beta` is
-    set — refines beta at that amplitude and writes it back.
+    Run the amplitude/beta coordinate descent of one transition.
 
     Parameters
     ----------
     exp : Experiment
         Experiment to measure with.
-    target : str
-        Qubit label, or any target label that resolves to a qubit.
-    transition : TransitionName
-        Transition to calibrate, `"ge"` through `"mn"`.
-    duration : float
-        Pulse duration in ns.
-    drag_coeff : float
-        DRAG coefficient used to seed beta.
-    n_rotations : int
-        Number of full rotations `n`.
-    amplitude_diff_range : ArrayLike
-        Amplitude offsets from the starting amplitude. Scalar or sequence.
+    ladder : _core.TransitionLadder
+        Ladder returned by `_core.preflight_ladders`.
+    duration, drag_coeff, n_rotations, amplitude_diff_range : optional
+        Forwarded to `run_calibrate_drag_pi_pulse_based_on_ground`, which
+        resolves any of them that is `None`.
     n_iterations : int
         Number of amplitude/beta coordinate-descent passes.
     calibrate_beta : bool
         Whether to refine beta between amplitude passes.
-    beta_range : ArrayLike
-        Beta offsets from the current beta. Scalar or sequence.
+    betas : NDArray[np.float64]
+        Beta offsets from the current beta, already resolved and validated.
     n_turns : int
         Number of `(X180+, X180-)` repetitions in the beta sequence.
     degree : int
         Degree of the polynomial fitted by the beta calibration.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot : bool, optional
-        Whether to show the figures.
-    plot_pulse_schedule : bool, optional
+    n_shots, shot_interval : optional
+        Forwarded to the run stage.
+    plot : bool
+        Whether to show the figures of this target.
+    plot_pulse_schedule : bool | None
         Whether to draw the two branch schedules of the first pass.
 
     Returns
     -------
-    Result
-        Payload, figures, the calibrated amplitude and beta, and the
-        per-iteration history. Both parameters are also written to
-        `exp.calib_note` under the transition label.
+    tuple[dict[str, Any], dict[str, go.Figure]]
+        The payload of this target and its figures.
     """
-    _core.validate_positive_int(n_iterations, "n_iterations")
-    _core.validate_positive_int(n_turns, "n_turns")
-    _core.validate_positive_int(degree, "degree")
-    betas = _core.resolve_sweep_range(beta_range)
-    if calibrate_beta:
-        _core.validate_beta_range(betas, degree=degree)
-
     iterations: list[dict[str, Any]] = []
     data: dict[str, Any] = {}
     beta_result: dict[str, Any] | None = None
     for i in range(n_iterations):
         run_result = run_calibrate_drag_pi_pulse_based_on_ground(
             exp,
-            target=target,
-            transition=transition,
+            target=ladder.qubit,
+            transition=ladder.transition,
             duration=duration,
             drag_coeff=drag_coeff,
             n_rotations=n_rotations,
@@ -537,20 +537,23 @@ def calibrate_drag_pi_pulse_based_on_ground(
         )
         data = analyze_calibrate_drag_pi_pulse_based_on_ground(run_result=run_result)
 
+        # The run stage owns the defaults, so read what it actually played.
+        resolved_duration = float(data["duration"])
+        resolved_n_shots = int(data["n_shots"])
+        resolved_shot_interval = float(data["shot_interval"])
         beta = float(data["beta"])
         amplitude = float(data["amplitude"])
         exp.calib_note.update_drag_pi_param(
             data["target"],
             {
                 "target": data["target"],
-                "duration": duration,
+                "duration": resolved_duration,
                 "amplitude": amplitude,
                 "beta": beta,
             },
         )
 
         if calibrate_beta:
-            ladder: _core.TransitionLadder = data["ladder"]
             analyzer = _resolve_analyzer(exp, target=ladder.target)
             beta_result = _core.analyze_beta_pass(
                 run_result=_core.run_beta_pass(
@@ -560,15 +563,15 @@ def calibrate_drag_pi_pulse_based_on_ground(
                     rabi_param=data["rabi_param"],
                     pulse_type="pi",
                     make_drive=lambda value, amplitude=amplitude: Drag(
-                        duration=duration,
+                        duration=resolved_duration,
                         amplitude=amplitude,
                         beta=float(value),
                     ),
                     analyzer=analyzer,
                     beta_range=beta + betas,
                     n_turns=n_turns,
-                    n_shots=n_shots,
-                    shot_interval=shot_interval,
+                    n_shots=resolved_n_shots,
+                    shot_interval=resolved_shot_interval,
                 ),
                 degree=degree,
             )
@@ -577,7 +580,7 @@ def calibrate_drag_pi_pulse_based_on_ground(
                 data["target"],
                 {
                     "target": data["target"],
-                    "duration": duration,
+                    "duration": resolved_duration,
                     "amplitude": amplitude,
                     "beta": beta,
                 },
@@ -600,6 +603,150 @@ def calibrate_drag_pi_pulse_based_on_ground(
         "iterations": iterations,
     }
     figures = plot_calibrate_drag_pi_pulse_based_on_ground(data)
-    result = Result(data=data, figures=figures)
-    display_calibrate_drag_pi_pulse_based_on_ground(result, plot)
-    return result
+    display_calibrate_drag_pi_pulse_based_on_ground(
+        Result(data=data, figures=figures),
+        plot,
+    )
+    return data, figures
+
+
+def calibrate_drag_pi_pulse_based_on_ground(
+    exp: Experiment,
+    *,
+    targets: Collection[str] | str | None = None,
+    transition: TransitionName,
+    duration: float | None = None,
+    drag_coeff: float | None = None,
+    n_rotations: int | None = None,
+    amplitude_diff_range: ArrayLike | None = None,
+    n_iterations: int | None = None,
+    calibrate_beta: bool | None = None,
+    beta_range: ArrayLike | None = None,
+    n_turns: int | None = None,
+    degree: int | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot: bool | None = None,
+    plot_pulse_schedule: bool | None = None,
+) -> Result:
+    """
+    Calibrate a transition's DRAG pi amplitude and beta, and store both.
+
+    Each iteration refines the amplitude against the zero crossing at the current
+    beta, writes it to the calibration note, and then — when `calibrate_beta` is
+    set — refines beta at that amplitude and writes it back.
+
+    Every requested target is checked before the first acquisition, so an
+    unregistered target or an uncalibrated lower rung stops the whole batch
+    rather than leaving the calibration note half written. The targets are then
+    calibrated one after another.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment to measure with.
+    targets : Collection[str] | str | None, optional
+        Qubit labels, or any target labels that resolve to qubits. Defaults to
+        every qubit that has the transition registered.
+    transition : TransitionName
+        Transition to calibrate, `"ge"` through `"mn"`.
+    duration : float | None, optional
+        Pulse duration in ns. Defaults to `_core.DEFAULT_DRAG_PI_DURATION`.
+    drag_coeff : float | None, optional
+        DRAG coefficient used to seed beta. Defaults to
+        `_core.DEFAULT_DRAG_COEFF`.
+    n_rotations : int | None, optional
+        Number of full rotations `n`. Defaults to
+        `_core.DEFAULT_DRAG_N_ROTATIONS`, which assumes the amplitude is already
+        close; run `calibrate_hpi_pulse_based_on_ground` first, or lower it, when
+        starting from a coarse estimate.
+    amplitude_diff_range : ArrayLike | None, optional
+        Amplitude offsets from the starting amplitude. Scalar or sequence.
+        Defaults to a symmetric sweep around each target's starting amplitude.
+    n_iterations : int | None, optional
+        Number of amplitude/beta coordinate-descent passes. Defaults to
+        `_core.DEFAULT_N_ITERATIONS`.
+    calibrate_beta : bool | None, optional
+        Whether to refine beta between amplitude passes. Defaults to
+        `_core.DEFAULT_CALIBRATE_BETA`.
+    beta_range : ArrayLike | None, optional
+        Beta offsets from the current beta. Scalar or sequence. Defaults to
+        `_core.DEFAULT_BETA_RANGE`.
+    n_turns : int | None, optional
+        Number of `(X180+, X180-)` repetitions in the beta sequence. Defaults to `_core.DEFAULT_N_TURNS`.
+    degree : int | None, optional
+        Degree of the polynomial fitted by the beta calibration. Defaults to
+        `_core.DEFAULT_DEGREE`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot : bool | None, optional
+        Whether to show the figures. Defaults to True.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the two branch schedules of the first pass. Defaults to
+        True.
+
+    Returns
+    -------
+    Result
+        Payload keyed by transition label, and figures keyed by
+        `"{target}:{name}"`. Each payload is the single-target payload, so
+        the calibrated amplitude and beta of one target are at
+        `result.data[target]["amplitude"]` and `result.data[target]["beta"]`.
+        Both are also written to `exp.calib_note` under the transition label.
+    """
+    if plot is None:
+        plot = True
+    if n_iterations is None:
+        n_iterations = _core.DEFAULT_N_ITERATIONS
+    if calibrate_beta is None:
+        calibrate_beta = _core.DEFAULT_CALIBRATE_BETA
+    if beta_range is None:
+        beta_range = _core.DEFAULT_BETA_RANGE
+    if n_turns is None:
+        n_turns = _core.DEFAULT_N_TURNS
+    if degree is None:
+        degree = _core.DEFAULT_DEGREE
+
+    _core.validate_positive_int(n_iterations, "n_iterations")
+    _core.validate_positive_int(n_turns, "n_turns")
+    _core.validate_positive_int(degree, "degree")
+    betas = _core.resolve_sweep_range(beta_range)
+    if calibrate_beta:
+        _core.validate_beta_range(betas, degree=degree)
+
+    ladders = _core.preflight_ladders(
+        exp,
+        targets=targets,
+        transition=transition,
+        require_rabi_param=True,
+    )
+
+    data: dict[str, Any] = {}
+    figures: dict[str, go.Figure] = {}
+    for ladder in ladders:
+        payload, target_figures = _calibrate_one_drag_pi(
+            exp,
+            ladder=ladder,
+            duration=duration,
+            drag_coeff=drag_coeff,
+            n_rotations=n_rotations,
+            amplitude_diff_range=amplitude_diff_range,
+            n_iterations=n_iterations,
+            calibrate_beta=calibrate_beta,
+            betas=betas,
+            n_turns=n_turns,
+            degree=degree,
+            n_shots=n_shots,
+            shot_interval=shot_interval,
+            plot=plot,
+            plot_pulse_schedule=plot_pulse_schedule,
+        )
+        data[payload["target"]] = payload
+        figures.update(
+            {f"{payload['target']}:{name}": fig for name, fig in target_figures.items()}
+        )
+
+    return Result(data=data, figures=figures)

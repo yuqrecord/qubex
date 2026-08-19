@@ -82,7 +82,7 @@ Which imperfections survive into the result:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -93,6 +93,18 @@ from numpy.typing import ArrayLike, NDArray
 import qubex.visualization as viz
 from qubex.analysis import FitStatus, fitting
 from qubex.experiment import Experiment
+from qubex.experiment.experiment_constants import (
+    CALIBRATION_SHOTS,
+    DEFAULT_INTERVAL,
+    DEFAULT_RABI_TIME_RANGE,
+    DRAG_COEFF,
+    DRAG_HPI_DURATION,
+    DRAG_PI_DURATION,
+    HPI_DURATION,
+    HPI_RAMPTIME,
+    PI_DURATION,
+    PI_RAMPTIME,
+)
 from qubex.experiment.models import RabiParam
 from qubex.pulse import PulseArray, PulseSchedule, Waveform
 from qubex.system.transition import (
@@ -119,6 +131,86 @@ MIN_SWEEP_POINTS = 4
 
 #: Smallest Rabi arc amplitude that still supports normalization.
 MIN_RABI_AMPLITUDE = 1e-12
+
+# Default values of the experiment arguments.
+#
+# Everything that the core `Experiment` API already decides is taken from it
+# rather than chosen again here: the names below are bound to the constants of
+# `qubex.experiment.experiment_constants` where one exists, and otherwise carry
+# the same literal that the corresponding `Experiment` service uses. The one
+# exception is `DEFAULT_AMPLITUDE_DIFF_FRACTION`, which is documented at its
+# definition.
+
+#: Shots per acquisition. Same as every calibration of `CalibrationService`.
+DEFAULT_N_SHOTS = CALIBRATION_SHOTS
+
+#: Interval between shots in ns.
+DEFAULT_SHOT_INTERVAL = DEFAULT_INTERVAL
+
+#: Flat-top durations swept by the Rabi and chevron experiments, in ns.
+DEFAULT_TIME_RANGE = DEFAULT_RABI_TIME_RANGE
+
+#: `FlatTop` ramp time of the Rabi and chevron drive, in ns. This is the pi/2
+#: ramp that `MeasurementService.obtain_rabi_params` derives the same way.
+DEFAULT_RABI_RAMPTIME = HPI_DURATION - HPI_RAMPTIME
+
+#: FlatTop half-pi shape, as `CalibrationService.calibrate_default_pulse` builds it.
+DEFAULT_HPI_DURATION = HPI_DURATION
+DEFAULT_HPI_RAMPTIME = HPI_RAMPTIME
+
+#: FlatTop pi shape, as `CalibrationService.calibrate_default_pulse` builds it.
+DEFAULT_PI_DURATION = PI_DURATION
+DEFAULT_PI_RAMPTIME = PI_RAMPTIME
+
+#: DRAG pulse shape and coefficient.
+DEFAULT_DRAG_HPI_DURATION = DRAG_HPI_DURATION
+DEFAULT_DRAG_PI_DURATION = DRAG_PI_DURATION
+DEFAULT_DRAG_COEFF = DRAG_COEFF
+
+#: Whether the Rabi oscillation is fitted with a damped cosine.
+DEFAULT_IS_DAMPED = True
+
+#: Minimum R-squared for a fit to be trusted. `r2_threshold` in `Experiment`.
+DEFAULT_FIT_THRESHOLD = 0.5
+
+#: Points in a swept amplitude range. `n_points` in `calibrate_default_pulse`.
+DEFAULT_N_POINTS = 20
+
+#: Full rotations amplified by the FlatTop calibrations.
+DEFAULT_N_ROTATIONS = 1
+
+#: Full rotations amplified by the DRAG calibrations.
+DEFAULT_DRAG_N_ROTATIONS = 4
+
+#: Amplitude/beta coordinate-descent passes of the DRAG calibrations.
+DEFAULT_N_ITERATIONS = 2
+
+#: `(X90-, X90+)` repetitions of the beta sequence.
+DEFAULT_N_TURNS = 1
+
+#: Degree of the polynomial fitted by the beta calibration.
+DEFAULT_DEGREE = 3
+
+#: Whether the DRAG calibrations refine beta between amplitude passes.
+DEFAULT_CALIBRATE_BETA = True
+
+#: Beta offsets swept around the current beta.
+DEFAULT_BETA_RANGE = np.linspace(-2.0, 2.0, 20)
+
+#: Drive detunings swept by the chevron experiment, in GHz.
+DEFAULT_DETUNING_RANGE = np.linspace(-0.05, 0.05, 51)
+
+#: Half-width of the default amplitude sweep, as a fraction of `A0 / n_rotations`.
+#:
+#: This is the one default that cannot be taken from `Experiment`.
+#: `calibrate_default_pulse` sweeps the amplitude itself over
+#: `[A0 (1 - 0.5/n), A0 (1 + 0.5/n)]`, a half-width of `0.5 A0 / n`. The
+#: error-amplified crossing used here is far more sensitive, and
+#: `validate_amplitude_diff_range` rejects any half-width that reaches
+#: `A0 / (4 n)`, so the core value sits outside the usable range. The fraction
+#: below is the one that validator itself recommends: it keeps the difference
+#: signal within roughly 10 % of linear.
+DEFAULT_AMPLITUDE_DIFF_FRACTION = 0.1
 
 
 @dataclass(frozen=True)
@@ -320,6 +412,90 @@ def validate_amplitude_diff_range(
         )
 
 
+def resolve_frequencies(
+    exp: Experiment,
+    *,
+    ladders: Sequence[TransitionLadder],
+    frequencies: Mapping[str, float] | float | None,
+) -> dict[str, float]:
+    """
+    Resolve the carrier frequency of every ladder.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment holding the target registry.
+    ladders : Sequence[TransitionLadder]
+        Ladders returned by `preflight_ladders`.
+    frequencies : Mapping[str, float] | float | None
+        Per-target mapping keyed by transition label or qubit label, one value
+        shared by every target, or `None` to use the frequency each transition
+        target is registered with.
+
+    Returns
+    -------
+    dict[str, float]
+        Frequency in GHz keyed by transition label.
+    """
+    resolved: dict[str, float] = {}
+    for ladder in ladders:
+        if frequencies is None:
+            value = exp.ctx.targets[ladder.target].frequency
+        elif isinstance(frequencies, Mapping):
+            if ladder.target in frequencies:
+                value = frequencies[ladder.target]
+            elif ladder.qubit in frequencies:
+                value = frequencies[ladder.qubit]
+            else:
+                raise ValueError(
+                    f"`frequencies` has no entry for {ladder.target!r} or "
+                    f"{ladder.qubit!r}."
+                )
+        else:
+            value = frequencies
+        resolved[ladder.target] = float(value)
+    return resolved
+
+
+def default_amplitude_diff_range(
+    *,
+    initial_amplitude: float,
+    n_rotations: int,
+) -> NDArray[np.float64]:
+    """
+    Return the default amplitude sweep around a starting amplitude.
+
+    The half-width is `DEFAULT_AMPLITUDE_DIFF_FRACTION * A0 / n_rotations`,
+    capped so that the largest swept amplitude stays at or below 1. It is always
+    well inside the monotonic bound `A0 / (4 n)` that
+    `validate_amplitude_diff_range` enforces.
+
+    Parameters
+    ----------
+    initial_amplitude : float
+        Starting amplitude `A0`, already validated.
+    n_rotations : int
+        Number of full rotations `n`.
+
+    Returns
+    -------
+    NDArray[np.float64]
+        Symmetric amplitude offsets with `DEFAULT_N_POINTS` values.
+    """
+    half_width = min(
+        DEFAULT_AMPLITUDE_DIFF_FRACTION * initial_amplitude / n_rotations,
+        1.0 - initial_amplitude,
+    )
+    if half_width <= 0:
+        raise ValueError(
+            f"The starting amplitude ({initial_amplitude:.6g}) leaves no room to "
+            "sweep upwards, so no default `amplitude_diff_range` exists. Shorten "
+            "the pulse to lower the starting amplitude, or pass the range "
+            "explicitly."
+        )
+    return np.linspace(-half_width, half_width, DEFAULT_N_POINTS)
+
+
 def resolve_sweep_range(values: ArrayLike) -> NDArray[np.float64]:
     """Normalize a scalar-or-sequence sweep argument to a 1-D float array."""
     return np.atleast_1d(np.asarray(values, dtype=np.float64))
@@ -440,6 +616,151 @@ def get_transition_rabi_param(
             "values. Re-run `obtain_rabi_params_based_on_ground`."
         )
     return param
+
+
+def resolve_target_labels(
+    exp: Experiment,
+    *,
+    targets: Collection[str] | str | None,
+    transition: TransitionName,
+) -> list[str]:
+    """
+    Normalize the `targets` argument to an ordered list of qubit labels.
+
+    `None` selects every qubit that already has the transition registered, so a
+    chip where only a few rungs exist does not report the rest as failures.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment holding the target registry.
+    targets : Collection[str] | str | None
+        Qubit labels, target labels, a single label, or `None`.
+    transition : TransitionName
+        Transition the labels are resolved against.
+
+    Returns
+    -------
+    list[str]
+        Qubit labels, de-duplicated and in the order they were given.
+    """
+    validate_transition(transition)
+    if targets is None:
+        registered = [
+            qubit
+            for qubit in exp.ctx.qubit_labels
+            if exp.ctx.resolve_transition_label(qubit, transition) in exp.ctx.targets
+        ]
+        if not registered:
+            raise ValueError(
+                f"No qubit has a {transition!r} target registered, so `targets=None` "
+                "selects nothing. Register one with "
+                "`Experiment.register_transition_target`, or name the targets."
+            )
+        return registered
+
+    labels = [targets] if isinstance(targets, str) else list(targets)
+    if not labels:
+        raise ValueError("`targets` must name at least one target.")
+
+    qubits: list[str] = []
+    for label in labels:
+        qubit = exp.ctx.resolve_qubit_label(label)
+        if qubit not in qubits:
+            qubits.append(qubit)
+    return qubits
+
+
+def preflight_ladders(
+    exp: Experiment,
+    *,
+    targets: Collection[str] | str | None,
+    transition: TransitionName,
+    require_rabi_param: bool,
+) -> list[TransitionLadder]:
+    """
+    Resolve and check every ladder before any measurement starts.
+
+    Checking the whole batch up front means a single unregistered target or
+    uncalibrated rung cannot leave the calibration note half written.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment holding the registry and the calibration note.
+    targets : Collection[str] | str | None
+        Argument as the caller passed it.
+    transition : TransitionName
+        Transition to drive.
+    require_rabi_param : bool
+        Whether the transition's Rabi parameters must already be stored.
+
+    Returns
+    -------
+    list[TransitionLadder]
+        One ladder per requested qubit, in the requested order.
+    """
+    ladders = [
+        resolve_ladder(exp, target=qubit, transition=transition)
+        for qubit in resolve_target_labels(
+            exp,
+            targets=targets,
+            transition=transition,
+        )
+    ]
+    for ladder in ladders:
+        validate_ladder_calibrations(exp, ladder)
+        if require_rabi_param:
+            get_transition_rabi_param(exp, ladder)
+    return ladders
+
+
+def resolve_amplitudes(
+    exp: Experiment,
+    *,
+    ladders: Sequence[TransitionLadder],
+    amplitudes: Mapping[str, float] | float | None,
+) -> dict[str, float]:
+    """
+    Resolve the drive amplitude of every ladder.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment holding the control parameters.
+    ladders : Sequence[TransitionLadder]
+        Ladders returned by `preflight_ladders`.
+    amplitudes : Mapping[str, float] | float | None
+        Per-target mapping keyed by transition label or qubit label, one value
+        shared by every target, or `None` to derive each from the qubit's
+        control amplitude.
+
+    Returns
+    -------
+    dict[str, float]
+        Amplitude keyed by transition label.
+    """
+    resolved: dict[str, float] = {}
+    for ladder in ladders:
+        if amplitudes is None:
+            value = exp.ctx.params.get_transition_control_amplitude(
+                ladder.qubit,
+                ladder.transition,
+            )
+        elif isinstance(amplitudes, Mapping):
+            if ladder.target in amplitudes:
+                value = amplitudes[ladder.target]
+            elif ladder.qubit in amplitudes:
+                value = amplitudes[ladder.qubit]
+            else:
+                raise ValueError(
+                    f"`amplitudes` has no entry for {ladder.target!r} or "
+                    f"{ladder.qubit!r}."
+                )
+        else:
+            value = amplitudes
+        resolved[ladder.target] = float(value)
+    return resolved
 
 
 def resolve_prep_pulses(

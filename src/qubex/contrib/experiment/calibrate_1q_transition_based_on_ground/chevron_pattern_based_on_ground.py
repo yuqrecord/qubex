@@ -39,6 +39,7 @@ Assumptions and caveats
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from typing import Any
 
 import numpy as np
@@ -104,14 +105,14 @@ def run_chevron_pattern_based_on_ground(
     *,
     target: str,
     transition: TransitionName,
-    detuning_range: ArrayLike,
-    time_range: ArrayLike,
-    amplitude: float,
-    frequency: float,
-    ramptime: float,
-    n_shots: int,
-    shot_interval: float,
-    plot_pulse_schedule: bool = True,
+    detuning_range: ArrayLike | None = None,
+    time_range: ArrayLike | None = None,
+    amplitude: float | None = None,
+    frequency: float | None = None,
+    ramptime: float | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> dict[str, Any]:
     """
     Measure the ground-referenced chevron grid of one transition.
@@ -124,30 +125,62 @@ def run_chevron_pattern_based_on_ground(
         Qubit label, or any target label that resolves to a qubit.
     transition : TransitionName
         Transition to drive, `"ge"` through `"mn"`.
-    detuning_range : ArrayLike
+    detuning_range : ArrayLike | None, optional
         Drive detunings in GHz, relative to `frequency`. Scalar or sequence.
-    time_range : ArrayLike
-        Flat-top durations in ns. Scalar or sequence.
-    amplitude : float
-        Drive amplitude on the transition.
-    frequency : float
-        Carrier frequency of the transition drive in GHz.
-    ramptime : float
+        Defaults to `_core.DEFAULT_DETUNING_RANGE`.
+    time_range : ArrayLike | None, optional
+        Flat-top durations in ns. Scalar or sequence. Defaults to
+        `_core.DEFAULT_TIME_RANGE`.
+    amplitude : float | None, optional
+        Drive amplitude on the transition. Defaults to the qubit's control
+        amplitude scaled for the transition.
+    frequency : float | None, optional
+        Carrier frequency of the transition drive in GHz. Defaults to the
+        frequency the transition target is registered with.
+    ramptime : float | None, optional
         `FlatTop` ramp time in ns. The played duration is `T + 2 * ramptime`.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the schedule of the longest, undetuned drive.
+        Defaults to `_core.DEFAULT_RABI_RAMPTIME`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the schedule of the longest, undetuned drive. Defaults
+        to True.
 
     Returns
     -------
     dict[str, Any]
         Raw payload consumed by `analyze_chevron_pattern_based_on_ground`.
     """
+    if detuning_range is None:
+        detuning_range = _core.DEFAULT_DETUNING_RANGE
+    if time_range is None:
+        time_range = _core.DEFAULT_TIME_RANGE
+    if ramptime is None:
+        ramptime = _core.DEFAULT_RABI_RAMPTIME
+    if n_shots is None:
+        n_shots = _core.DEFAULT_N_SHOTS
+    if shot_interval is None:
+        shot_interval = _core.DEFAULT_SHOT_INTERVAL
+    if plot_pulse_schedule is None:
+        plot_pulse_schedule = True
+
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
+    if amplitude is None:
+        amplitude = _core.resolve_amplitudes(
+            exp,
+            ladders=[ladder],
+            amplitudes=None,
+        )[ladder.target]
+    if frequency is None:
+        frequency = _core.resolve_frequencies(
+            exp,
+            ladders=[ladder],
+            frequencies=None,
+        )[ladder.target]
     _core.validate_amplitude(amplitude)
     _core.validate_n_shots(n_shots)
     _core.validate_shot_interval(shot_interval)
@@ -228,7 +261,7 @@ def run_chevron_pattern_based_on_ground(
 def analyze_chevron_pattern_based_on_ground(
     *,
     run_result: dict[str, Any],
-    rabi_fit_r2_threshold: float,
+    rabi_fit_r2_threshold: float | None = None,
 ) -> dict[str, Any]:
     """
     Fit the chevron grid and locate the resonance.
@@ -237,9 +270,10 @@ def analyze_chevron_pattern_based_on_ground(
     ----------
     run_result : dict[str, Any]
         Payload returned by `run_chevron_pattern_based_on_ground`.
-    rabi_fit_r2_threshold : float
+    rabi_fit_r2_threshold : float | None, optional
         Per-detuning Rabi fits below this R² are dropped before the detuned-Rabi
-        fit. Use `0.0` to keep every point.
+        fit. Use `0.0` to keep every point. Defaults to
+        `_core.DEFAULT_FIT_THRESHOLD`.
 
     Returns
     -------
@@ -247,6 +281,9 @@ def analyze_chevron_pattern_based_on_ground(
         The run payload plus the projected grid, the per-detuning Rabi rates and
         the resonance estimate.
     """
+    if rabi_fit_r2_threshold is None:
+        rabi_fit_r2_threshold = _core.DEFAULT_FIT_THRESHOLD
+
     target = run_result["target"]
     detunings = run_result["detuning_range"]
     times = run_result["effective_time_range"]
@@ -416,77 +453,123 @@ def display_chevron_pattern_based_on_ground(
 def chevron_pattern_based_on_ground(
     exp: Experiment,
     *,
-    target: str,
+    targets: Collection[str] | str | None = None,
     transition: TransitionName,
-    detuning_range: ArrayLike,
-    time_range: ArrayLike,
-    amplitude: float,
-    frequency: float,
-    ramptime: float,
-    rabi_fit_r2_threshold: float,
-    n_shots: int,
-    shot_interval: float,
-    plot: bool = True,
-    plot_pulse_schedule: bool = True,
+    detuning_range: ArrayLike | None = None,
+    time_range: ArrayLike | None = None,
+    amplitudes: Mapping[str, float] | float | None = None,
+    frequencies: Mapping[str, float] | float | None = None,
+    ramptime: float | None = None,
+    rabi_fit_r2_threshold: float | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot: bool | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> Result:
     """
-    Measure a ground-referenced chevron pattern and locate the resonance.
+    Measure the ground-referenced chevron pattern of one transition.
+
+    Every requested target is checked before the first acquisition, so an
+    unregistered target or an uncalibrated lower rung stops the whole batch. The
+    targets are then measured one after another.
 
     Parameters
     ----------
     exp : Experiment
         Experiment to measure with.
-    target : str
-        Qubit label, or any target label that resolves to a qubit.
+    targets : Collection[str] | str | None, optional
+        Qubit labels, or any target labels that resolve to qubits. Defaults to
+        every qubit that has the transition registered.
     transition : TransitionName
         Transition to drive, `"ge"` through `"mn"`.
-    detuning_range : ArrayLike
-        Drive detunings in GHz, relative to `frequency`. Scalar or sequence.
-    time_range : ArrayLike
-        Flat-top durations in ns. Scalar or sequence.
-    amplitude : float
-        Drive amplitude on the transition.
-    frequency : float
-        Carrier frequency of the transition drive in GHz.
-    ramptime : float
-        `FlatTop` ramp time in ns.
-    rabi_fit_r2_threshold : float
+    detuning_range : ArrayLike | None, optional
+        Drive detunings in GHz, relative to the carrier. Scalar or sequence.
+        Defaults to `_core.DEFAULT_DETUNING_RANGE`.
+    time_range : ArrayLike | None, optional
+        Flat-top durations in ns. Scalar or sequence. Defaults to
+        `_core.DEFAULT_TIME_RANGE`.
+    amplitudes : Mapping[str, float] | float | None, optional
+        Drive amplitude per target, one amplitude shared by every target, or
+        `None` to derive each from the qubit's control amplitude. A mapping may
+        be keyed by transition label or by qubit label.
+    frequencies : Mapping[str, float] | float | None, optional
+        Carrier frequency in GHz per target, one frequency shared by every
+        target, or `None` to use the frequency each transition target is
+        registered with.
+    ramptime : float | None, optional
+        `FlatTop` ramp time in ns. Defaults to `_core.DEFAULT_RABI_RAMPTIME`.
+    rabi_fit_r2_threshold : float | None, optional
         Per-detuning Rabi fits below this R² are dropped before the detuned-Rabi
-        fit.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot : bool, optional
-        Whether to show the figures.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the schedule of the longest, undetuned drive.
+        fit. Defaults to `_core.DEFAULT_FIT_THRESHOLD`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot : bool | None, optional
+        Whether to show the figures. Defaults to True.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the schedule of the longest, undetuned drive. Defaults
+        to True.
 
     Returns
     -------
     Result
-        Payload, figures and the fitted resonance. Nothing is written to
-        `exp.calib_note`.
+        Payload keyed by transition label, and figures keyed by
+        `"{target}:{name}"`. Each payload is the single-target payload, so the
+        resonance of one target is at
+        `result.data[target]["resonant_frequency"]`.
+        Nothing is written to `exp.calib_note`.
     """
-    run_result = run_chevron_pattern_based_on_ground(
-        exp,
-        target=target,
-        transition=transition,
-        detuning_range=detuning_range,
-        time_range=time_range,
-        amplitude=amplitude,
-        frequency=frequency,
-        ramptime=ramptime,
-        n_shots=n_shots,
-        shot_interval=shot_interval,
-        plot_pulse_schedule=plot_pulse_schedule,
-    )
-    data = analyze_chevron_pattern_based_on_ground(
-        run_result=run_result,
-        rabi_fit_r2_threshold=rabi_fit_r2_threshold,
-    )
-    figures = plot_chevron_pattern_based_on_ground(data)
+    if plot is None:
+        plot = True
 
-    result = Result(data=data, figures=figures)
-    display_chevron_pattern_based_on_ground(result, plot)
-    return result
+    ladders = _core.preflight_ladders(
+        exp,
+        targets=targets,
+        transition=transition,
+        require_rabi_param=False,
+    )
+    resolved_amplitudes = _core.resolve_amplitudes(
+        exp,
+        ladders=ladders,
+        amplitudes=amplitudes,
+    )
+    resolved_frequencies = _core.resolve_frequencies(
+        exp,
+        ladders=ladders,
+        frequencies=frequencies,
+    )
+
+    data: dict[str, Any] = {}
+    figures: dict[str, go.Figure] = {}
+    for ladder in ladders:
+        run_result = run_chevron_pattern_based_on_ground(
+            exp,
+            target=ladder.qubit,
+            transition=transition,
+            detuning_range=detuning_range,
+            time_range=time_range,
+            amplitude=resolved_amplitudes[ladder.target],
+            frequency=resolved_frequencies[ladder.target],
+            ramptime=ramptime,
+            n_shots=n_shots,
+            shot_interval=shot_interval,
+            plot_pulse_schedule=plot_pulse_schedule,
+        )
+        payload = analyze_chevron_pattern_based_on_ground(
+            run_result=run_result,
+            rabi_fit_r2_threshold=rabi_fit_r2_threshold,
+        )
+        target_figures = plot_chevron_pattern_based_on_ground(payload)
+
+        display_chevron_pattern_based_on_ground(
+            Result(data=payload, figures=target_figures),
+            plot,
+        )
+        data[payload["target"]] = payload
+        figures.update(
+            {f"{payload['target']}:{name}": fig for name, fig in target_figures.items()}
+        )
+
+    return Result(data=data, figures=figures)

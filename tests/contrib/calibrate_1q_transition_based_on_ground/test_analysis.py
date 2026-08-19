@@ -12,6 +12,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
 )
+from qubex.experiment import experiment_constants as constants
 from qubex.pulse import Drag, FlatTop
 from qubex.system.transition import TRANSITION_NAMES, TransitionName
 
@@ -534,3 +535,53 @@ def test_iq_figure_matches_the_reference_iq_plane_styling() -> None:
     # One unit of I is as long as one unit of Q.
     assert fig.layout.yaxis.scaleanchor == "x"
     assert fig.layout.yaxis.scaleratio == 1
+
+
+@pytest.mark.parametrize("initial_amplitude", [0.05, 0.3, 0.9, 0.999])
+@pytest.mark.parametrize("n_rotations", [1, 4, 16])
+def test_default_amplitude_diff_range_is_always_accepted_by_its_validator(
+    initial_amplitude: float,
+    n_rotations: int,
+) -> None:
+    """Given any usable starting amplitude, when defaulted, then the sweep is valid."""
+    diffs = _core.default_amplitude_diff_range(
+        initial_amplitude=initial_amplitude,
+        n_rotations=n_rotations,
+    )
+
+    # Symmetric about zero, so the starting amplitude stays at the centre.
+    assert diffs[0] == pytest.approx(-diffs[-1])
+    assert len(diffs) == _core.DEFAULT_N_POINTS
+    # The swept amplitudes never leave (0, 1].
+    amplitudes = initial_amplitude + diffs
+    assert amplitudes.min() > 0
+    assert amplitudes.max() <= 1
+    _core.validate_amplitude_diff_range(
+        diffs,
+        initial_amplitude=initial_amplitude,
+        n_rotations=n_rotations,
+    )
+
+
+def test_default_amplitude_diff_range_rejects_a_saturated_amplitude() -> None:
+    """Given a starting amplitude of 1, when defaulted, then it refuses to guess."""
+    with pytest.raises(ValueError, match="no room to sweep upwards"):
+        _core.default_amplitude_diff_range(initial_amplitude=1.0, n_rotations=1)
+
+
+def test_defaults_are_taken_from_the_core_experiment_constants() -> None:
+    """Given the defaults, when compared, then they are the `Experiment` values."""
+    assert _core.DEFAULT_N_SHOTS is constants.CALIBRATION_SHOTS
+    assert _core.DEFAULT_SHOT_INTERVAL is constants.DEFAULT_INTERVAL
+    assert _core.DEFAULT_TIME_RANGE is constants.DEFAULT_RABI_TIME_RANGE
+    assert _core.DEFAULT_HPI_DURATION is constants.HPI_DURATION
+    assert _core.DEFAULT_HPI_RAMPTIME is constants.HPI_RAMPTIME
+    assert _core.DEFAULT_PI_DURATION is constants.PI_DURATION
+    assert _core.DEFAULT_PI_RAMPTIME is constants.PI_RAMPTIME
+    assert _core.DEFAULT_DRAG_HPI_DURATION is constants.DRAG_HPI_DURATION
+    assert _core.DEFAULT_DRAG_PI_DURATION is constants.DRAG_PI_DURATION
+    assert _core.DEFAULT_DRAG_COEFF is constants.DRAG_COEFF
+    # `MeasurementService.obtain_rabi_params` derives its ramp the same way.
+    assert (
+        _core.DEFAULT_RABI_RAMPTIME == constants.HPI_DURATION - constants.HPI_RAMPTIME
+    )

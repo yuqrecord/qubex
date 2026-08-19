@@ -65,7 +65,7 @@ Assumptions and caveats
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 import numpy as np
@@ -130,13 +130,13 @@ def run_calibrate_hpi_pulse_based_on_ground(
     *,
     target: str,
     transition: TransitionName,
-    duration: float,
-    ramptime: float,
-    n_rotations: int,
-    amplitude_diff_range: ArrayLike,
-    n_shots: int,
-    shot_interval: float,
-    plot_pulse_schedule: bool = True,
+    duration: float | None = None,
+    ramptime: float | None = None,
+    n_rotations: int | None = None,
+    amplitude_diff_range: ArrayLike | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> dict[str, Any]:
     """
     Measure both rotation branches over the amplitude offsets.
@@ -149,21 +149,26 @@ def run_calibrate_hpi_pulse_based_on_ground(
         Qubit label, or any target label that resolves to a qubit.
     transition : TransitionName
         Transition to calibrate, `"ge"` through `"mn"`.
-    duration : float
-        Pulse duration in ns.
-    ramptime : float
-        `FlatTop` ramp time in ns.
-    n_rotations : int
+    duration : float | None, optional
+        Pulse duration in ns. Defaults to `_core.DEFAULT_HPI_DURATION`.
+    ramptime : float | None, optional
+        `FlatTop` ramp time in ns. Defaults to `_core.DEFAULT_HPI_RAMPTIME`.
+    n_rotations : int | None, optional
         Number of full rotations `n`; both branches use a signed leading pulse
         followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
-    amplitude_diff_range : ArrayLike
+        Defaults to `_core.DEFAULT_N_ROTATIONS`.
+    amplitude_diff_range : ArrayLike | None, optional
         Amplitude offsets from the starting amplitude. Scalar or sequence.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the two branch schedules at zero offset.
+        Defaults to a symmetric sweep around the starting amplitude, built by
+        `_core.default_amplitude_diff_range`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the two branch schedules at zero offset. Defaults to
+        True.
 
     Returns
     -------
@@ -173,6 +178,19 @@ def run_calibrate_hpi_pulse_based_on_ground(
         sweep, so the analysis never depends on a calibration note that a later
         step may have updated.
     """
+    if duration is None:
+        duration = _core.DEFAULT_HPI_DURATION
+    if ramptime is None:
+        ramptime = _core.DEFAULT_HPI_RAMPTIME
+    if n_rotations is None:
+        n_rotations = _core.DEFAULT_N_ROTATIONS
+    if n_shots is None:
+        n_shots = _core.DEFAULT_N_SHOTS
+    if shot_interval is None:
+        shot_interval = _core.DEFAULT_SHOT_INTERVAL
+    if plot_pulse_schedule is None:
+        plot_pulse_schedule = True
+
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
     _core.validate_duration(duration, ramptime=ramptime)
@@ -189,6 +207,11 @@ def run_calibrate_hpi_pulse_based_on_ground(
     )
     _core.validate_initial_amplitude(initial_amplitude)
 
+    if amplitude_diff_range is None:
+        amplitude_diff_range = _core.default_amplitude_diff_range(
+            initial_amplitude=initial_amplitude,
+            n_rotations=n_rotations,
+        )
     diffs = _core.resolve_sweep_range(amplitude_diff_range)
     _core.validate_amplitude_diff_range(
         diffs,
@@ -379,76 +402,108 @@ def display_calibrate_hpi_pulse_based_on_ground(
 def calibrate_hpi_pulse_based_on_ground(
     exp: Experiment,
     *,
-    target: str,
+    targets: Collection[str] | str | None = None,
     transition: TransitionName,
-    duration: float,
-    ramptime: float,
-    n_rotations: int,
-    amplitude_diff_range: ArrayLike,
-    n_shots: int,
-    shot_interval: float,
-    plot: bool = True,
-    plot_pulse_schedule: bool = True,
+    duration: float | None = None,
+    ramptime: float | None = None,
+    n_rotations: int | None = None,
+    amplitude_diff_range: ArrayLike | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot: bool | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> Result:
     """
     Calibrate a transition's half-pi pulse amplitude and store it.
+
+    Every requested target is checked before the first acquisition, so an
+    unregistered target or an uncalibrated lower rung stops the whole batch
+    rather than leaving the calibration note half written. The targets are then
+    calibrated one after another.
 
     Parameters
     ----------
     exp : Experiment
         Experiment to measure with.
-    target : str
-        Qubit label, or any target label that resolves to a qubit.
+    targets : Collection[str] | str | None, optional
+        Qubit labels, or any target labels that resolve to qubits. Defaults to
+        every qubit that has the transition registered.
     transition : TransitionName
         Transition to calibrate, `"ge"` through `"mn"`.
-    duration : float
-        Pulse duration in ns.
-    ramptime : float
-        `FlatTop` ramp time in ns.
-    n_rotations : int
-        Number of full rotations `n`.
-    amplitude_diff_range : ArrayLike
+    duration : float | None, optional
+        Pulse duration in ns. Defaults to `_core.DEFAULT_HPI_DURATION`.
+    ramptime : float | None, optional
+        `FlatTop` ramp time in ns. Defaults to `_core.DEFAULT_HPI_RAMPTIME`.
+    n_rotations : int | None, optional
+        Number of full rotations `n`. Defaults to `_core.DEFAULT_N_ROTATIONS`.
+    amplitude_diff_range : ArrayLike | None, optional
         Amplitude offsets from the starting amplitude. Scalar or sequence.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot : bool, optional
-        Whether to show the figures.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the two branch schedules at zero offset.
+        Defaults to a symmetric sweep around each target's starting amplitude.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot : bool | None, optional
+        Whether to show the figures. Defaults to True.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the two branch schedules at zero offset. Defaults to
+        True.
 
     Returns
     -------
     Result
-        Payload, figures and the calibrated amplitude. The amplitude is also
-        written to `exp.calib_note` under the transition label.
+        Payload keyed by transition label, and figures keyed by
+        `"{target}:{name}"`. Each payload is the single-target payload, so
+        the calibrated amplitude of one target is at
+        `result.data[target]["amplitude"]`. It is also written to
+        `exp.calib_note` under the transition label.
     """
-    run_result = run_calibrate_hpi_pulse_based_on_ground(
+    if plot is None:
+        plot = True
+
+    ladders = _core.preflight_ladders(
         exp,
-        target=target,
+        targets=targets,
         transition=transition,
-        duration=duration,
-        ramptime=ramptime,
-        n_rotations=n_rotations,
-        amplitude_diff_range=amplitude_diff_range,
-        n_shots=n_shots,
-        shot_interval=shot_interval,
-        plot_pulse_schedule=plot_pulse_schedule,
-    )
-    data = analyze_calibrate_hpi_pulse_based_on_ground(run_result=run_result)
-    figures = plot_calibrate_hpi_pulse_based_on_ground(data)
-
-    exp.calib_note.update_hpi_param(
-        data["target"],
-        {
-            "target": data["target"],
-            "duration": duration,
-            "amplitude": data["amplitude"],
-            "tau": ramptime,
-        },
+        require_rabi_param=True,
     )
 
-    result = Result(data=data, figures=figures)
-    display_calibrate_hpi_pulse_based_on_ground(result, plot)
-    return result
+    data: dict[str, Any] = {}
+    figures: dict[str, go.Figure] = {}
+    for ladder in ladders:
+        run_result = run_calibrate_hpi_pulse_based_on_ground(
+            exp,
+            target=ladder.qubit,
+            transition=transition,
+            duration=duration,
+            ramptime=ramptime,
+            n_rotations=n_rotations,
+            amplitude_diff_range=amplitude_diff_range,
+            n_shots=n_shots,
+            shot_interval=shot_interval,
+            plot_pulse_schedule=plot_pulse_schedule,
+        )
+        payload = analyze_calibrate_hpi_pulse_based_on_ground(run_result=run_result)
+        target_figures = plot_calibrate_hpi_pulse_based_on_ground(payload)
+
+        exp.calib_note.update_hpi_param(
+            payload["target"],
+            {
+                "target": payload["target"],
+                "duration": payload["duration"],
+                "amplitude": payload["amplitude"],
+                "tau": payload["ramptime"],
+            },
+        )
+
+        display_calibrate_hpi_pulse_based_on_ground(
+            Result(data=payload, figures=target_figures),
+            plot,
+        )
+        data[payload["target"]] = payload
+        figures.update(
+            {f"{payload['target']}:{name}": fig for name, fig in target_figures.items()}
+        )
+
+    return Result(data=data, figures=figures)

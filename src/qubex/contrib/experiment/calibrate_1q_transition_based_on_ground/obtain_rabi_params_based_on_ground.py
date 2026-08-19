@@ -38,6 +38,7 @@ Assumptions and caveats
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from typing import Any
 
 import numpy as np
@@ -66,12 +67,12 @@ def run_obtain_rabi_params_based_on_ground(
     *,
     target: str,
     transition: TransitionName,
-    time_range: ArrayLike,
-    amplitude: float,
-    ramptime: float,
-    n_shots: int,
-    shot_interval: float,
-    plot_pulse_schedule: bool = True,
+    time_range: ArrayLike | None = None,
+    amplitude: float | None = None,
+    ramptime: float | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> dict[str, Any]:
     """
     Measure the ground-referenced Rabi oscillation of one transition.
@@ -84,26 +85,47 @@ def run_obtain_rabi_params_based_on_ground(
         Qubit label, or any target label that resolves to a qubit.
     transition : TransitionName
         Transition to drive, `"ge"` through `"mn"`.
-    time_range : ArrayLike
-        Flat-top durations in ns. Scalar or sequence.
-    amplitude : float
-        Drive amplitude on the transition.
-    ramptime : float
+    time_range : ArrayLike | None, optional
+        Flat-top durations in ns. Scalar or sequence. Defaults to
+        `_core.DEFAULT_TIME_RANGE`.
+    amplitude : float | None, optional
+        Drive amplitude on the transition. Defaults to the qubit's control
+        amplitude scaled for the transition.
+    ramptime : float | None, optional
         `FlatTop` ramp time in ns. The played duration is `T + 2 * ramptime`.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the schedule of the longest duration.
+        Defaults to `_core.DEFAULT_RABI_RAMPTIME`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the schedule of the longest duration. Defaults to True.
 
     Returns
     -------
     dict[str, Any]
         Raw payload consumed by `analyze_obtain_rabi_params_based_on_ground`.
     """
+    if time_range is None:
+        time_range = _core.DEFAULT_TIME_RANGE
+    if ramptime is None:
+        ramptime = _core.DEFAULT_RABI_RAMPTIME
+    if n_shots is None:
+        n_shots = _core.DEFAULT_N_SHOTS
+    if shot_interval is None:
+        shot_interval = _core.DEFAULT_SHOT_INTERVAL
+    if plot_pulse_schedule is None:
+        plot_pulse_schedule = True
+
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
+    if amplitude is None:
+        amplitude = _core.resolve_amplitudes(
+            exp,
+            ladders=[ladder],
+            amplitudes=None,
+        )[ladder.target]
     _core.validate_amplitude(amplitude)
     _core.validate_n_shots(n_shots)
     _core.validate_shot_interval(shot_interval)
@@ -172,8 +194,8 @@ def run_obtain_rabi_params_based_on_ground(
 def analyze_obtain_rabi_params_based_on_ground(
     *,
     run_result: dict[str, Any],
-    is_damped: bool,
-    fit_threshold: float,
+    is_damped: bool | None = None,
+    fit_threshold: float | None = None,
 ) -> dict[str, Any]:
     """
     Fit the ground-referenced Rabi oscillation.
@@ -182,17 +204,24 @@ def analyze_obtain_rabi_params_based_on_ground(
     ----------
     run_result : dict[str, Any]
         Payload returned by `run_obtain_rabi_params_based_on_ground`.
-    is_damped : bool
-        Whether to fit a damped cosine.
-    fit_threshold : float
+    is_damped : bool | None, optional
+        Whether to fit a damped cosine. Defaults to
+        `_core.DEFAULT_IS_DAMPED`.
+    fit_threshold : float | None, optional
         Minimum R² below which the parameters are reported as NaN, matching
-        `MeasurementService.rabi_experiment`.
+        `MeasurementService.rabi_experiment`. Defaults to
+        `_core.DEFAULT_FIT_THRESHOLD`.
 
     Returns
     -------
     dict[str, Any]
         The run payload plus the fit and the resulting `RabiParam`.
     """
+    if is_damped is None:
+        is_damped = _core.DEFAULT_IS_DAMPED
+    if fit_threshold is None:
+        fit_threshold = _core.DEFAULT_FIT_THRESHOLD
+
     target = run_result["target"]
     fit = fitting.fit_rabi(
         target=target,
@@ -291,78 +320,117 @@ def display_obtain_rabi_params_based_on_ground(
 def obtain_rabi_params_based_on_ground(
     exp: Experiment,
     *,
-    target: str,
+    targets: Collection[str] | str | None = None,
     transition: TransitionName,
-    time_range: ArrayLike,
-    amplitude: float,
-    ramptime: float,
-    is_damped: bool,
-    fit_threshold: float,
-    n_shots: int,
-    shot_interval: float,
-    plot: bool = True,
-    plot_pulse_schedule: bool = True,
+    time_range: ArrayLike | None = None,
+    amplitudes: Mapping[str, float] | float | None = None,
+    ramptime: float | None = None,
+    is_damped: bool | None = None,
+    fit_threshold: float | None = None,
+    n_shots: int | None = None,
+    shot_interval: float | None = None,
+    plot: bool | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> Result:
     """
     Measure and store the ground-referenced Rabi parameters of one transition.
+
+    Every requested target is checked before the first acquisition, so an
+    unregistered target or an uncalibrated lower rung stops the whole batch
+    rather than leaving the calibration note half written. The targets are then
+    measured one after another.
 
     Parameters
     ----------
     exp : Experiment
         Experiment to measure with.
-    target : str
-        Qubit label, or any target label that resolves to a qubit.
+    targets : Collection[str] | str | None, optional
+        Qubit labels, or any target labels that resolve to qubits. Defaults to
+        every qubit that has the transition registered.
     transition : TransitionName
         Transition to drive, `"ge"` through `"mn"`.
-    time_range : ArrayLike
-        Flat-top durations in ns. Scalar or sequence.
-    amplitude : float
-        Drive amplitude on the transition.
-    ramptime : float
-        `FlatTop` ramp time in ns.
-    is_damped : bool
-        Whether to fit a damped cosine.
-    fit_threshold : float
-        Minimum R² for the parameters to be stored.
-    n_shots : int
-        Shots per acquisition.
-    shot_interval : float
-        Interval between shots in ns.
-    plot : bool, optional
-        Whether to show the figures.
-    plot_pulse_schedule : bool, optional
-        Whether to draw the schedule of the longest duration.
+    time_range : ArrayLike | None, optional
+        Flat-top durations in ns. Scalar or sequence. Defaults to
+        `_core.DEFAULT_TIME_RANGE`.
+    amplitudes : Mapping[str, float] | float | None, optional
+        Drive amplitude per target, one amplitude shared by every target, or
+        `None` to derive each from the qubit's control amplitude. A mapping may
+        be keyed by transition label or by qubit label.
+    ramptime : float | None, optional
+        `FlatTop` ramp time in ns. Defaults to `_core.DEFAULT_RABI_RAMPTIME`.
+    is_damped : bool | None, optional
+        Whether to fit a damped cosine. Defaults to `_core.DEFAULT_IS_DAMPED`.
+    fit_threshold : float | None, optional
+        Minimum R² for the parameters to be stored. Defaults to
+        `_core.DEFAULT_FIT_THRESHOLD`.
+    n_shots : int | None, optional
+        Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
+    shot_interval : float | None, optional
+        Interval between shots in ns. Defaults to
+        `_core.DEFAULT_SHOT_INTERVAL`.
+    plot : bool | None, optional
+        Whether to show the figures. Defaults to True.
+    plot_pulse_schedule : bool | None, optional
+        Whether to draw the schedule of the longest duration. Defaults to True.
 
     Returns
     -------
     Result
-        Payload, figures and the fitted `RabiParam`. The parameters are also
-        written to `exp.calib_note` under the transition label when the fit
-        clears `fit_threshold`.
+        Payload keyed by transition label, and figures keyed by
+        `"{target}:{name}"`. Each payload is the single-target payload, so the
+        fitted parameters of one target are at
+        `result.data[target]["rabi_param"]`. They are also written to
+        `exp.calib_note` under the transition label when the fit clears
+        `fit_threshold`.
     """
-    run_result = run_obtain_rabi_params_based_on_ground(
+    if plot is None:
+        plot = True
+
+    ladders = _core.preflight_ladders(
         exp,
-        target=target,
+        targets=targets,
         transition=transition,
-        time_range=time_range,
-        amplitude=amplitude,
-        ramptime=ramptime,
-        n_shots=n_shots,
-        shot_interval=shot_interval,
-        plot_pulse_schedule=plot_pulse_schedule,
+        require_rabi_param=False,
     )
-    data = analyze_obtain_rabi_params_based_on_ground(
-        run_result=run_result,
-        is_damped=is_damped,
-        fit_threshold=fit_threshold,
-    )
-    figures = plot_obtain_rabi_params_based_on_ground(data)
-
-    exp.ctx.store_rabi_params(
-        {data["target"]: data["rabi_param"]},
-        r2_threshold=fit_threshold,
+    resolved_amplitudes = _core.resolve_amplitudes(
+        exp,
+        ladders=ladders,
+        amplitudes=amplitudes,
     )
 
-    result = Result(data=data, figures=figures)
-    display_obtain_rabi_params_based_on_ground(result, plot)
-    return result
+    data: dict[str, Any] = {}
+    figures: dict[str, go.Figure] = {}
+    for ladder in ladders:
+        run_result = run_obtain_rabi_params_based_on_ground(
+            exp,
+            target=ladder.qubit,
+            transition=transition,
+            time_range=time_range,
+            amplitude=resolved_amplitudes[ladder.target],
+            ramptime=ramptime,
+            n_shots=n_shots,
+            shot_interval=shot_interval,
+            plot_pulse_schedule=plot_pulse_schedule,
+        )
+        payload = analyze_obtain_rabi_params_based_on_ground(
+            run_result=run_result,
+            is_damped=is_damped,
+            fit_threshold=fit_threshold,
+        )
+        target_figures = plot_obtain_rabi_params_based_on_ground(payload)
+
+        exp.ctx.store_rabi_params(
+            {payload["target"]: payload["rabi_param"]},
+            r2_threshold=payload["fit_threshold"],
+        )
+
+        display_obtain_rabi_params_based_on_ground(
+            Result(data=payload, figures=target_figures),
+            plot,
+        )
+        data[payload["target"]] = payload
+        figures.update(
+            {f"{payload['target']}:{name}": fig for name, fig in target_figures.items()}
+        )
+
+    return Result(data=data, figures=figures)

@@ -49,18 +49,40 @@ for example `"Q00-fh"`. `chevron_pattern_based_on_ground` deliberately persists
 nothing, because the transition frequency belongs to the registered `Target`.
 `calib_note` does not autosave; call `Experiment.save_calib_note` when done.
 
+Each entry point follows the argument conventions of the core `Experiment` API.
+`targets` accepts one label, several labels, or `None` for every qubit that has
+the transition registered, and every other argument accepts `None` and resolves
+its default internally from `_core` — which in turn takes the values the core
+`Experiment` uses. Only `transition` has to be given, because guessing which
+rung to calibrate would silently calibrate the wrong one. The requested targets
+are all checked before the first acquisition and then measured one after
+another, so a single unregistered target or uncalibrated rung cannot leave the
+calibration note half written.
+
+The result is keyed by transition label whatever the number of targets::
+
+    result = calibrate_hpi_pulse_based_on_ground(exp, transition="fh")
+    result.data["Q00-fh"]["amplitude"]
+    result.figures["Q00-fh:branches"]
+
 Bootstrap order for a new rung::
 
     exp.register_transition_target(qubit=..., transition=..., channel_number=...)
     # calibrate the pi pulse of every lower rung first
-    chevron_pattern_based_on_ground(...)     # -> resonance, re-register with it
-    obtain_rabi_params_based_on_ground(...)  # -> transition RabiParam
-    calibrate_hpi_pulse_based_on_ground(..., n_rotations=1, wide sweep)
-    calibrate_hpi_pulse_based_on_ground(..., larger n_rotations, narrow sweep)
-    calibrate_pi_pulse_based_on_ground(...)
-    calibrate_drag_hpi_pulse_based_on_ground(...)
-    calibrate_drag_pi_pulse_based_on_ground(...)
+    chevron_pattern_based_on_ground(exp, transition="fh")     # -> resonance
+    obtain_rabi_params_based_on_ground(exp, transition="fh")  # -> RabiParam
+    calibrate_hpi_pulse_based_on_ground(exp, transition="fh")
+    # then amplify: larger n_rotations over a narrower sweep
+    calibrate_hpi_pulse_based_on_ground(exp, transition="fh", n_rotations=4)
+    calibrate_pi_pulse_based_on_ground(exp, transition="fh")
+    calibrate_drag_hpi_pulse_based_on_ground(exp, transition="fh")
+    calibrate_drag_pi_pulse_based_on_ground(exp, transition="fh")
     exp.save_calib_note()
+
+The DRAG calibrations default to `n_rotations = 4`, as the core
+`CalibrationService` does, which assumes the amplitude is already close. Run the
+FlatTop calibrations first, or pass a smaller `n_rotations`, when starting from
+a coarse estimate.
 """
 
 from __future__ import annotations

@@ -9,15 +9,21 @@ import numpy as np
 import pytest
 
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
+    _core,
     calibrate_drag_hpi_pulse_based_on_ground,
     calibrate_drag_pi_pulse_based_on_ground,
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
+    chevron_pattern_based_on_ground,
     obtain_rabi_params_based_on_ground,
     run_chevron_pattern_based_on_ground,
 )
 
+from .conftest import CONTROL_AMPLITUDE
+
 QUBIT = "Q00"
+QUBIT_2 = "Q01"
+QUBIT_3 = "Q02"
 DURATION = 32.0
 RAMPTIME = 12.0
 DRAG_HPI_DURATION = 16.0
@@ -45,10 +51,10 @@ def test_rabi_params_are_stored_under_the_transition_label(
 
     result = obtain_rabi_params_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="fh",
         time_range=np.arange(0, 401, 8),
-        amplitude=amplitude,
+        amplitudes=amplitude,
         ramptime=RAMPTIME,
         is_damped=False,
         fit_threshold=0.5,
@@ -58,9 +64,11 @@ def test_rabi_params_are_stored_under_the_transition_label(
         plot_pulse_schedule=False,
     )
 
-    assert result.data["target"] == f"{QUBIT}-fh"
-    assert result.data["lower_labels"] == (QUBIT, f"{QUBIT}-ef")
-    rabi_param = result.data["rabi_param"]
+    target = f"{QUBIT}-fh"
+    assert list(result.data) == [target]
+    assert result.data[target]["target"] == target
+    assert result.data[target]["lower_labels"] == (QUBIT, f"{QUBIT}-ef")
+    rabi_param = result.data[target]["rabi_param"]
     assert rabi_param.frequency == pytest.approx(expected_frequency, rel=1e-3)
     assert exp.ctx.stored_rabi_params[f"{QUBIT}-fh"] is rabi_param
     assert f"{QUBIT}-fh" in exp.calib_note.rabi
@@ -85,7 +93,7 @@ def test_hpi_calibration_finds_the_simulated_amplitude(
 
     result = calibrate_hpi_pulse_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="fh",
         duration=DURATION,
         ramptime=RAMPTIME,
@@ -98,11 +106,11 @@ def test_hpi_calibration_finds_the_simulated_amplitude(
     )
 
     target = f"{QUBIT}-fh"
-    assert result.data["initial_amplitude"] == pytest.approx(stored_amplitude)
-    assert result.data["initial_amplitude_source"] == "calib_note"
-    assert result.data["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
+    assert result.data[target]["initial_amplitude"] == pytest.approx(stored_amplitude)
+    assert result.data[target]["initial_amplitude_source"] == "calib_note"
+    assert result.data[target]["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
     assert exp.calib_note.hpi[target]["amplitude"] == pytest.approx(
-        result.data["amplitude"]
+        result.data[target]["amplitude"]
     )
     assert exp.calib_note.hpi[target]["duration"] == DURATION
     assert exp.calib_note.hpi[target]["tau"] == RAMPTIME
@@ -125,7 +133,7 @@ def test_hpi_branches_are_matched(
 
     calibrate_hpi_pulse_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="ef",
         duration=DURATION,
         ramptime=RAMPTIME,
@@ -178,7 +186,7 @@ def test_pi_calibration_finds_the_simulated_amplitude(
 
     result = calibrate_pi_pulse_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="ef",
         duration=DURATION,
         ramptime=RAMPTIME,
@@ -190,11 +198,11 @@ def test_pi_calibration_finds_the_simulated_amplitude(
         plot_pulse_schedule=False,
     )
 
-    assert result.data["initial_amplitude"] == pytest.approx(stored_amplitude)
-    assert result.data["initial_amplitude_source"] == "calib_note"
-    assert result.data["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
+    assert result.data[target]["initial_amplitude"] == pytest.approx(stored_amplitude)
+    assert result.data[target]["initial_amplitude_source"] == "calib_note"
+    assert result.data[target]["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
     assert exp.calib_note.pi[target]["amplitude"] == pytest.approx(
-        result.data["amplitude"]
+        result.data[target]["amplitude"]
     )
 
 
@@ -215,7 +223,7 @@ def test_pi_calibration_requires_a_half_pi_pulse(
     with pytest.raises(ValueError, match="half-pi pulse is not calibrated"):
         calibrate_pi_pulse_based_on_ground(
             exp,
-            target=QUBIT,
+            targets=QUBIT,
             transition="ef",
             duration=DURATION,
             ramptime=RAMPTIME,
@@ -258,7 +266,7 @@ def test_drag_hpi_calibration_finds_the_simulated_amplitude(
 
     result = calibrate_drag_hpi_pulse_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="hi",
         duration=DRAG_HPI_DURATION,
         drag_coeff=DRAG_COEFF,
@@ -275,10 +283,10 @@ def test_drag_hpi_calibration_finds_the_simulated_amplitude(
         plot_pulse_schedule=False,
     )
 
-    assert result.data["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
-    assert len(result.data["iterations"]) == 2
+    assert result.data[target]["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
+    assert len(result.data[target]["iterations"]) == 2
     assert exp.calib_note.drag_hpi[target]["amplitude"] == pytest.approx(
-        result.data["amplitude"]
+        result.data[target]["amplitude"]
     )
     assert exp.calib_note.drag_hpi[target]["beta"] == 0.0
     assert exp.calib_note.drag_hpi[target]["duration"] == DRAG_HPI_DURATION
@@ -311,7 +319,7 @@ def test_drag_pi_calibration_finds_the_simulated_amplitude(
 
     result = calibrate_drag_pi_pulse_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="fh",
         duration=DRAG_PI_DURATION,
         drag_coeff=DRAG_COEFF,
@@ -328,9 +336,9 @@ def test_drag_pi_calibration_finds_the_simulated_amplitude(
         plot_pulse_schedule=False,
     )
 
-    assert result.data["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
+    assert result.data[target]["amplitude"] == pytest.approx(true_amplitude, rel=1e-4)
     assert exp.calib_note.drag_pi[target]["amplitude"] == pytest.approx(
-        result.data["amplitude"]
+        result.data[target]["amplitude"]
     )
 
 
@@ -353,7 +361,7 @@ def test_missing_rabi_params_raise_before_measuring(
     with pytest.raises(ValueError, match="Rabi parameters are not stored"):
         calibrate_hpi_pulse_based_on_ground(
             exp,
-            target=QUBIT,
+            targets=QUBIT,
             transition="fh",
             duration=DURATION,
             ramptime=RAMPTIME,
@@ -385,7 +393,7 @@ def test_ge_calibration_needs_no_ladder(
 
     result = calibrate_hpi_pulse_based_on_ground(
         exp,
-        target=QUBIT,
+        targets=QUBIT,
         transition="ge",
         duration=DURATION,
         ramptime=RAMPTIME,
@@ -397,12 +405,12 @@ def test_ge_calibration_needs_no_ladder(
         plot_pulse_schedule=False,
     )
 
-    assert result.data["lower_labels"] == ()
-    assert result.data["amplitude"] == pytest.approx(0.3012, rel=1e-4)
+    assert result.data[QUBIT]["lower_labels"] == ()
+    assert result.data[QUBIT]["amplitude"] == pytest.approx(0.3012, rel=1e-4)
     for schedule in exp.sweep_calls[-1]["schedules"]:
         assert schedule.labels == [QUBIT]
     assert exp.calib_note.hpi[QUBIT]["amplitude"] == pytest.approx(
-        result.data["amplitude"]
+        result.data[QUBIT]["amplitude"]
     )
 
 
@@ -441,3 +449,283 @@ def test_chevron_run_visits_every_grid_point_inside_the_ladder(
     assert run_result["raw"].size == detunings.size * times.size
     for schedule in call["schedules"]:
         assert set(schedule.labels) == {QUBIT, f"{QUBIT}-ef", f"{QUBIT}-fh"}
+
+
+def test_two_targets_are_calibrated_one_after_another(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two qubits, when calibrated, then each is swept and stored on its own."""
+    # Both sit inside the swept half-width of the shared stored amplitude.
+    true_amplitudes = {QUBIT: 0.3012, QUBIT_2: 0.2988}
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.30,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+        qubits=[QUBIT, QUBIT_2],
+        true_amplitudes=true_amplitudes,
+    )
+
+    result = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    targets = [f"{QUBIT}-fh", f"{QUBIT_2}-fh"]
+    assert list(result.data) == targets
+    # One sweep per target, in the requested order, each driving only its own qubit.
+    assert len(exp.sweep_calls) == 2
+    for target, call in zip(targets, exp.sweep_calls, strict=True):
+        for schedule in call["schedules"]:
+            assert target in schedule.labels
+    for target in targets:
+        qubit = target.split("-")[0]
+        assert result.data[target]["amplitude"] == pytest.approx(
+            true_amplitudes[qubit], rel=1e-4
+        )
+        assert exp.calib_note.hpi[target]["amplitude"] == pytest.approx(
+            result.data[target]["amplitude"]
+        )
+        assert f"{target}:branches" in result.figures
+
+
+def test_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when run, then the payload records the defaults."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=_core.DEFAULT_HPI_DURATION,
+        ramptime=_core.DEFAULT_HPI_RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+    )
+
+    result = calibrate_hpi_pulse_based_on_ground(exp, transition="fh", plot=False)
+
+    payload = result.data[f"{QUBIT}-fh"]
+    assert payload["duration"] == _core.DEFAULT_HPI_DURATION
+    assert payload["ramptime"] == _core.DEFAULT_HPI_RAMPTIME
+    assert payload["n_rotations"] == _core.DEFAULT_N_ROTATIONS
+    assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
+    assert payload["shot_interval"] == _core.DEFAULT_SHOT_INTERVAL
+    assert len(payload["amplitude_diff_range"]) == _core.DEFAULT_N_POINTS
+    # `DEFAULT_N_ROTATIONS` is 1, so the crossing is only coarsely amplified.
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-2)
+
+
+def test_rabi_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when the Rabi sweep runs, then it uses the defaults."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+
+    result = obtain_rabi_params_based_on_ground(
+        exp,
+        transition="fh",
+        is_damped=False,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    payload = result.data[f"{QUBIT}-fh"]
+    assert payload["ramptime"] == _core.DEFAULT_RABI_RAMPTIME
+    assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
+    assert payload["shot_interval"] == _core.DEFAULT_SHOT_INTERVAL
+    assert payload["fit_threshold"] == _core.DEFAULT_FIT_THRESHOLD
+    np.testing.assert_allclose(
+        payload["time_range"],
+        np.asarray(_core.DEFAULT_TIME_RANGE, dtype=np.float64),
+    )
+    # `transition_index("fh") == 2`, so the accessor divides by sqrt(3).
+    assert payload["amplitude"] == pytest.approx(CONTROL_AMPLITUDE / np.sqrt(3))
+
+
+def test_chevron_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when the chevron runs, then it uses the defaults."""
+    exp = stub_experiment_factory(
+        transition="ef",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+
+    result = chevron_pattern_based_on_ground(
+        exp,
+        transition="ef",
+        detuning_range=np.linspace(-0.01, 0.01, 5),
+        time_range=np.arange(0, 65, 8),
+        rabi_fit_r2_threshold=0.0,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    payload = result.data[f"{QUBIT}-ef"]
+    assert payload["ramptime"] == _core.DEFAULT_RABI_RAMPTIME
+    assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
+    # The registered target frequency, not the qubit's bare frequency.
+    assert payload["frequency"] == pytest.approx(
+        exp.ctx.targets[f"{QUBIT}-ef"].frequency
+    )
+    assert payload["amplitude"] == pytest.approx(CONTROL_AMPLITUDE / np.sqrt(2))
+
+
+@pytest.mark.parametrize(
+    ("amplitudes", "expected"),
+    [
+        pytest.param({f"{QUBIT}-fh": 0.11}, 0.11, id="mapping-by-target"),
+        pytest.param({QUBIT: 0.12}, 0.12, id="mapping-by-qubit"),
+        pytest.param(0.13, 0.13, id="scalar"),
+        pytest.param(None, None, id="accessor"),
+    ],
+)
+def test_rabi_amplitudes_accept_a_mapping_a_scalar_or_none(
+    stub_experiment_factory: Callable[..., Any],
+    amplitudes: Any,
+    expected: float | None,
+) -> None:
+    """Given each spelling of `amplitudes`, when run, then the drive matches it."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+
+    result = obtain_rabi_params_based_on_ground(
+        exp,
+        transition="fh",
+        time_range=np.arange(0, 129, 8),
+        amplitudes=amplitudes,
+        is_damped=False,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    if expected is None:
+        expected = CONTROL_AMPLITUDE / np.sqrt(3)
+    assert result.data[f"{QUBIT}-fh"]["amplitude"] == pytest.approx(expected)
+
+
+def test_targets_default_to_the_qubits_that_have_the_transition_registered(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a partly registered chip, when targets is None, then the rest is skipped."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        qubits=[QUBIT, QUBIT_2, QUBIT_3],
+        registered_qubits=[QUBIT, QUBIT_3],
+        calibrated_qubits=[QUBIT, QUBIT_3],
+    )
+
+    result = obtain_rabi_params_based_on_ground(
+        exp,
+        transition="fh",
+        time_range=np.arange(0, 129, 8),
+        is_damped=False,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    assert list(result.data) == [f"{QUBIT}-fh", f"{QUBIT_3}-fh"]
+
+
+def test_an_unusable_target_stops_the_batch_before_it_measures(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given one uncalibrated qubit, when calibrated, then nothing is measured."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+        qubits=[QUBIT, QUBIT_2],
+        calibrated_qubits=[QUBIT],
+    )
+    before = dict(exp.calib_note.hpi)
+
+    with pytest.raises(ValueError):
+        calibrate_hpi_pulse_based_on_ground(
+            exp,
+            targets=[QUBIT, QUBIT_2],
+            transition="fh",
+            duration=DURATION,
+            ramptime=RAMPTIME,
+            n_rotations=3,
+            amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+            n_shots=N_SHOTS,
+            shot_interval=SHOT_INTERVAL,
+            plot=False,
+            plot_pulse_schedule=False,
+        )
+
+    # The healthy first target is not measured either, so nothing is half written.
+    assert exp.sweep_calls == []
+    assert exp.calib_note.hpi == before
+
+
+def test_drag_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when the DRAG amplitude runs, then it uses the defaults."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="drag",
+        duration=_core.DEFAULT_DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+
+    # The stub integrates only the in-phase quadrature, so its signal carries no
+    # beta dependence and the beta pass has no root to find. The amplitude pass
+    # is what the defaults are checked on.
+    result = calibrate_drag_hpi_pulse_based_on_ground(
+        exp,
+        transition="fh",
+        calibrate_beta=False,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    payload = result.data[f"{QUBIT}-fh"]
+    assert payload["duration"] == _core.DEFAULT_DRAG_HPI_DURATION
+    assert payload["drag_coeff"] == _core.DEFAULT_DRAG_COEFF
+    assert payload["n_rotations"] == _core.DEFAULT_DRAG_N_ROTATIONS
+    assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
+    assert len(payload["iterations"]) == _core.DEFAULT_N_ITERATIONS
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)

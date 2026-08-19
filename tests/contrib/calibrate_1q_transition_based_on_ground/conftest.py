@@ -21,6 +21,9 @@ SAMPLING_PERIOD = 2.0
 ALPHA = -0.35
 GE_FREQUENCY = 8.0
 
+#: Control amplitude of every stub qubit, which the transition accessor scales.
+CONTROL_AMPLITUDE = 0.2
+
 # Deliberately non-trivial so that the normalization path is exercised rather
 # than accidentally reducing to the identity.
 RABI_ANGLE = 0.7
@@ -32,15 +35,15 @@ RABI_FREQUENCY = 0.01
 PREP_PI = FlatTop(duration=32, amplitude=0.25, tau=12)
 
 
-def transition_label(transition: TransitionName) -> str:
-    """Return the target label of a transition of the stub qubit."""
-    return QUBIT if transition == "ge" else f"{QUBIT}-{transition}"
+def transition_label(transition: TransitionName, qubit: str = QUBIT) -> str:
+    """Return the target label of a transition of a stub qubit."""
+    return qubit if transition == "ge" else f"{qubit}-{transition}"
 
 
-def lower_labels(transition: TransitionName) -> tuple[str, ...]:
+def lower_labels(transition: TransitionName, qubit: str = QUBIT) -> tuple[str, ...]:
     """Return the ordered lower-rung labels of a transition."""
     return tuple(
-        transition_label(name)
+        transition_label(name, qubit)
         for name in TRANSITION_NAMES[: transition_index(transition)]
     )
 
@@ -81,6 +84,15 @@ class _SweepResult:
         self.data = data
 
 
+class _Target:
+    """Minimal stand-in for a registered `Target`."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+        index = transition_index(label.split("-")[1]) if "-" in label else 0
+        self.frequency = GE_FREQUENCY + index * ALPHA
+
+
 class _Qubit:
     """Minimal stand-in for a qubit model with a linear level ladder."""
 
@@ -92,6 +104,18 @@ class _Qubit:
     def get_control_frequency(self, transition: TransitionName) -> float:
         """Return `f_ge + k * alpha` for the transition `k -> k+1`."""
         return self.frequency + transition_index(transition) * self.alpha
+
+
+class _ControlParameters:
+    """Minimal stand-in for `ControlParameters`."""
+
+    @staticmethod
+    def get_transition_control_amplitude(
+        qubit: str,
+        transition: TransitionName,
+    ) -> float:
+        """Return the control amplitude scaled by the transition matrix element."""
+        return CONTROL_AMPLITUDE / ((transition_index(transition) + 1) ** 0.5)
 
 
 class _Util:
@@ -159,10 +183,17 @@ class _CalibNote:
 class _Context:
     """Minimal stand-in for `ExperimentContext`."""
 
-    def __init__(self, *, labels: Sequence[str], calib_note: _CalibNote) -> None:
-        self.qubit_labels = [QUBIT]
-        self.qubits = {QUBIT: _Qubit(QUBIT, ALPHA)}
-        self.targets = dict.fromkeys(labels, object())
+    def __init__(
+        self,
+        *,
+        qubit_labels: Sequence[str],
+        labels: Sequence[str],
+        calib_note: _CalibNote,
+    ) -> None:
+        self.qubit_labels = list(qubit_labels)
+        self.qubits = {qubit: _Qubit(qubit, ALPHA) for qubit in self.qubit_labels}
+        self.targets = {label: _Target(label) for label in labels}
+        self.params = _ControlParameters()
         self.util = _Util()
         self.measurement = _Measurement()
         self.calib_note = calib_note
@@ -291,9 +322,13 @@ class _MeasurementService:
                 "schedules": schedules,
             }
         )
-        values = [iq_from_z(experiment.simulate(schedule)) for schedule in schedules]
+        simulated = [experiment.simulate(schedule) for schedule in schedules]
+        driven = {qubit for qubit, _ in simulated}
+        assert len(driven) == 1, "A sweep must drive exactly one qubit."
+        qubit = driven.pop()
+        values = [iq_from_z(z) for _, z in simulated]
         return _SweepResult(
-            {QUBIT: _SweepPoint(np.asarray(values, dtype=np.complex128))}
+            {qubit: _SweepPoint(np.asarray(values, dtype=np.complex128))}
         )
 
 
@@ -315,15 +350,32 @@ class StubExperiment:
         self,
         *,
         transition: TransitionName,
-        rabi_rate_per_amplitude: float,
+        rabi_rates: dict[str, float],
+        registered_qubits: Sequence[str] | None = None,
     ) -> None:
         self.transition = transition
-        self.target = transition_label(transition)
-        self.lower_labels = lower_labels(transition)
-        self.rabi_rate_per_amplitude = rabi_rate_per_amplitude
+        self.rabi_rates = dict(rabi_rates)
+        self.qubits = list(self.rabi_rates)
+        registered = (
+            self.qubits if registered_qubits is None else list(registered_qubits)
+        )
+        self.targets_by_qubit = {
+            qubit: transition_label(transition, qubit) for qubit in self.qubits
+        }
+        self.lower_labels_by_qubit = {
+            qubit: lower_labels(transition, qubit) for qubit in self.qubits
+        }
         self.calib_note = _CalibNote()
         self.ctx = _Context(
-            labels=[*self.lower_labels, self.target],
+            qubit_labels=self.qubits,
+            labels=[
+                label
+                for qubit in registered
+                for label in (
+                    *self.lower_labels_by_qubit[qubit],
+                    self.targets_by_qubit[qubit],
+                )
+            ],
             calib_note=self.calib_note,
         )
         self.pulse = _Pulse(self.calib_note)
@@ -331,17 +383,43 @@ class StubExperiment:
         self.sweep_calls: list[dict[str, Any]] = []
         self.reference_calls: list[dict[str, Any]] = []
 
-    def simulate(self, schedule: PulseSchedule) -> float:
-        """Return the normalized signal the schedule would produce."""
-        waveform = schedule.get_sampled_sequences()[self.target]
-        area = float(np.real(waveform).sum()) * SAMPLING_PERIOD
-        angle = 2 * np.pi * self.rabi_rate_per_amplitude * area
-        return float(np.cos(angle))
+    @property
+    def qubit(self) -> str:
+        """Return the first stub qubit."""
+        return self.qubits[0]
+
+    @property
+    def target(self) -> str:
+        """Return the transition label of the first stub qubit."""
+        return self.targets_by_qubit[self.qubit]
+
+    @property
+    def lower_labels(self) -> tuple[str, ...]:
+        """Return the lower-rung labels of the first stub qubit."""
+        return self.lower_labels_by_qubit[self.qubit]
+
+    @property
+    def rabi_rate_per_amplitude(self) -> float:
+        """Return the Rabi rate per unit amplitude of the first stub qubit."""
+        return self.rabi_rates[self.qubit]
+
+    def simulate(self, schedule: PulseSchedule) -> tuple[str, float]:
+        """Return the qubit the schedule drives and the signal it produces."""
+        sequences = schedule.get_sampled_sequences()
+        for qubit, target in self.targets_by_qubit.items():
+            if target not in sequences:
+                continue
+            area = float(np.real(sequences[target]).sum()) * SAMPLING_PERIOD
+            angle = 2 * np.pi * self.rabi_rates[qubit] * area
+            return qubit, float(np.cos(angle))
+        raise AssertionError("The schedule drives no known transition target.")
 
     def calc_control_amplitude(self, target: str, rabi_rate: float) -> float:
         """Invert the stub's linear amplitude-to-Rabi-rate relation."""
-        assert target == self.target
-        return rabi_rate / self.rabi_rate_per_amplitude
+        for qubit, label in self.targets_by_qubit.items():
+            if label == target:
+                return rabi_rate / self.rabi_rates[qubit]
+        raise AssertionError(f"Unknown target {target!r}.")
 
 
 @pytest.fixture
@@ -354,6 +432,12 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
     amplitude-to-Rabi-rate relation from that, and seeds the calibrations every
     script requires: a pi pulse on each lower rung, the transition's Rabi
     parameters and — optionally — the transition's FlatTop half-pi.
+
+    Passing `qubits` builds the same stub for several qubits at once. A qubit
+    may then be given its own true amplitude through `true_amplitudes`, may be
+    left out of `registered_qubits` so that its transition target is missing,
+    and may be left out of `calibrated_qubits` so that its ladder and Rabi
+    parameters are missing.
     """
 
     def factory(
@@ -367,6 +451,10 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
         beta: float = 0.0,
         with_hpi: bool = True,
         hpi_amplitude: float | None = None,
+        qubits: Sequence[str] | None = None,
+        true_amplitudes: dict[str, float] | None = None,
+        registered_qubits: Sequence[str] | None = None,
+        calibrated_qubits: Sequence[str] | None = None,
     ) -> StubExperiment:
         if envelope == "flat_top":
             unit = FlatTop(duration=duration, amplitude=1, tau=ramptime)
@@ -374,40 +462,51 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
             unit = Drag(duration=duration, amplitude=1, beta=beta)
         unit_area = float(unit.real.sum()) * SAMPLING_PERIOD
         turns = 0.25 if pulse_type == "hpi" else 0.5
+
+        labels = [QUBIT] if qubits is None else list(qubits)
+        amplitudes = {
+            qubit: (true_amplitudes or {}).get(qubit, true_amplitude)
+            for qubit in labels
+        }
         experiment = StubExperiment(
             transition=transition,
-            rabi_rate_per_amplitude=turns / (unit_area * true_amplitude),
+            rabi_rates={
+                qubit: turns / (unit_area * amplitude)
+                for qubit, amplitude in amplitudes.items()
+            },
+            registered_qubits=registered_qubits,
         )
 
-        for label in experiment.lower_labels:
-            experiment.calib_note.update_pi_param(
-                label,
-                {
-                    "target": label,
-                    "duration": PREP_PI.duration,
-                    "amplitude": PREP_PI.amplitude,
-                    "tau": PREP_PI.tau,
-                },
-            )
-        experiment.ctx.stored_rabi_params[experiment.target] = rabi_param(
-            experiment.target
-        )
-        if with_hpi:
-            flat_top_hpi = FlatTop(duration=32, amplitude=1, tau=12)
-            hpi_area = float(flat_top_hpi.real.sum()) * SAMPLING_PERIOD
-            experiment.calib_note.update_hpi_param(
-                experiment.target,
-                {
-                    "target": experiment.target,
-                    "duration": 32,
-                    "amplitude": (
-                        hpi_amplitude
-                        if hpi_amplitude is not None
-                        else 0.25 / (hpi_area * experiment.rabi_rate_per_amplitude)
-                    ),
-                    "tau": 12,
-                },
-            )
+        calibrated = labels if calibrated_qubits is None else list(calibrated_qubits)
+        flat_top_hpi = FlatTop(duration=32, amplitude=1, tau=12)
+        hpi_area = float(flat_top_hpi.real.sum()) * SAMPLING_PERIOD
+        for qubit in calibrated:
+            target = experiment.targets_by_qubit[qubit]
+            for label in experiment.lower_labels_by_qubit[qubit]:
+                experiment.calib_note.update_pi_param(
+                    label,
+                    {
+                        "target": label,
+                        "duration": PREP_PI.duration,
+                        "amplitude": PREP_PI.amplitude,
+                        "tau": PREP_PI.tau,
+                    },
+                )
+            experiment.ctx.stored_rabi_params[target] = rabi_param(target)
+            if with_hpi:
+                experiment.calib_note.update_hpi_param(
+                    target,
+                    {
+                        "target": target,
+                        "duration": 32,
+                        "amplitude": (
+                            hpi_amplitude
+                            if hpi_amplitude is not None
+                            else 0.25 / (hpi_area * experiment.rabi_rates[qubit])
+                        ),
+                        "tau": 12,
+                    },
+                )
         return experiment
 
     return factory
