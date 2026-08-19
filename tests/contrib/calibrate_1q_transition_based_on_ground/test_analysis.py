@@ -511,3 +511,26 @@ def test_inverted_leading_pulse_matches_the_dropped_repetitions(pulse: Any) -> N
     assert len(bodies[_core.BRANCH_PLUS].values) == len(
         pulse.repeated(repetitions + 1).values
     )
+
+
+def test_iq_figure_matches_the_reference_iq_plane_styling() -> None:
+    """Given IQ samples, when the figure is built, then it uses the IQPlotter styling."""
+    raw = np.array([1 + 2j, 3 + 1j, -1 - 0.5j])
+    fig = _core.iq_figure(title="IQ", raw=raw)
+
+    # No connecting line between the swept points.
+    assert fig.data[0].mode == "markers"
+
+    # Both axes span the same symmetric range, so the origin sits at the centre.
+    assert fig.layout.xaxis.range == fig.layout.yaxis.range
+    assert fig.layout.xaxis.range[0] == -fig.layout.xaxis.range[1]
+
+    # I = 0 and Q = 0 are drawn in black.
+    assert fig.layout.xaxis.zeroline
+    assert fig.layout.xaxis.zerolinecolor == "black"
+    assert fig.layout.yaxis.zeroline
+    assert fig.layout.yaxis.zerolinecolor == "black"
+
+    # One unit of I is as long as one unit of Q.
+    assert fig.layout.yaxis.scaleanchor == "x"
+    assert fig.layout.yaxis.scaleratio == 1

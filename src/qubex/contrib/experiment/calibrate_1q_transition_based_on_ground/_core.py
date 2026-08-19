@@ -1308,21 +1308,12 @@ def iq_figure(
     raw: NDArray[np.complex128],
 ) -> go.Figure:
     """Build the raw IQ figure, which exposes non-affine readout behaviour."""
-    fig = viz.make_figure()
-    fig.add_scatter(
-        x=raw.real,
-        y=raw.imag,
-        mode="lines+markers",
-        name="raw",
-    )
-    fig.update_layout(
+    return viz.make_iq_scatter_figure(
+        {"raw": raw},
         title=title,
-        xaxis_title="I (arb. units)",
-        yaxis_title="Q (arb. units)",
-        width=500,
-        height=400,
+        xlabel="I (arb. units)",
+        ylabel="Q (arb. units)",
     )
-    return fig
 
 
 def beta_figure(
