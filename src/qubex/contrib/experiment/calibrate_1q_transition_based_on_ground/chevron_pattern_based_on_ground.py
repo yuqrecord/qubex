@@ -520,6 +520,10 @@ def chevron_pattern_based_on_ground(
         resonance of one target is at
         `result.data[target]["resonant_frequency"]`.
         Nothing is written to `exp.calib_note`.
+        A target whose analysis, storage, plotting or display failed still
+        appears, carrying whatever the pipeline reached and the exception
+        under `"error"`; a target that came through carries no `"error"`
+        key at all. Measurement failures are not caught: they are raised.
     """
     if plot is None:
         plot = True
@@ -541,6 +545,15 @@ def chevron_pattern_based_on_ground(
         frequencies=frequencies,
     )
 
+    def _analyze(run_result: dict[str, Any]) -> dict[str, Any]:
+        return analyze_chevron_pattern_based_on_ground(
+            run_result=run_result,
+            rabi_fit_r2_threshold=rabi_fit_r2_threshold,
+        )
+
+    def _display(result: Result) -> None:
+        display_chevron_pattern_based_on_ground(result, plot)
+
     data: dict[str, Any] = {}
     figures: dict[str, go.Figure] = {}
     for ladder in ladders:
@@ -557,15 +570,14 @@ def chevron_pattern_based_on_ground(
             shot_interval=shot_interval,
             plot_pulse_schedule=plot_pulse_schedule,
         )
-        payload = analyze_chevron_pattern_based_on_ground(
+        payload, target_figures = _core.run_analysis_stages(
             run_result=run_result,
-            rabi_fit_r2_threshold=rabi_fit_r2_threshold,
-        )
-        target_figures = plot_chevron_pattern_based_on_ground(payload)
-
-        display_chevron_pattern_based_on_ground(
-            Result(data=payload, figures=target_figures),
-            plot,
+            analyze=_analyze,
+            # The transition frequency belongs to the registered target, so this
+            # experiment deliberately persists nothing.
+            store=None,
+            plot=plot_chevron_pattern_based_on_ground,
+            display=_display,
         )
         data[payload["target"]] = payload
         figures.update(

@@ -382,6 +382,10 @@ def obtain_rabi_params_based_on_ground(
         `result.data[target]["rabi_param"]`. They are also written to
         `exp.calib_note` under the transition label when the fit clears
         `fit_threshold`.
+        A target whose analysis, storage, plotting or display failed still
+        appears, carrying whatever the pipeline reached and the exception
+        under `"error"`; a target that came through carries no `"error"`
+        key at all. Measurement failures are not caught: they are raised.
     """
     if plot is None:
         plot = True
@@ -398,6 +402,22 @@ def obtain_rabi_params_based_on_ground(
         amplitudes=amplitudes,
     )
 
+    def _analyze(run_result: dict[str, Any]) -> dict[str, Any]:
+        return analyze_obtain_rabi_params_based_on_ground(
+            run_result=run_result,
+            is_damped=is_damped,
+            fit_threshold=fit_threshold,
+        )
+
+    def _store(payload: dict[str, Any]) -> None:
+        exp.ctx.store_rabi_params(
+            {payload["target"]: payload["rabi_param"]},
+            r2_threshold=payload["fit_threshold"],
+        )
+
+    def _display(result: Result) -> None:
+        display_obtain_rabi_params_based_on_ground(result, plot)
+
     data: dict[str, Any] = {}
     figures: dict[str, go.Figure] = {}
     for ladder in ladders:
@@ -412,21 +432,12 @@ def obtain_rabi_params_based_on_ground(
             shot_interval=shot_interval,
             plot_pulse_schedule=plot_pulse_schedule,
         )
-        payload = analyze_obtain_rabi_params_based_on_ground(
+        payload, target_figures = _core.run_analysis_stages(
             run_result=run_result,
-            is_damped=is_damped,
-            fit_threshold=fit_threshold,
-        )
-        target_figures = plot_obtain_rabi_params_based_on_ground(payload)
-
-        exp.ctx.store_rabi_params(
-            {payload["target"]: payload["rabi_param"]},
-            r2_threshold=payload["fit_threshold"],
-        )
-
-        display_obtain_rabi_params_based_on_ground(
-            Result(data=payload, figures=target_figures),
-            plot,
+            analyze=_analyze,
+            store=_store,
+            plot=plot_obtain_rabi_params_based_on_ground,
+            display=_display,
         )
         data[payload["target"]] = payload
         figures.update(

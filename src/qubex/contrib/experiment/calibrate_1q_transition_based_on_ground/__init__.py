@@ -65,6 +65,18 @@ The result is keyed by transition label whatever the number of targets::
     result.data["Q00-fh"]["amplitude"]
     result.figures["Q00-fh:branches"]
 
+A fit that does not converge must not cost the measurement that produced it, so
+the analysis, the calibration-note write, the plotting and the display are each
+guarded per target. Whatever the pipeline reached is kept, the exception is
+printed and stored under `"error"`, and the remaining targets still run::
+
+    if "error" in result.data["Q01-fh"]:
+        raise result.data["Q01-fh"]["error"]   # the original traceback
+
+A target that came through carries no `"error"` key at all. Failures of the
+measurement itself are *not* caught - there is nothing to keep, and the run may
+have left the hardware in a state worth looking at.
+
 Bootstrap order for a new rung::
 
     exp.register_transition_target(qubit=..., transition=..., channel_number=...)

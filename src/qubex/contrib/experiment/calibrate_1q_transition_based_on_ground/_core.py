@@ -105,7 +105,7 @@ from qubex.experiment.experiment_constants import (
     PI_DURATION,
     PI_RAMPTIME,
 )
-from qubex.experiment.models import RabiParam
+from qubex.experiment.models import RabiParam, Result
 from qubex.pulse import PulseArray, PulseSchedule, Waveform
 from qubex.system.transition import (
     TRANSITION_NAMES,
@@ -616,6 +616,133 @@ def get_transition_rabi_param(
             "values. Re-run `obtain_rabi_params_based_on_ground`."
         )
     return param
+
+
+def record_stage_failure(
+    payload: dict[str, Any],
+    *,
+    target: str,
+    stage: str,
+    error: Exception,
+) -> dict[str, Any]:
+    """
+    Report a failed analysis stage and attach it to the payload.
+
+    The first failure is the one kept: it is the most upstream, and every later
+    stage failing is usually a consequence of it. The exception object itself is
+    stored rather than its text, so its traceback survives and the caller can
+    re-raise it with `raise result.data[target]["error"]`.
+
+    Parameters
+    ----------
+    payload : dict[str, Any]
+        Payload to attach the failure to. It is not mutated.
+    target : str
+        Transition label, for the message.
+    stage : str
+        Name of the stage that failed, for the message.
+    error : Exception
+        The exception that was raised.
+
+    Returns
+    -------
+    dict[str, Any]
+        A copy of the payload carrying an `"error"` entry.
+    """
+    print(f"[{target}] {stage} failed: {type(error).__name__}: {error}")
+    if "error" in payload:
+        return payload
+    return {**payload, "error": error}
+
+
+def run_analysis_stages(
+    *,
+    run_result: dict[str, Any],
+    analyze: Callable[[dict[str, Any]], dict[str, Any]],
+    store: Callable[[dict[str, Any]], None] | None,
+    plot: Callable[[dict[str, Any]], dict[str, go.Figure]],
+    display: Callable[[Result], None] | None,
+) -> tuple[dict[str, Any], dict[str, go.Figure]]:
+    """
+    Run the post-measurement stages without letting one of them lose the data.
+
+    The measurement has already occupied the hardware by the time these stages
+    run, so a fit that does not converge must not take the raw data down with
+    it. Each stage is guarded on its own, and the stages that can still succeed
+    after an earlier one failed are still attempted:
+
+    - `analyze` failing skips everything after it, because the later stages read
+      keys that only the analysis produces;
+    - `store` failing does not stop the figures from being built;
+    - `plot` failing leaves the analysis and the stored calibration alone.
+
+    Parameters
+    ----------
+    run_result : dict[str, Any]
+        Payload of the run stage. It is what is returned when the analysis
+        fails.
+    analyze : Callable[[dict[str, Any]], dict[str, Any]]
+        Analysis stage, called with `run_result`.
+    store : Callable[[dict[str, Any]], None] | None
+        Writes the result to the calibration note. `None` for the experiments
+        that persist nothing.
+    plot : Callable[[dict[str, Any]], dict[str, go.Figure]]
+        Figure stage, called with the analyzed payload.
+    display : Callable[[Result], None] | None
+        Display stage, called with the single-target `Result`.
+
+    Returns
+    -------
+    tuple[dict[str, Any], dict[str, go.Figure]]
+        The furthest payload that could be produced, and its figures. The
+        payload carries an `"error"` entry when any stage failed, and no such
+        key at all when every stage succeeded.
+    """
+    target = str(run_result.get("target", "?"))
+
+    try:
+        payload = analyze(run_result)
+    except Exception as error:  # noqa: BLE001 - the raw data must survive
+        return record_stage_failure(
+            run_result,
+            target=target,
+            stage="analysis",
+            error=error,
+        ), {}
+
+    if store is not None:
+        try:
+            store(payload)
+        except Exception as error:  # noqa: BLE001
+            payload = record_stage_failure(
+                payload,
+                target=target,
+                stage="calibration storage",
+                error=error,
+            )
+
+    try:
+        figures = plot(payload)
+    except Exception as error:  # noqa: BLE001
+        return record_stage_failure(
+            payload,
+            target=target,
+            stage="plotting",
+            error=error,
+        ), {}
+
+    if display is not None:
+        try:
+            display(Result(data=payload, figures=figures))
+        except Exception as error:  # noqa: BLE001
+            payload = record_stage_failure(
+                payload,
+                target=target,
+                stage="display",
+                error=error,
+            )
+
+    return payload, figures
 
 
 def resolve_target_labels(

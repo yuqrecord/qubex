@@ -510,8 +510,9 @@ def _calibrate_one_drag_hpi(
         The payload of this target and its figures.
     """
     iterations: list[dict[str, Any]] = []
-    data: dict[str, Any] = {}
+    analyzed: dict[str, Any] | None = None
     beta_result: dict[str, Any] | None = None
+    failed: dict[str, Any] | None = None
     for i in range(n_iterations):
         run_result = run_calibrate_drag_hpi_pulse_based_on_ground(
             exp,
@@ -525,47 +526,17 @@ def _calibrate_one_drag_hpi(
             shot_interval=shot_interval,
             plot_pulse_schedule=plot_pulse_schedule and i == 0,
         )
-        data = analyze_calibrate_drag_hpi_pulse_based_on_ground(run_result=run_result)
-
-        # The run stage owns the defaults, so read what it actually played.
-        resolved_duration = float(data["duration"])
-        resolved_n_shots = int(data["n_shots"])
-        resolved_shot_interval = float(data["shot_interval"])
-        beta = float(data["beta"])
-        amplitude = float(data["amplitude"])
-        exp.calib_note.update_drag_hpi_param(
-            data["target"],
-            {
-                "target": data["target"],
-                "duration": resolved_duration,
-                "amplitude": amplitude,
-                "beta": beta,
-            },
-        )
-
-        if calibrate_beta:
-            analyzer = _resolve_analyzer(exp, target=ladder.target)
-            beta_result = _core.analyze_beta_pass(
-                run_result=_core.run_beta_pass(
-                    exp,
-                    ladder=ladder,
-                    prep_pulses=data["prep_pulses"],
-                    rabi_param=data["rabi_param"],
-                    pulse_type="hpi",
-                    make_drive=lambda value, amplitude=amplitude: Drag(
-                        duration=resolved_duration,
-                        amplitude=amplitude,
-                        beta=float(value),
-                    ),
-                    analyzer=analyzer,
-                    beta_range=beta + betas,
-                    n_turns=n_turns,
-                    n_shots=resolved_n_shots,
-                    shot_interval=resolved_shot_interval,
-                ),
-                degree=degree,
+        try:
+            data = analyze_calibrate_drag_hpi_pulse_based_on_ground(
+                run_result=run_result
             )
-            beta = float(beta_result["beta"])
+
+            # The run stage owns the defaults, so read what it actually played.
+            resolved_duration = float(data["duration"])
+            resolved_n_shots = int(data["n_shots"])
+            resolved_shot_interval = float(data["shot_interval"])
+            beta = float(data["beta"])
+            amplitude = float(data["amplitude"])
             exp.calib_note.update_drag_hpi_param(
                 data["target"],
                 {
@@ -576,28 +547,84 @@ def _calibrate_one_drag_hpi(
                 },
             )
 
-        iterations.append(
-            {
-                "amplitude": amplitude,
-                "beta": beta,
-                "fit": data["fit"],
-                "beta_result": beta_result,
-                "data": data,
-            }
-        )
+            if calibrate_beta:
+                analyzer = _resolve_analyzer(exp, target=ladder.target)
+                beta_result = _core.analyze_beta_pass(
+                    run_result=_core.run_beta_pass(
+                        exp,
+                        ladder=ladder,
+                        prep_pulses=data["prep_pulses"],
+                        rabi_param=data["rabi_param"],
+                        pulse_type="hpi",
+                        make_drive=lambda value, amplitude=amplitude: Drag(
+                            duration=resolved_duration,
+                            amplitude=amplitude,
+                            beta=float(value),
+                        ),
+                        analyzer=analyzer,
+                        beta_range=beta + betas,
+                        n_turns=n_turns,
+                        n_shots=resolved_n_shots,
+                        shot_interval=resolved_shot_interval,
+                    ),
+                    degree=degree,
+                )
+                beta = float(beta_result["beta"])
+                exp.calib_note.update_drag_hpi_param(
+                    data["target"],
+                    {
+                        "target": data["target"],
+                        "duration": resolved_duration,
+                        "amplitude": amplitude,
+                        "beta": beta,
+                    },
+                )
+
+            iterations.append(
+                {
+                    "amplitude": amplitude,
+                    "beta": beta,
+                    "fit": data["fit"],
+                    "beta_result": beta_result,
+                    "data": data,
+                }
+            )
+            analyzed = data
+        except Exception as error:  # noqa: BLE001 - the raw data must survive
+            failed = _core.record_stage_failure(
+                run_result,
+                target=ladder.target,
+                stage=f"analysis (iteration {i + 1}/{n_iterations})",
+                error=error,
+            )
+            break
+
+    if analyzed is None:
+        # Not one pass got far enough to fit, so the raw sweep is all there is.
+        return failed if failed is not None else {}, {}
 
     data = {
-        **data,
+        **analyzed,
         "beta": iterations[-1]["beta"],
         "beta_result": beta_result,
         "iterations": iterations,
     }
-    figures = plot_calibrate_drag_hpi_pulse_based_on_ground(data)
-    display_calibrate_drag_hpi_pulse_based_on_ground(
-        Result(data=data, figures=figures),
-        plot,
+    if failed is not None:
+        # An earlier pass succeeded; keep it and say why the descent stopped.
+        data["error"] = failed["error"]
+
+    def _display(result: Result) -> None:
+        display_calibrate_drag_hpi_pulse_based_on_ground(result, plot)
+
+    return _core.run_analysis_stages(
+        run_result=data,
+        # The passes above already analyzed and stored; only the figures and
+        # the summary are left to guard.
+        analyze=lambda payload: payload,
+        store=None,
+        plot=plot_calibrate_drag_hpi_pulse_based_on_ground,
+        display=_display,
     )
-    return data, figures
 
 
 def calibrate_drag_hpi_pulse_based_on_ground(
@@ -686,6 +713,10 @@ def calibrate_drag_hpi_pulse_based_on_ground(
         the calibrated amplitude and beta of one target are at
         `result.data[target]["amplitude"]` and `result.data[target]["beta"]`.
         Both are also written to `exp.calib_note` under the transition label.
+        A target whose analysis, storage, plotting or display failed still
+        appears, carrying whatever the pipeline reached and the exception
+        under `"error"`; a target that came through carries no `"error"`
+        key at all. Measurement failures are not caught: they are raised.
     """
     if plot is None:
         plot = True

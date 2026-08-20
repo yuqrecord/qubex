@@ -461,6 +461,10 @@ def calibrate_hpi_pulse_based_on_ground(
         the calibrated amplitude of one target is at
         `result.data[target]["amplitude"]`. It is also written to
         `exp.calib_note` under the transition label.
+        A target whose analysis, storage, plotting or display failed still
+        appears, carrying whatever the pipeline reached and the exception
+        under `"error"`; a target that came through carries no `"error"`
+        key at all. Measurement failures are not caught: they are raised.
     """
     if plot is None:
         plot = True
@@ -471,6 +475,23 @@ def calibrate_hpi_pulse_based_on_ground(
         transition=transition,
         require_rabi_param=True,
     )
+
+    def _analyze(run_result: dict[str, Any]) -> dict[str, Any]:
+        return analyze_calibrate_hpi_pulse_based_on_ground(run_result=run_result)
+
+    def _store(payload: dict[str, Any]) -> None:
+        exp.calib_note.update_hpi_param(
+            payload["target"],
+            {
+                "target": payload["target"],
+                "duration": payload["duration"],
+                "amplitude": payload["amplitude"],
+                "tau": payload["ramptime"],
+            },
+        )
+
+    def _display(result: Result) -> None:
+        display_calibrate_hpi_pulse_based_on_ground(result, plot)
 
     data: dict[str, Any] = {}
     figures: dict[str, go.Figure] = {}
@@ -487,22 +508,12 @@ def calibrate_hpi_pulse_based_on_ground(
             shot_interval=shot_interval,
             plot_pulse_schedule=plot_pulse_schedule,
         )
-        payload = analyze_calibrate_hpi_pulse_based_on_ground(run_result=run_result)
-        target_figures = plot_calibrate_hpi_pulse_based_on_ground(payload)
-
-        exp.calib_note.update_hpi_param(
-            payload["target"],
-            {
-                "target": payload["target"],
-                "duration": payload["duration"],
-                "amplitude": payload["amplitude"],
-                "tau": payload["ramptime"],
-            },
-        )
-
-        display_calibrate_hpi_pulse_based_on_ground(
-            Result(data=payload, figures=target_figures),
-            plot,
+        payload, target_figures = _core.run_analysis_stages(
+            run_result=run_result,
+            analyze=_analyze,
+            store=_store,
+            plot=plot_calibrate_hpi_pulse_based_on_ground,
+            display=_display,
         )
         data[payload["target"]] = payload
         figures.update(

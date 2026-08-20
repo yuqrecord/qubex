@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any, Literal, cast
 
 import numpy as np
+import plotly.graph_objects as go
 import pytest
 
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
@@ -585,3 +586,134 @@ def test_defaults_are_taken_from_the_core_experiment_constants() -> None:
     assert (
         _core.DEFAULT_RABI_RAMPTIME == constants.HPI_DURATION - constants.HPI_RAMPTIME
     )
+
+
+def _run_result(target: str = "Q00-fh") -> dict[str, Any]:
+    """Return a minimal run payload for the stage runner."""
+    return {"target": target, "raw": np.array([1 + 1j])}
+
+
+def test_analysis_stages_return_every_stage_when_all_succeed() -> None:
+    """Given healthy stages, when run, then the payload carries no error key."""
+    seen: list[str] = []
+
+    payload, figures = _core.run_analysis_stages(
+        run_result=_run_result(),
+        analyze=lambda run_result: {**run_result, "amplitude": 0.3},
+        store=lambda _: seen.append("store"),
+        plot=lambda _: {"branches": go.Figure()},
+        display=lambda _: seen.append("display"),
+    )
+
+    assert seen == ["store", "display"]
+    assert payload["amplitude"] == 0.3
+    assert "error" not in payload
+    assert list(figures) == ["branches"]
+
+
+def test_a_failed_analysis_keeps_the_raw_data_and_skips_the_rest() -> None:
+    """Given a failing analysis, when run, then the run payload comes back."""
+    seen: list[str] = []
+    error = ValueError("no crossing")
+
+    def _analyze(run_result: dict[str, Any]) -> dict[str, Any]:
+        raise error
+
+    payload, figures = _core.run_analysis_stages(
+        run_result=_run_result(),
+        analyze=_analyze,
+        store=lambda _: seen.append("store"),
+        plot=lambda _: seen.append("plot") or {},  # type: ignore[func-returns-value]
+        display=lambda _: seen.append("display"),
+    )
+
+    # Nothing downstream runs: they all read keys only the analysis produces.
+    assert seen == []
+    assert payload["error"] is error
+    assert payload["raw"] is not None
+    assert figures == {}
+
+
+def test_a_failed_plot_keeps_the_analysis_and_the_stored_calibration() -> None:
+    """Given a failing plot, when run, then the analysis and the store survive."""
+    seen: list[str] = []
+    error = RuntimeError("no renderer")
+
+    def _plot(payload: dict[str, Any]) -> dict[str, Any]:
+        raise error
+
+    payload, figures = _core.run_analysis_stages(
+        run_result=_run_result(),
+        analyze=lambda run_result: {**run_result, "amplitude": 0.3},
+        store=lambda _: seen.append("store"),
+        plot=_plot,
+        display=lambda _: seen.append("display"),
+    )
+
+    assert seen == ["store"]
+    assert payload["amplitude"] == 0.3
+    assert payload["error"] is error
+    assert figures == {}
+
+
+def test_a_failed_store_still_builds_the_figures() -> None:
+    """Given a failing store, when run, then plotting and display still happen."""
+    seen: list[str] = []
+    error = KeyError("calib note")
+
+    def _store(payload: dict[str, Any]) -> None:
+        raise error
+
+    payload, figures = _core.run_analysis_stages(
+        run_result=_run_result(),
+        analyze=lambda run_result: {**run_result, "amplitude": 0.3},
+        store=_store,
+        plot=lambda _: {"branches": go.Figure()},
+        display=lambda _: seen.append("display"),
+    )
+
+    assert seen == ["display"]
+    assert payload["error"] is error
+    assert list(figures) == ["branches"]
+
+
+def test_a_failed_display_keeps_the_payload_and_the_figures() -> None:
+    """Given a failing display, when run, then everything before it survives."""
+    error = RuntimeError("no notebook")
+
+    def _display(result: Any) -> None:
+        raise error
+
+    payload, figures = _core.run_analysis_stages(
+        run_result=_run_result(),
+        analyze=lambda run_result: {**run_result, "amplitude": 0.3},
+        store=None,
+        plot=lambda _: {"branches": go.Figure()},
+        display=_display,
+    )
+
+    assert payload["amplitude"] == 0.3
+    assert payload["error"] is error
+    assert list(figures) == ["branches"]
+
+
+def test_only_the_first_failure_is_kept() -> None:
+    """Given two failing stages, when run, then the upstream error is the one kept."""
+    first = KeyError("store")
+    second = RuntimeError("display")
+
+    def _store(payload: dict[str, Any]) -> None:
+        raise first
+
+    def _display(result: Any) -> None:
+        raise second
+
+    payload, _ = _core.run_analysis_stages(
+        run_result=_run_result(),
+        analyze=lambda run_result: {**run_result, "amplitude": 0.3},
+        store=_store,
+        plot=lambda _: {"branches": go.Figure()},
+        display=_display,
+    )
+
+    assert payload["error"] is first

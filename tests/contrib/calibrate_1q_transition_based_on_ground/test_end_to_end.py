@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import itertools
 from collections.abc import Callable
 from typing import Any
 
@@ -788,3 +790,248 @@ def test_calibration_figures_are_plotted_against_the_amplitude_itself(
     difference = result.figures[f"{target}:difference"]
     assert difference.layout.shapes[-1].x0 == pytest.approx(payload["amplitude"])
     assert f"{payload['amplitude']:.6g}" in difference.layout.annotations[0].text
+
+
+def _module(name: str) -> Any:
+    """Return an experiment submodule, which the package shadows with its function."""
+    return importlib.import_module(
+        f"qubex.contrib.experiment.calibrate_1q_transition_based_on_ground.{name}"
+    )
+
+
+def test_a_failing_analysis_keeps_the_measurement_and_the_other_targets(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given one qubit the fit cannot solve, when calibrated, then the rest still runs."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+        qubits=[QUBIT, QUBIT_2, QUBIT_3],
+        # Q01 sits far outside the swept window, so its crossing is an
+        # extrapolation and `_core.fit_crossing` refuses it.
+        true_amplitudes={QUBIT: 0.3012, QUBIT_2: 0.2513, QUBIT_3: 0.2988},
+    )
+
+    seeded = {target: dict(param) for target, param in exp.calib_note.hpi.items()}
+
+    result = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2, QUBIT_3],
+        transition="fh",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    good, bad, also_good = (f"{q}-fh" for q in (QUBIT, QUBIT_2, QUBIT_3))
+    assert list(result.data) == [good, bad, also_good]
+
+    # The target that failed keeps its raw sweep and reports why.
+    assert isinstance(result.data[bad]["error"], ValueError)
+    assert result.data[bad]["raw"].size > 0
+    assert "amplitude" not in result.data[bad]
+    assert bad not in result.figures
+    # Its stored calibration is left exactly as it was.
+    assert exp.calib_note.hpi[bad] == seeded[bad]
+
+    # Every other target is measured and stored as if nothing had happened.
+    for target in (good, also_good):
+        assert "error" not in result.data[target]
+        assert exp.calib_note.hpi[target]["amplitude"] == pytest.approx(
+            result.data[target]["amplitude"]
+        )
+        assert f"{target}:branches" in result.figures
+    assert len(exp.sweep_calls) == 3
+
+
+def test_a_failing_plot_keeps_the_stored_calibration(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a plotting failure, when calibrated, then the amplitude is still stored."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+    )
+
+    def _boom(data: Any) -> Any:
+        raise RuntimeError("no renderer")
+
+    monkeypatch.setattr(
+        _module("calibrate_hpi_pulse_based_on_ground"),
+        "plot_calibrate_hpi_pulse_based_on_ground",
+        _boom,
+    )
+
+    result = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    target = f"{QUBIT}-fh"
+    assert isinstance(result.data[target]["error"], RuntimeError)
+    # The analysis and the calibration-note write happened before the figures.
+    assert result.data[target]["amplitude"] == pytest.approx(0.3012, rel=1e-4)
+    assert exp.calib_note.hpi[target]["amplitude"] == pytest.approx(
+        result.data[target]["amplitude"]
+    )
+    assert result.figures == {}
+
+
+def test_a_failing_measurement_is_raised(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a measurement failure, when calibrated, then it is not swallowed."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        hpi_amplitude=0.30,
+    )
+
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise ConnectionError("box is gone")
+
+    monkeypatch.setattr(
+        _module("calibrate_hpi_pulse_based_on_ground"),
+        "run_calibrate_hpi_pulse_based_on_ground",
+        _boom,
+    )
+
+    with pytest.raises(ConnectionError, match="box is gone"):
+        calibrate_hpi_pulse_based_on_ground(
+            exp,
+            targets=QUBIT,
+            transition="fh",
+            plot=False,
+            plot_pulse_schedule=False,
+        )
+
+
+def _drag_stub(stub_experiment_factory: Callable[..., Any]) -> Any:
+    """Return a DRAG stub seeded so that the amplitude pass converges."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+    target = f"{QUBIT}-hi"
+    exp.calib_note.update_drag_hpi_param(
+        target,
+        {
+            "target": target,
+            "duration": DRAG_HPI_DURATION,
+            "amplitude": 0.30,
+            "beta": 0.0,
+        },
+    )
+    return exp
+
+
+def _fail_drag_analysis_on_call(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    failing_call: int,
+) -> None:
+    """Make the DRAG analysis raise on the n-th call, counting from one."""
+    module = _module("calibrate_drag_hpi_pulse_based_on_ground")
+    original = module.analyze_calibrate_drag_hpi_pulse_based_on_ground
+    calls = itertools.count(1)
+
+    def _maybe_fail(**kwargs: Any) -> Any:
+        if next(calls) == failing_call:
+            raise ValueError("no crossing")
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        module,
+        "analyze_calibrate_drag_hpi_pulse_based_on_ground",
+        _maybe_fail,
+    )
+
+
+def _run_drag(exp: Any) -> Any:
+    return calibrate_drag_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_HPI_DURATION,
+        drag_coeff=DRAG_COEFF,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_iterations=2,
+        calibrate_beta=False,
+        beta_range=np.linspace(-0.5, 0.5, 11),
+        n_turns=1,
+        degree=3,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+
+def test_a_drag_pass_that_fails_late_keeps_the_earlier_passes(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a failing second pass, when calibrated, then the first pass survives."""
+    exp = _drag_stub(stub_experiment_factory)
+    _fail_drag_analysis_on_call(monkeypatch, failing_call=2)
+
+    payload = _run_drag(exp).data[f"{QUBIT}-hi"]
+
+    assert isinstance(payload["error"], ValueError)
+    # The descent stopped, but the pass that did converge is the reported result.
+    assert len(payload["iterations"]) == 1
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+    assert exp.calib_note.drag_hpi[f"{QUBIT}-hi"]["amplitude"] == pytest.approx(
+        payload["amplitude"]
+    )
+
+
+def test_a_drag_pass_that_fails_first_returns_the_raw_sweep(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a failing first pass, when calibrated, then it does not index an empty list."""
+    exp = _drag_stub(stub_experiment_factory)
+    _fail_drag_analysis_on_call(monkeypatch, failing_call=1)
+
+    payload = _run_drag(exp).data[f"{QUBIT}-hi"]
+
+    assert isinstance(payload["error"], ValueError)
+    assert "iterations" not in payload
+    assert payload["raw"].size > 0
+    # The seeded calibration is untouched, because no pass ever converged.
+    assert exp.calib_note.drag_hpi[f"{QUBIT}-hi"]["amplitude"] == pytest.approx(0.30)
