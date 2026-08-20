@@ -1035,3 +1035,135 @@ def test_a_drag_pass_that_fails_first_returns_the_raw_sweep(
     assert payload["raw"].size > 0
     # The seeded calibration is untouched, because no pass ever converged.
     assert exp.calib_note.drag_hpi[f"{QUBIT}-hi"]["amplitude"] == pytest.approx(0.30)
+
+
+def _run_drag_with_beta(
+    exp: Any,
+    *,
+    beta: float | None,
+    calibrate_beta: bool = False,
+) -> Any:
+    """Run the DRAG half-pi calibration with an explicit starting beta."""
+    return calibrate_drag_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_HPI_DURATION,
+        drag_coeff=DRAG_COEFF,
+        beta=beta,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_iterations=2,
+        calibrate_beta=calibrate_beta,
+        beta_range=np.linspace(-0.5, 0.5, 11),
+        n_turns=1,
+        degree=3,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+
+def test_a_given_beta_of_zero_is_not_mistaken_for_an_omitted_one(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given beta=0, when calibrated, then the correction is turned off, not defaulted."""
+    exp = _drag_stub(stub_experiment_factory)
+    target = f"{QUBIT}-hi"
+
+    payload = _run_drag_with_beta(exp, beta=0).data[target]
+
+    assert payload["beta"] == 0.0
+    assert payload["beta_source"] == "argument"
+    assert exp.calib_note.drag_hpi[target]["beta"] == 0.0
+    # Every pass keeps it: there is nothing refining beta.
+    assert [iteration["beta"] for iteration in payload["iterations"]] == [0.0, 0.0]
+
+
+def test_a_given_beta_replaces_only_the_beta(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a stored calibration, when beta is given, then the amplitude seed survives."""
+    exp = _drag_stub(stub_experiment_factory)
+    target = f"{QUBIT}-hi"
+    stored_amplitude = exp.calib_note.drag_hpi[target]["amplitude"]
+
+    payload = _run_drag_with_beta(exp, beta=0.2).data[target]
+
+    assert payload["beta"] == pytest.approx(0.2)
+    assert payload["beta_source"] == "argument"
+    # The rotation angle is set by the real part alone, so an amplitude measured
+    # at some other beta is still the best seed there is.
+    assert payload["initial_amplitude_source"] == "calib_note"
+    assert payload["initial_amplitude"] == pytest.approx(stored_amplitude, rel=1e-2)
+
+
+@pytest.mark.parametrize(
+    ("stored_beta", "expected_beta", "expected_source"),
+    [
+        pytest.param(0.85, 0.85, "calib_note", id="stored"),
+        pytest.param(None, None, "ladder_estimate", id="derived"),
+    ],
+)
+def test_an_omitted_beta_keeps_the_previous_behaviour(
+    stub_experiment_factory: Callable[..., Any],
+    stored_beta: float | None,
+    expected_beta: float | None,
+    expected_source: str,
+) -> None:
+    """Given no beta, when calibrated, then the stored or derived value is used."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+    target = f"{QUBIT}-hi"
+    if stored_beta is not None:
+        exp.calib_note.update_drag_hpi_param(
+            target,
+            {
+                "target": target,
+                "duration": DRAG_HPI_DURATION,
+                "amplitude": 0.30,
+                "beta": stored_beta,
+            },
+        )
+    if expected_beta is None:
+        expected_beta = _core.estimate_drag_beta(
+            exp,
+            qubit=QUBIT,
+            transition="hi",
+            drag_coeff=DRAG_COEFF,
+        )
+
+    payload = _run_drag_with_beta(exp, beta=None).data[target]
+
+    assert payload["beta"] == pytest.approx(expected_beta)
+    assert payload["beta_source"] == expected_source
+
+
+def test_a_given_beta_centres_the_beta_sweep(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given beta, when the beta pass runs, then the sweep is centred on it."""
+    exp = _drag_stub(stub_experiment_factory)
+
+    # The stub carries no beta dependence, so the pass finds no root and the
+    # analysis raises. The sweep it emitted is what is under test here.
+    _run_drag_with_beta(exp, beta=0.2, calibrate_beta=True)
+
+    beta_sweep = exp.sweep_calls[-1]["sweep_range"]
+    np.testing.assert_allclose(beta_sweep, 0.2 + np.linspace(-0.5, 0.5, 11))
+
+
+def test_a_non_finite_beta_is_rejected(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a non-finite beta, when calibrated, then it is refused up front."""
+    exp = _drag_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        _run_drag_with_beta(exp, beta=float("nan"))

@@ -318,6 +318,22 @@ def validate_amplitude(amplitude: float, name: str = "amplitude") -> None:
         raise ValueError(f"`{name}` must lie in (0, 1], got {amplitude}.")
 
 
+def validate_beta(beta: float) -> None:
+    """
+    Raise when the DRAG beta is not a usable number.
+
+    Zero is accepted: it turns the correction off, which is a deliberate
+    configuration rather than a mistake.
+
+    Parameters
+    ----------
+    beta : float
+        DRAG correction coefficient in ns.
+    """
+    if not np.isfinite(beta):
+        raise ValueError(f"`beta` must be a finite number, got {beta!r}.")
+
+
 def validate_initial_amplitude(initial_amplitude: float) -> None:
     """Raise when the starting amplitude is outside the usable range."""
     if not np.isfinite(initial_amplitude):
@@ -1956,6 +1972,27 @@ def print_summary(data: dict[str, Any]) -> None:
         f"  fit                 : slope {data['fit']['slope']:.6g} "
         f"({data['fit']['slope_ratio']:.1%} of ideal), R2 {data['fit']['r2']:.4f}"
     )
+
+
+def describe_beta_source(source: str) -> str:
+    """
+    Return the human-readable origin of a DRAG beta.
+
+    Parameters
+    ----------
+    source : str
+        Value of the `"beta_source"` payload entry.
+
+    Returns
+    -------
+    str
+        Label for the display line.
+    """
+    return {
+        "calib_note": "stored calibration",
+        "ladder_estimate": "level-ladder estimate",
+        "argument": "given",
+    }[source]
 
 
 def require_fit_success(fit: Any, *, target: str, what: str) -> None:

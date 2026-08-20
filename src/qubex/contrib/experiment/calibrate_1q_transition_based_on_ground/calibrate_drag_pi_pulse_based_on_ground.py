@@ -102,22 +102,58 @@ def _resolve_initial_pulse(
     ladder: _core.TransitionLadder,
     duration: float,
     drag_coeff: float,
-) -> tuple[float, float, str]:
-    """Return the starting amplitude, the beta to use, and where they came from."""
+    beta: float | None,
+) -> tuple[float, float, str, str]:
+    """
+    Return the starting amplitude, the beta to use, and where each came from.
+
+    The two are resolved independently. A given `beta` replaces only the beta:
+    the rotation angle is set by the real part of the envelope and `beta` only
+    enters the imaginary part, so an amplitude measured at some other beta is
+    still the best seed available.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment holding the calibration note.
+    ladder : _core.TransitionLadder
+        Ladder resolved by `_core.resolve_ladder`.
+    duration : float
+        Pulse duration in ns.
+    drag_coeff : float
+        DRAG coefficient used to seed beta from the level ladder.
+    beta : float | None
+        Beta to use, or `None` to take the stored or the derived one.
+
+    Returns
+    -------
+    tuple[float, float, str, str]
+        Starting amplitude, beta, amplitude source and beta source.
+    """
     stored = exp.calib_note.get_drag_pi_param(ladder.target)
-    if (
+    has_stored = (
         stored is not None
         and stored.get("amplitude") is not None
         and stored.get("beta") is not None
         and np.isclose(stored["duration"], duration)
-    ):
-        return float(stored["amplitude"]), float(stored["beta"]), "calib_note"
-    beta = _core.estimate_drag_beta(
-        exp,
-        qubit=ladder.qubit,
-        transition=ladder.transition,
-        drag_coeff=drag_coeff,
     )
+
+    if beta is not None:
+        beta_source = "argument"
+    elif has_stored:
+        beta, beta_source = float(stored["beta"]), "calib_note"  # type: ignore[index]
+    else:
+        beta = _core.estimate_drag_beta(
+            exp,
+            qubit=ladder.qubit,
+            transition=ladder.transition,
+            drag_coeff=drag_coeff,
+        )
+        beta_source = "ladder_estimate"
+
+    if has_stored:
+        return float(stored["amplitude"]), beta, "calib_note", beta_source  # type: ignore[index]
+
     unit_pulse = Drag(duration=duration, amplitude=1, beta=beta)
     amplitude = _core.estimate_amplitude(
         exp,
@@ -125,7 +161,7 @@ def _resolve_initial_pulse(
         unit_pulse=unit_pulse,
         pulse_type="pi",
     )
-    return amplitude, beta, "rabi_estimate"
+    return amplitude, beta, "rabi_estimate", beta_source
 
 
 def _resolve_tipping_pulse(exp: Experiment, *, target: str) -> Waveform:
@@ -168,6 +204,7 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
     transition: TransitionName,
     duration: float | None = None,
     drag_coeff: float | None = None,
+    beta: float | None = None,
     n_rotations: int | None = None,
     amplitude_diff_range: ArrayLike | None = None,
     n_shots: int | None = None,
@@ -193,6 +230,11 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
     drag_coeff : float | None, optional
         DRAG coefficient used to seed beta when no matching DRAG calibration is
         stored. Defaults to `_core.DEFAULT_DRAG_COEFF`.
+    beta : float | None, optional
+        DRAG correction coefficient in ns. Defaults to the stored calibration
+        when one matches, and otherwise to the estimate derived from the level
+        ladder. Pass `0` together with `calibrate_beta=False` to run the
+        calibration with the correction turned off.
     n_rotations : int | None, optional
         Number of full rotations `n`; both branches use a signed leading pulse
         followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
@@ -232,17 +274,20 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
     _core.validate_duration(duration)
+    if beta is not None:
+        _core.validate_beta(beta)
     _core.validate_n_rotations(n_rotations)
     _core.validate_n_shots(n_shots)
     _core.validate_shot_interval(shot_interval)
 
     rabi_param = _core.get_transition_rabi_param(exp, ladder)
     tipping_pulse = _resolve_tipping_pulse(exp, target=ladder.target)
-    initial_amplitude, beta, source = _resolve_initial_pulse(
+    initial_amplitude, beta, source, beta_source = _resolve_initial_pulse(
         exp,
         ladder=ladder,
         duration=duration,
         drag_coeff=drag_coeff,
+        beta=beta,
     )
     _core.validate_initial_amplitude(initial_amplitude)
 
@@ -311,6 +356,7 @@ def run_calibrate_drag_pi_pulse_based_on_ground(
         "duration": duration,
         "drag_coeff": drag_coeff,
         "beta": beta,
+        "beta_source": beta_source,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
         "tipping_pulse": tipping_pulse,
@@ -457,7 +503,8 @@ def display_calibrate_drag_pi_pulse_based_on_ground(
             prefix=f"calibrate_drag_pi_pulse_based_on_ground_{data['target']}",
         )
     _core.print_summary(data)
-    print(f"  beta                : {data['beta']:.9g}")
+    beta_source = _core.describe_beta_source(data["beta_source"])
+    print(f"  beta                : {data['beta']:.9g}  [{beta_source}]")
     print(f"  tipping pulse       : {data['tipping_pulse'].duration} ns")
     iterations = data.get("iterations")
     if iterations:
@@ -476,6 +523,7 @@ def _calibrate_one_drag_pi(
     ladder: _core.TransitionLadder,
     duration: float | None,
     drag_coeff: float | None,
+    beta: float | None,
     n_rotations: int | None,
     amplitude_diff_range: ArrayLike | None,
     n_iterations: int,
@@ -497,7 +545,7 @@ def _calibrate_one_drag_pi(
         Experiment to measure with.
     ladder : _core.TransitionLadder
         Ladder returned by `_core.preflight_ladders`.
-    duration, drag_coeff, n_rotations, amplitude_diff_range : optional
+    duration, drag_coeff, beta, n_rotations, amplitude_diff_range : optional
         Forwarded to `run_calibrate_drag_pi_pulse_based_on_ground`, which
         resolves any of them that is `None`.
     n_iterations : int
@@ -526,6 +574,11 @@ def _calibrate_one_drag_pi(
     analyzed: dict[str, Any] | None = None
     beta_result: dict[str, Any] | None = None
     failed: dict[str, Any] | None = None
+    # The loop rebinds `beta` to the value of the pass under way, so hold on to
+    # the argument. It seeds the first pass only: after that the descent has to
+    # continue from the beta it refined, which it reads back from the note.
+    seed_beta = beta
+    seed_beta_source: str | None = None
     for i in range(n_iterations):
         run_result = run_calibrate_drag_pi_pulse_based_on_ground(
             exp,
@@ -533,12 +586,15 @@ def _calibrate_one_drag_pi(
             transition=ladder.transition,
             duration=duration,
             drag_coeff=drag_coeff,
+            beta=seed_beta if i == 0 else None,
             n_rotations=n_rotations,
             amplitude_diff_range=amplitude_diff_range,
             n_shots=n_shots,
             shot_interval=shot_interval,
             plot_pulse_schedule=plot_pulse_schedule and i == 0,
         )
+        if seed_beta_source is None:
+            seed_beta_source = str(run_result["beta_source"])
         try:
             data = analyze_calibrate_drag_pi_pulse_based_on_ground(
                 run_result=run_result
@@ -619,6 +675,8 @@ def _calibrate_one_drag_pi(
     data = {
         **analyzed,
         "beta": iterations[-1]["beta"],
+        # Report where the descent started, not what the last pass read back.
+        "beta_source": seed_beta_source,
         "beta_result": beta_result,
         "iterations": iterations,
     }
@@ -647,6 +705,7 @@ def calibrate_drag_pi_pulse_based_on_ground(
     transition: TransitionName,
     duration: float | None = None,
     drag_coeff: float | None = None,
+    beta: float | None = None,
     n_rotations: int | None = None,
     amplitude_diff_range: ArrayLike | None = None,
     n_iterations: int | None = None,
@@ -685,6 +744,12 @@ def calibrate_drag_pi_pulse_based_on_ground(
     drag_coeff : float | None, optional
         DRAG coefficient used to seed beta. Defaults to
         `_core.DEFAULT_DRAG_COEFF`.
+    beta : float | None, optional
+        DRAG correction coefficient in ns, shared by every target. Defaults to
+        each target's stored calibration when one matches, and otherwise to the
+        estimate derived from the level ladder. Pass `0` together with
+        `calibrate_beta=False` to calibrate the amplitude with the correction
+        turned off.
     n_rotations : int | None, optional
         Number of full rotations `n`. Defaults to
         `_core.DEFAULT_DRAG_N_ROTATIONS`, which assumes the amplitude is already
@@ -766,6 +831,7 @@ def calibrate_drag_pi_pulse_based_on_ground(
             ladder=ladder,
             duration=duration,
             drag_coeff=drag_coeff,
+            beta=beta,
             n_rotations=n_rotations,
             amplitude_diff_range=amplitude_diff_range,
             n_iterations=n_iterations,

@@ -717,3 +717,16 @@ def test_only_the_first_failure_is_kept() -> None:
     )
 
     assert payload["error"] is first
+
+
+@pytest.mark.parametrize("beta", [0.0, -0.5, 1.4286, 1e-12])
+def test_validate_beta_accepts_any_finite_value(beta: float) -> None:
+    """Given a finite beta, when validated, then it passes - zero included."""
+    assert _core.validate_beta(beta) is None
+
+
+@pytest.mark.parametrize("beta", [float("nan"), float("inf"), float("-inf")])
+def test_validate_beta_rejects_a_non_finite_value(beta: float) -> None:
+    """Given a non-finite beta, when validated, then it raises."""
+    with pytest.raises(ValueError, match="must be a finite number"):
+        _core.validate_beta(beta)
