@@ -277,3 +277,39 @@ def test_get_param_with_valid_days(tmp_path):
     )
     assert note.get_rabi_param("Q00", valid_days=1) is None
     assert note.get_rabi_param("Q00", valid_days=3) is not None
+
+
+def test_higher_transition_labels_round_trip(tmp_path):
+    """CalibrationNote should store parameters keyed by higher transition labels."""
+    chip_id = "CHIP_ID"
+    calibration_dir = tmp_path / ".calibration"
+    note = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    note.update_hpi_param(
+        "Q00-hi",
+        {
+            "target": "Q00-hi",
+            "amplitude": 0.25,
+            "duration": 30.0,
+            "tau": 10.0,
+        },
+    )
+    note.update_pi_param(
+        "Q00-mn",
+        {
+            "target": "Q00-mn",
+            "amplitude": 0.125,
+            "duration": 30.0,
+            "tau": 10.0,
+        },
+    )
+    note.save()
+
+    reloaded = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    hpi_param = reloaded.get_hpi_param("Q00-hi") or {}
+    pi_param = reloaded.get_pi_param("Q00-mn") or {}
+
+    assert hpi_param["target"] == "Q00-hi"
+    assert hpi_param["amplitude"] == 0.25
+    assert pi_param["target"] == "Q00-mn"
+    assert pi_param["amplitude"] == 0.125
+    assert reloaded.get_hpi_param("Q00") is None

@@ -12,7 +12,12 @@ from qubex.core import MutableModel
 
 from .control_system import CapChannel, GenChannel
 from .quantum_system import Mux, Qubit, Resonator
-from .target_type import TargetType
+from .target_type import (
+    TRANSITION_BY_TARGET_TYPE,
+    TRANSITION_TARGET_TYPES,
+    TargetType,
+)
+from .transition import TransitionName
 
 PhysicalObject = Qubit | Resonator | Mux
 
@@ -122,6 +127,46 @@ class Target(MutableModel):
         return self.type == TargetType.CTRL_FH
 
     @property
+    def is_hi(self) -> bool:
+        """Report whether this is an HI control target."""
+        return self.type == TargetType.CTRL_HI
+
+    @property
+    def is_ij(self) -> bool:
+        """Report whether this is an IJ control target."""
+        return self.type == TargetType.CTRL_IJ
+
+    @property
+    def is_jk(self) -> bool:
+        """Report whether this is a JK control target."""
+        return self.type == TargetType.CTRL_JK
+
+    @property
+    def is_kl(self) -> bool:
+        """Report whether this is a KL control target."""
+        return self.type == TargetType.CTRL_KL
+
+    @property
+    def is_lm(self) -> bool:
+        """Report whether this is an LM control target."""
+        return self.type == TargetType.CTRL_LM
+
+    @property
+    def is_mn(self) -> bool:
+        """Report whether this is an MN control target."""
+        return self.type == TargetType.CTRL_MN
+
+    @property
+    def transition(self) -> TransitionName | None:
+        """Return the driven transition, or None for non-transition targets."""
+        return TRANSITION_BY_TARGET_TYPE.get(self.type)
+
+    @property
+    def is_transition(self) -> bool:
+        """Report whether this target drives a single-qubit transition."""
+        return self.type in TRANSITION_BY_TARGET_TYPE
+
+    @property
     def is_cr(self) -> bool:
         """Report whether this is a CR control target."""
         return self.type == TargetType.CTRL_CR
@@ -185,6 +230,23 @@ class Target(MutableModel):
         )
 
     @classmethod
+    def new_transition_target(
+        cls,
+        *,
+        transition: TransitionName,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create a transition control target for a qubit."""
+        return cls(
+            label=Target.transition_label(qubit.label, transition),
+            object=qubit,
+            frequency=qubit.get_control_frequency(transition),
+            channel=channel,
+            type=TRANSITION_TARGET_TYPES[transition],
+        )
+
+    @classmethod
     def new_ge_target(
         cls,
         *,
@@ -192,12 +254,10 @@ class Target(MutableModel):
         channel: GenChannel,
     ) -> Target:
         """Create a GE control target for a qubit."""
-        return cls(
-            label=Target.ge_label(qubit.label),
-            object=qubit,
-            frequency=qubit.frequency,
+        return cls.new_transition_target(
+            transition="ge",
+            qubit=qubit,
             channel=channel,
-            type=TargetType.CTRL_GE,
         )
 
     @classmethod
@@ -208,12 +268,10 @@ class Target(MutableModel):
         channel: GenChannel,
     ) -> Target:
         """Create an EF control target for a qubit."""
-        return cls(
-            label=Target.ef_label(qubit.label),
-            object=qubit,
-            frequency=qubit.control_frequency_ef,
+        return cls.new_transition_target(
+            transition="ef",
+            qubit=qubit,
             channel=channel,
-            type=TargetType.CTRL_EF,
         )
 
     @classmethod
@@ -224,12 +282,94 @@ class Target(MutableModel):
         channel: GenChannel,
     ) -> Target:
         """Create an FH control target for a qubit."""
-        return cls(
-            label=Target.fh_label(qubit.label),
-            object=qubit,
-            frequency=qubit.control_frequency_fh,
+        return cls.new_transition_target(
+            transition="fh",
+            qubit=qubit,
             channel=channel,
-            type=TargetType.CTRL_FH,
+        )
+
+    @classmethod
+    def new_hi_target(
+        cls,
+        *,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create an HI control target for a qubit."""
+        return cls.new_transition_target(
+            transition="hi",
+            qubit=qubit,
+            channel=channel,
+        )
+
+    @classmethod
+    def new_ij_target(
+        cls,
+        *,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create an IJ control target for a qubit."""
+        return cls.new_transition_target(
+            transition="ij",
+            qubit=qubit,
+            channel=channel,
+        )
+
+    @classmethod
+    def new_jk_target(
+        cls,
+        *,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create a JK control target for a qubit."""
+        return cls.new_transition_target(
+            transition="jk",
+            qubit=qubit,
+            channel=channel,
+        )
+
+    @classmethod
+    def new_kl_target(
+        cls,
+        *,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create a KL control target for a qubit."""
+        return cls.new_transition_target(
+            transition="kl",
+            qubit=qubit,
+            channel=channel,
+        )
+
+    @classmethod
+    def new_lm_target(
+        cls,
+        *,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create an LM control target for a qubit."""
+        return cls.new_transition_target(
+            transition="lm",
+            qubit=qubit,
+            channel=channel,
+        )
+
+    @classmethod
+    def new_mn_target(
+        cls,
+        *,
+        qubit: Qubit,
+        channel: GenChannel,
+    ) -> Target:
+        """Create an MN control target for a qubit."""
+        return cls.new_transition_target(
+            transition="mn",
+            qubit=qubit,
+            channel=channel,
         )
 
     @classmethod
@@ -320,22 +460,57 @@ class Target(MutableModel):
         return qubit_label
 
     @classmethod
+    def transition_label(cls, label: str, transition: TransitionName) -> str:
+        """Return the transition target label for a qubit label."""
+        qubit = cls.qubit_label(label)
+        if transition == "ge":
+            return f"{qubit}"
+        return f"{qubit}-{transition}"
+
+    @classmethod
     def ge_label(cls, label: str) -> str:
         """Return the GE target label for a qubit label."""
-        qubit = cls.qubit_label(label)
-        return f"{qubit}"
+        return cls.transition_label(label, "ge")
 
     @classmethod
     def ef_label(cls, label: str) -> str:
         """Return the EF target label for a qubit label."""
-        qubit = cls.qubit_label(label)
-        return f"{qubit}-ef"
+        return cls.transition_label(label, "ef")
 
     @classmethod
     def fh_label(cls, label: str) -> str:
         """Return the FH target label for a qubit label."""
-        qubit = cls.qubit_label(label)
-        return f"{qubit}-fh"
+        return cls.transition_label(label, "fh")
+
+    @classmethod
+    def hi_label(cls, label: str) -> str:
+        """Return the HI target label for a qubit label."""
+        return cls.transition_label(label, "hi")
+
+    @classmethod
+    def ij_label(cls, label: str) -> str:
+        """Return the IJ target label for a qubit label."""
+        return cls.transition_label(label, "ij")
+
+    @classmethod
+    def jk_label(cls, label: str) -> str:
+        """Return the JK target label for a qubit label."""
+        return cls.transition_label(label, "jk")
+
+    @classmethod
+    def kl_label(cls, label: str) -> str:
+        """Return the KL target label for a qubit label."""
+        return cls.transition_label(label, "kl")
+
+    @classmethod
+    def lm_label(cls, label: str) -> str:
+        """Return the LM target label for a qubit label."""
+        return cls.transition_label(label, "lm")
+
+    @classmethod
+    def mn_label(cls, label: str) -> str:
+        """Return the MN target label for a qubit label."""
+        return cls.transition_label(label, "mn")
 
     @classmethod
     def cr_label(cls, control_label: str, target_label: str | None = None) -> str:

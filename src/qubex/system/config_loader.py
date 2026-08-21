@@ -33,6 +33,7 @@ from qubex.system.config_paths import (
 from qubex.system.measurement_defaults import MeasurementDefaults
 from qubex.system.quel1.quel1_system_loader import Quel1SystemLoader
 from qubex.system.quel3.quel3_system_loader import Quel3SystemLoader
+from qubex.system.transition import TRANSITION_NAMES, TransitionName
 from qubex.system.wiring import split_box_port_specifier
 from qubex.typing import ConfigurationMode
 
@@ -47,6 +48,9 @@ if TYPE_CHECKING:
         WiringInfo,
     )
     from qubex.system.quantum_system import QuantumSystem
+
+HIGHER_TRANSITION_NAMES: tuple[TransitionName, ...] = TRANSITION_NAMES[3:]
+"""Transitions above `fh`, whose control frequencies are stored in one mapping."""
 
 PARAMS_MAP = {
     "frequency_margin": (None, "params"),
@@ -81,6 +85,10 @@ PARAMS_MAP = {
     "qubit_qubit_coupling_strength": ("qubit_qubit_coupling_strength", "props"),
     "resonator_external_linewidth": ("external_loss_rate", "props"),
     "resonator_internal_linewidth": ("internal_loss_rate", "props"),
+    **{
+        f"control_frequency_{transition}": (None, "props")
+        for transition in HIGHER_TRANSITION_NAMES
+    },
 }
 
 QUBIT_KEYED_PARAMS = frozenset(
@@ -104,6 +112,7 @@ QUBIT_KEYED_PARAMS = frozenset(
         "quantum_efficiency",
         "x90_gate_fidelity",
         "x180_gate_fidelity",
+        *(f"control_frequency_{transition}" for transition in HIGHER_TRANSITION_NAMES),
     }
 )
 
@@ -1022,6 +1031,10 @@ class ConfigLoader:
         control_frequency_ef_dict = self.load_param_data("control_frequency_ef")
         control_frequency_fh_dict = self.load_param_data("control_frequency_fh")
         readout_frequency_dict = self.load_param_data("readout_frequency")
+        higher_frequency_dicts: dict[TransitionName, dict] = {
+            transition: self.load_param_data(f"control_frequency_{transition}")
+            for transition in HIGHER_TRANSITION_NAMES
+        }
 
         # TODO: Fix SLF001
         for qubit in chip.qubits:
@@ -1030,6 +1043,12 @@ class ConfigLoader:
             qubit._control_frequency_ge = control_frequency_dict.get(qubit.label)  # noqa: SLF001
             qubit._control_frequency_ef = control_frequency_ef_dict.get(qubit.label)  # noqa: SLF001
             qubit._control_frequency_fh = control_frequency_fh_dict.get(qubit.label)  # noqa: SLF001
+            transition_frequencies: dict[TransitionName, float] = {}
+            for transition, values in higher_frequency_dicts.items():
+                value = values.get(qubit.label)
+                if value is not None:
+                    transition_frequencies[transition] = value
+            qubit.transition_control_frequency_values = transition_frequencies
         for resonator in chip.resonators:
             resonator._frequency_g = resonator_frequency_dict.get(resonator.qubit)  # noqa: SLF001
             resonator._readout_frequency = readout_frequency_dict.get(resonator.qubit)  # noqa: SLF001

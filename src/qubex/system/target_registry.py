@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from .target import CapTarget, Target
+from .transition import TRANSITION_NAMES, TransitionName
 
 
 class TargetRegistry:
@@ -65,9 +66,9 @@ class TargetRegistry:
         self._target_to_qubit: dict[str, str] = {}
         self._qubit_labels: set[str] = set()
         self._read_label_by_qubit: dict[str, str] = {}
-        self._ge_label_by_qubit: dict[str, str] = {}
-        self._ef_label_by_qubit: dict[str, str] = {}
-        self._fh_label_by_qubit: dict[str, str] = {}
+        self._transition_label_by_qubit: dict[TransitionName, dict[str, str]] = {
+            transition: {} for transition in TRANSITION_NAMES
+        }
         self._cr_default_label_by_control: dict[str, str] = {}
         self._cr_pair_label_by_pair: dict[tuple[str, str], str] = {}
         self._cr_pair_by_label: dict[str, tuple[str, str]] = {}
@@ -80,12 +81,12 @@ class TargetRegistry:
                 self._qubit_labels.add(qubit_label)
             if target.is_read and qubit_label:
                 self._read_label_by_qubit.setdefault(qubit_label, label)
-            if target.is_ge and qubit_label:
-                self._ge_label_by_qubit.setdefault(qubit_label, label)
-            if target.is_ef and qubit_label:
-                self._ef_label_by_qubit.setdefault(qubit_label, label)
-            if target.is_fh and qubit_label:
-                self._fh_label_by_qubit.setdefault(qubit_label, label)
+            transition = target.transition
+            if transition is not None and qubit_label:
+                self._transition_label_by_qubit[transition].setdefault(
+                    qubit_label,
+                    label,
+                )
 
         for label, target in self._cap_target_dict.items():
             qubit_label = getattr(target.object, "qubit", None)
@@ -196,6 +197,29 @@ class TargetRegistry:
                 pass
         raise ValueError(f"Qubit label could not be resolved from `{label}`.")
 
+    def resolve_transition_label(
+        self,
+        label: str,
+        transition: TransitionName,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve a transition target label; optionally allow legacy parsing."""
+        try:
+            labels_by_qubit = self._transition_label_by_qubit[transition]
+        except KeyError:
+            raise ValueError(f"Unsupported transition `{transition}`.") from None
+        qubit_label = self.resolve_qubit_label(label, allow_legacy=allow_legacy)
+        resolved = labels_by_qubit.get(qubit_label)
+        if resolved is None:
+            if allow_legacy:
+                return Target.transition_label(label, transition)
+            raise ValueError(
+                f"{transition.upper()} target is not registered "
+                f"for qubit `{qubit_label}`."
+            )
+        return resolved
+
     def resolve_ge_label(
         self,
         label: str,
@@ -203,13 +227,7 @@ class TargetRegistry:
         allow_legacy: bool = False,
     ) -> str:
         """Resolve a GE target label; optionally allow legacy parsing."""
-        qubit_label = self.resolve_qubit_label(label, allow_legacy=allow_legacy)
-        resolved = self._ge_label_by_qubit.get(qubit_label)
-        if resolved is None:
-            if allow_legacy:
-                return Target.ge_label(label)
-            raise ValueError(f"GE target is not registered for qubit `{qubit_label}`.")
-        return resolved
+        return self.resolve_transition_label(label, "ge", allow_legacy=allow_legacy)
 
     def resolve_ef_label(
         self,
@@ -218,13 +236,7 @@ class TargetRegistry:
         allow_legacy: bool = False,
     ) -> str:
         """Resolve an EF target label; optionally allow legacy parsing."""
-        qubit_label = self.resolve_qubit_label(label, allow_legacy=allow_legacy)
-        resolved = self._ef_label_by_qubit.get(qubit_label)
-        if resolved is None:
-            if allow_legacy:
-                return Target.ef_label(label)
-            raise ValueError(f"EF target is not registered for qubit `{qubit_label}`.")
-        return resolved
+        return self.resolve_transition_label(label, "ef", allow_legacy=allow_legacy)
 
     def resolve_fh_label(
         self,
@@ -233,13 +245,61 @@ class TargetRegistry:
         allow_legacy: bool = False,
     ) -> str:
         """Resolve an FH target label; optionally allow legacy parsing."""
-        qubit_label = self.resolve_qubit_label(label, allow_legacy=allow_legacy)
-        resolved = self._fh_label_by_qubit.get(qubit_label)
-        if resolved is None:
-            if allow_legacy:
-                return Target.fh_label(label)
-            raise ValueError(f"FH target is not registered for qubit `{qubit_label}`.")
-        return resolved
+        return self.resolve_transition_label(label, "fh", allow_legacy=allow_legacy)
+
+    def resolve_hi_label(
+        self,
+        label: str,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve an HI target label; optionally allow legacy parsing."""
+        return self.resolve_transition_label(label, "hi", allow_legacy=allow_legacy)
+
+    def resolve_ij_label(
+        self,
+        label: str,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve an IJ target label; optionally allow legacy parsing."""
+        return self.resolve_transition_label(label, "ij", allow_legacy=allow_legacy)
+
+    def resolve_jk_label(
+        self,
+        label: str,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve a JK target label; optionally allow legacy parsing."""
+        return self.resolve_transition_label(label, "jk", allow_legacy=allow_legacy)
+
+    def resolve_kl_label(
+        self,
+        label: str,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve a KL target label; optionally allow legacy parsing."""
+        return self.resolve_transition_label(label, "kl", allow_legacy=allow_legacy)
+
+    def resolve_lm_label(
+        self,
+        label: str,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve an LM target label; optionally allow legacy parsing."""
+        return self.resolve_transition_label(label, "lm", allow_legacy=allow_legacy)
+
+    def resolve_mn_label(
+        self,
+        label: str,
+        *,
+        allow_legacy: bool = False,
+    ) -> str:
+        """Resolve an MN target label; optionally allow legacy parsing."""
+        return self.resolve_transition_label(label, "mn", allow_legacy=allow_legacy)
 
     def resolve_read_label(
         self,

@@ -9,6 +9,7 @@ from typing_extensions import TypedDict
 from qubex.core import MutableModel
 
 from .target_type import TargetType
+from .transition import TransitionName, transition_index
 
 _ValueT = TypeVar("_ValueT")
 
@@ -58,9 +59,18 @@ class ControlParameters(MutableModel):
         """Return the materialized control amplitude for a qubit."""
         return self.control_amplitude[qubit]
 
+    def get_transition_control_amplitude(
+        self,
+        qubit: str,
+        transition: TransitionName,
+    ) -> float:
+        """Return the derived control amplitude for a transition of a qubit."""
+        index = transition_index(transition)
+        return self.get_control_amplitude(qubit) / ((index + 1) ** 0.5)
+
     def get_ef_control_amplitude(self, qubit: str) -> float:
         """Return the derived ef control amplitude for a qubit."""
-        return self.get_control_amplitude(qubit) / (2**0.5)
+        return self.get_transition_control_amplitude(qubit, "ef")
 
     def get_readout_amplitude(self, qubit: str) -> float:
         """Return the materialized readout amplitude for a qubit."""

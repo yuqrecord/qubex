@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Literal
+from typing import Literal, cast
 
 from qubex.experiment.experiment_context import ExperimentContext
 from qubex.system import Qubit, Target, TargetType
 from qubex.system.control_system import GenChannel, GenPort, PortType
+from qubex.system.transition import TransitionName
 
 
 class _ExperimentSystemStub:
@@ -186,3 +187,48 @@ def test_get_edge_labels_can_include_cross_mux_edges(monkeypatch) -> None:
 
     assert context.get_edge_labels(in_same_mux=False) == ["Q00-Q01", "Q00-Q02"]
     assert recorded == [False]
+
+
+def test_transition_label_wrappers_delegate_to_experiment_system(monkeypatch) -> None:
+    """Given transition wrappers, when resolving, then the experiment system is used."""
+    recorded: list[tuple[str, str]] = []
+
+    class _ResolverStub:
+        @staticmethod
+        def resolve_transition_label(label: str, transition: TransitionName) -> str:
+            recorded.append((label, transition))
+            return f"{label}-{transition}"
+
+        def __getattr__(self, name: str):
+            if not name.startswith("resolve_") or not name.endswith("_label"):
+                raise AttributeError(name)
+            transition = name.removeprefix("resolve_").removesuffix("_label")
+            return lambda label: self.resolve_transition_label(
+                label,
+                cast(TransitionName, transition),
+            )
+
+    experiment_system = _ResolverStub()
+    context = object.__new__(ExperimentContext)
+    monkeypatch.setattr(
+        ExperimentContext,
+        "experiment_system",
+        property(lambda _self: experiment_system),
+    )
+
+    assert context.resolve_transition_label("Q00", "jk") == "Q00-jk"
+    assert context.resolve_hi_label("Q00") == "Q00-hi"
+    assert context.resolve_ij_label("Q00") == "Q00-ij"
+    assert context.resolve_jk_label("Q00") == "Q00-jk"
+    assert context.resolve_kl_label("Q00") == "Q00-kl"
+    assert context.resolve_lm_label("Q00") == "Q00-lm"
+    assert context.resolve_mn_label("Q00") == "Q00-mn"
+    assert recorded == [
+        ("Q00", "jk"),
+        ("Q00", "hi"),
+        ("Q00", "ij"),
+        ("Q00", "jk"),
+        ("Q00", "kl"),
+        ("Q00", "lm"),
+        ("Q00", "mn"),
+    ]

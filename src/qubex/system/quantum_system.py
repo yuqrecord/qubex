@@ -10,6 +10,7 @@ from pydantic import Field
 from qubex.core import MutableModel
 
 from .lattice_graph import LatticeGraph
+from .transition import TransitionName, transition_index
 
 
 class Chip(MutableModel):
@@ -104,6 +105,9 @@ class Qubit(MutableModel):
     control_frequency_fh_value: float | None = Field(
         default=None,
         alias="_control_frequency_fh",
+    )
+    transition_control_frequency_values: dict[TransitionName, float] = Field(
+        default_factory=dict,
     )
 
     @property
@@ -211,6 +215,51 @@ class Qubit(MutableModel):
             return self.control_frequency_fh_value
         else:
             return 2 * self.control_frequency_ef - self.frequency
+
+    def get_control_frequency(self, transition: TransitionName) -> float:
+        """Return the configured or derived control frequency for a transition in GHz."""
+        index = transition_index(transition)
+        if transition == "ge":
+            return self.frequency
+        if transition == "ef":
+            return self.control_frequency_ef
+        if transition == "fh" and self.control_frequency_fh_value is not None:
+            return self.control_frequency_fh_value
+        value = self.transition_control_frequency_values.get(transition)
+        if value is not None:
+            return value
+        frequency_ge = self.frequency
+        return frequency_ge + index * (self.control_frequency_ef - frequency_ge)
+
+    @property
+    def control_frequency_hi(self) -> float:
+        """Return the configured HI control frequency in GHz."""
+        return self.get_control_frequency("hi")
+
+    @property
+    def control_frequency_ij(self) -> float:
+        """Return the configured IJ control frequency in GHz."""
+        return self.get_control_frequency("ij")
+
+    @property
+    def control_frequency_jk(self) -> float:
+        """Return the configured JK control frequency in GHz."""
+        return self.get_control_frequency("jk")
+
+    @property
+    def control_frequency_kl(self) -> float:
+        """Return the configured KL control frequency in GHz."""
+        return self.get_control_frequency("kl")
+
+    @property
+    def control_frequency_lm(self) -> float:
+        """Return the configured LM control frequency in GHz."""
+        return self.get_control_frequency("lm")
+
+    @property
+    def control_frequency_mn(self) -> float:
+        """Return the configured MN control frequency in GHz."""
+        return self.get_control_frequency("mn")
 
     @property
     def alpha(self) -> float:
