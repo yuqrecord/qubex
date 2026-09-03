@@ -1226,6 +1226,7 @@ def test_readout_scan_reports_one_optimum_per_nested_subset(
     assert set(result.figures) == {
         f"{QUBIT}:{name}"
         for name in (
+            "absolute_phase",
             "phase",
             "phase_separation",
             "distance_separation",

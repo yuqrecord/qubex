@@ -408,6 +408,33 @@ def _resolve_per_qubit(
     return resolved
 
 
+def _per_level_figure(
+    *,
+    title: str,
+    yaxis_title: str,
+    frequency_range: NDArray[np.float64],
+    state_labels: Sequence[str],
+    values: NDArray[np.float64],
+) -> go.Figure:
+    """Build a figure with one trace per level against the readout frequency."""
+    fig = viz.make_figure()
+    for level, label in enumerate(state_labels):
+        fig.add_scatter(
+            x=frequency_range,
+            y=values[level],
+            mode="lines+markers",
+            name=f"|{label}>",
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Readout frequency (GHz)",
+        yaxis_title=yaxis_title,
+        width=600,
+        height=400,
+    )
+    return fig
+
+
 def _separation_figure(
     *,
     title: str,
@@ -634,8 +661,10 @@ def analyze_measure_dispersive_shift_extended(
     Returns
     -------
     dict[str, Any]
-        The run payload plus the phases, the amplitudes, the usable-point mask
-        and one entry per nested subset under `"subsets"`.
+        The run payload plus the phases - wrapped as measured under `"phases"`,
+        unwrapped under `"absolute_phases"`, and unwrapped against |g> under
+        `"relative_phases"` - the amplitudes, the usable-point mask and one entry
+        per nested subset under `"subsets"`.
     """
     if min_amplitude_fraction is None:
         min_amplitude_fraction = MIN_AMPLITUDE_FRACTION
@@ -650,9 +679,13 @@ def analyze_measure_dispersive_shift_extended(
 
     amplitudes = np.abs(signals)
     phases = np.angle(signals)
-    # The ground state is the reference, so the common cable-delay slope drops
-    # out of the plotted traces; unwrapping the relative phase directly is more
-    # robust than unwrapping each level and subtracting afterwards.
+    # The phase of each level as measured, made continuous along the frequency
+    # axis. It still carries the common cable-delay slope, which is exactly what
+    # separates it from the relative phase below.
+    absolute_phases = np.unwrap(phases, axis=1)
+    # The ground state is the reference, so that common slope drops out;
+    # unwrapping the relative phase directly is more robust than unwrapping each
+    # level and subtracting afterwards.
     relative_phases = np.unwrap(np.angle(signals * np.conj(signals[0])), axis=1)
 
     finite = np.isfinite(signals)
@@ -718,6 +751,7 @@ def analyze_measure_dispersive_shift_extended(
     return {
         **run_result,
         "phases": phases,
+        "absolute_phases": absolute_phases,
         "relative_phases": relative_phases,
         "amplitudes": amplitudes,
         "median_amplitude": median_amplitude,
@@ -749,51 +783,37 @@ def plot_measure_dispersive_shift_extended(
     frequencies = np.asarray(data["frequency_range"], dtype=np.float64)
     state_labels = tuple(data["state_labels"])
     signals = np.asarray(data["signals"], dtype=np.complex128)
+    absolute_phases = np.asarray(data["absolute_phases"], dtype=np.float64)
     relative_phases = np.asarray(data["relative_phases"], dtype=np.float64)
     amplitudes = np.asarray(data["amplitudes"], dtype=np.float64)
     subsets = data["subsets"]
 
-    phase_figure = viz.make_figure()
-    for level, label in enumerate(state_labels):
-        phase_figure.add_scatter(
-            x=frequencies,
-            y=relative_phases[level],
-            mode="lines+markers",
-            name=f"|{label}>",
-        )
-    for subset in subsets:
-        phase_figure.add_vline(
-            x=subset["optimal_frequency"],
-            line_dash="dash",
-            line_width=1,
-            annotation_text=subset["name"],
-            annotation_position="top",
-        )
-    phase_figure.update_layout(
+    absolute_phase_figure = _per_level_figure(
         title=f"Readout phase of the level ladder : {qubit}",
-        xaxis_title="Readout frequency (GHz)",
-        yaxis_title="Phase relative to |g> (rad)",
-        width=600,
-        height=400,
+        yaxis_title="Phase (rad, unwrapped)",
+        frequency_range=frequencies,
+        state_labels=state_labels,
+        values=absolute_phases,
     )
-
-    amplitude_figure = viz.make_figure()
-    for level, label in enumerate(state_labels):
-        amplitude_figure.add_scatter(
-            x=frequencies,
-            y=amplitudes[level],
-            mode="lines+markers",
-            name=f"|{label}>",
-        )
-    amplitude_figure.update_layout(
-        title=f"Readout amplitude of the level ladder : {qubit}",
-        xaxis_title="Readout frequency (GHz)",
-        yaxis_title="|IQ| (arb. units)",
-        width=600,
-        height=400,
+    phase_figure = _per_level_figure(
+        title=f"Readout phase of the level ladder : {qubit} : relative to |g>",
+        yaxis_title="Phase relative to |g> (rad, unwrapped)",
+        frequency_range=frequencies,
+        state_labels=state_labels,
+        values=relative_phases,
     )
+    for figure in (absolute_phase_figure, phase_figure):
+        for subset in subsets:
+            figure.add_vline(
+                x=subset["optimal_frequency"],
+                line_dash="dash",
+                line_width=1,
+                annotation_text=subset["name"],
+                annotation_position="top",
+            )
 
     return {
+        "absolute_phase": absolute_phase_figure,
         "phase": phase_figure,
         "phase_separation": _separation_figure(
             title=f"Minimum pairwise phase separation : {qubit}",
@@ -813,7 +833,13 @@ def plot_measure_dispersive_shift_extended(
             frequency_key="optimal_frequency_by_distance",
             ideal_key=None,
         ),
-        "amplitude": amplitude_figure,
+        "amplitude": _per_level_figure(
+            title=f"Readout amplitude of the level ladder : {qubit}",
+            yaxis_title="|IQ| (arb. units)",
+            frequency_range=frequencies,
+            state_labels=state_labels,
+            values=amplitudes,
+        ),
         "iq": viz.make_iq_scatter_figure(
             {f"|{label}>": signals[level] for level, label in enumerate(state_labels)},
             mode="lines+markers",

@@ -925,6 +925,27 @@ def test_readout_scan_reports_the_pair_that_limits_the_optimum() -> None:
     assert subset["optimal_phase_separation"] == pytest.approx(0.5)
 
 
+def test_readout_scan_keeps_the_unwrapped_absolute_phase() -> None:
+    """Given a winding phase, when analyzed, then it is kept and unwrapped."""
+    n_points = 41
+    # A phase that runs well past 2 pi, as a cable delay makes it do.
+    ramp = np.linspace(0.0, 8 * np.pi, n_points)
+    signals = _phasors(np.stack([ramp, ramp + 0.3]))
+
+    data = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+
+    absolute = data["absolute_phases"]
+    # Continuous: no wrap survives, so no step reaches pi.
+    assert np.all(np.abs(np.diff(absolute, axis=1)) < np.pi)
+    # Still the measured phase, up to the turns the wrap had removed.
+    assert np.allclose(np.angle(np.exp(1j * (absolute - data["phases"]))), 0.0)
+    # The winding is recovered rather than folded away.
+    assert np.allclose(absolute[0] - absolute[0][0], ramp - ramp[0])
+    assert absolute[0][-1] == pytest.approx(8 * np.pi)
+
+
 def test_readout_scan_phases_are_referenced_to_the_ground_state() -> None:
     """Given any scan, when analyzed, then the ground-state trace is flat at zero."""
     rng = np.random.default_rng(1)
