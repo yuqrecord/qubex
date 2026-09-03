@@ -12,10 +12,15 @@ import pytest
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
+    analyze_measure_dispersive_shift_extended,
 )
 from qubex.experiment import experiment_constants as constants
 from qubex.pulse import Drag, FlatTop
-from qubex.system.transition import TRANSITION_NAMES, TransitionName
+from qubex.system.transition import (
+    LEVEL_NAMES,
+    TRANSITION_NAMES,
+    TransitionName,
+)
 
 QUBIT = "Q00"
 ALPHA = -0.35
@@ -730,3 +735,255 @@ def test_validate_beta_rejects_a_non_finite_value(beta: float) -> None:
     """Given a non-finite beta, when validated, then it raises."""
     with pytest.raises(ValueError, match="must be a finite number"):
         _core.validate_beta(beta)
+
+
+def _readout_scan_run_result(
+    *,
+    signals: np.ndarray,
+    frequency_range: np.ndarray | None = None,
+    center_frequency: float | None = None,
+) -> dict[str, Any]:
+    """Return the payload `run_measure_dispersive_shift_extended` would produce."""
+    max_level = signals.shape[0] - 1
+    if frequency_range is None:
+        frequency_range = np.linspace(10.0, 10.02, signals.shape[1])
+    if center_frequency is None:
+        center_frequency = float(np.mean(frequency_range))
+    labels = tuple(
+        QUBIT if name == "ge" else f"{QUBIT}-{name}"
+        for name in TRANSITION_NAMES[:max_level]
+    )
+    return {
+        "target": QUBIT,
+        "qubit": QUBIT,
+        "read_label": f"R{QUBIT}",
+        "max_level": max_level,
+        "levels": tuple(range(max_level + 1)),
+        "state_labels": tuple(LEVEL_NAMES[: max_level + 1]),
+        "labels": labels,
+        "frequency_range": frequency_range,
+        "center_frequency": center_frequency,
+        "readout_amplitude": 0.05,
+        "electrical_delay": 0.0,
+        "alternate_state_order": False,
+        "acquisition_order": (),
+        "signals": signals,
+        "n_shots": 128,
+        "shot_interval": 1024.0,
+    }
+
+
+def _phasors(phases: np.ndarray, amplitudes: np.ndarray | None = None) -> np.ndarray:
+    """Return unit-amplitude phasors unless amplitudes are given."""
+    if amplitudes is None:
+        amplitudes = np.ones_like(phases)
+    return amplitudes * np.exp(1j * phases)
+
+
+def _two_level_scan(peak: int, n_points: int = 21) -> np.ndarray:
+    """Return a g/e scan whose phase separation spikes at one frequency."""
+    phases = np.full((2, n_points), 0.0)
+    phases[1] = 0.1
+    phases[1, peak] = 2.0
+    return _phasors(phases)
+
+
+def test_readout_scan_optimum_is_the_widest_phase_separation() -> None:
+    """Given a spiked separation, when analyzed, then that frequency is chosen."""
+    peak = 7
+    run_result = _readout_scan_run_result(signals=_two_level_scan(peak))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subset = data["subsets"][0]
+    assert subset["optimal_index"] == peak
+    assert subset["optimal_frequency"] == run_result["frequency_range"][peak]
+    assert subset["optimal_phase_separation"] == pytest.approx(2.0)
+    assert subset["resolved"]
+
+
+def test_readout_scan_phase_distance_folds_across_pi() -> None:
+    """Given phases beyond pi apart, when analyzed, then the distance folds back."""
+    n_points = 21
+    peak = 5
+    phases = np.zeros((2, n_points))
+    phases[1] = 3 * np.pi / 2
+    phases[1, peak] = np.pi
+    run_result = _readout_scan_run_result(signals=_phasors(phases))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subset = data["subsets"][0]
+    separation = subset["phase_separation"]
+    assert np.all(separation <= np.pi + 1e-12)
+    assert separation[0] == pytest.approx(np.pi / 2)
+    assert subset["optimal_index"] == peak
+    assert subset["optimal_phase_separation"] == pytest.approx(np.pi)
+
+
+def test_readout_scan_subsets_are_named_after_their_levels() -> None:
+    """Given a three-transition ladder, when analyzed, then subsets nest by name."""
+    rng = np.random.default_rng(0)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(4, 15)))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subsets = data["subsets"]
+    assert [subset["name"] for subset in subsets] == ["ge", "gef", "gefh"]
+    assert [len(subset["levels"]) for subset in subsets] == [2, 3, 4]
+    assert [subset["ideal_separation"] for subset in subsets] == pytest.approx(
+        [np.pi, 2 * np.pi / 3, np.pi / 2]
+    )
+
+
+def test_readout_scan_ignores_points_where_a_level_vanishes() -> None:
+    """Given a vanishing level, when analyzed, then that frequency is not chosen."""
+    n_points = 21
+    best, runner_up = 3, 11
+    phases = np.zeros((2, n_points))
+    phases[1] = 0.1
+    phases[1, best] = 3.0
+    phases[1, runner_up] = 2.0
+    amplitudes = np.ones((2, n_points))
+    amplitudes[1, best] = 1e-3
+    run_result = _readout_scan_run_result(signals=_phasors(phases, amplitudes))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    assert not data["valid_mask"][best]
+    assert data["subsets"][0]["optimal_index"] == runner_up
+
+
+def test_readout_scan_ignores_non_finite_points() -> None:
+    """Given a non-finite point, when analyzed, then it is not chosen."""
+    n_points = 21
+    best, runner_up = 4, 12
+    phases = np.zeros((2, n_points))
+    phases[1] = 0.1
+    phases[1, runner_up] = 2.0
+    signals = _phasors(phases)
+    signals[1, best] = np.nan
+
+    data = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+
+    assert not data["valid_mask"][best]
+    assert data["subsets"][0]["optimal_index"] == runner_up
+
+
+def test_readout_scan_breaks_ties_towards_the_center_frequency() -> None:
+    """Given two equal maxima, when analyzed, then the nearer one to center wins."""
+    n_points = 21
+    near, far = 9, 1
+    phases = np.zeros((2, n_points))
+    phases[1] = 0.1
+    phases[1, [near, far]] = 2.0
+    frequencies = np.linspace(10.0, 10.02, n_points)
+    run_result = _readout_scan_run_result(
+        signals=_phasors(phases),
+        frequency_range=frequencies,
+        center_frequency=float(frequencies[10]),
+    )
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    assert data["subsets"][0]["optimal_index"] == near
+
+
+def test_readout_scan_flags_a_subset_that_never_separates() -> None:
+    """Given coincident levels, when analyzed, then the subset is unresolved."""
+    n_points = 11
+    phases = np.zeros((2, n_points))
+    phases[1] = 1e-3
+    run_result = _readout_scan_run_result(signals=_phasors(phases))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    assert not data["subsets"][0]["resolved"]
+
+
+def test_readout_scan_reports_the_pair_that_limits_the_optimum() -> None:
+    """Given an uneven triple, when analyzed, then the closest pair is reported."""
+    n_points = 11
+    peak = 4
+    phases = np.zeros((3, n_points))
+    phases[1] = 0.05
+    phases[2] = 0.1
+    phases[1, peak] = 2.0
+    phases[2, peak] = 2.5
+    run_result = _readout_scan_run_result(signals=_phasors(phases))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subset = data["subsets"][1]
+    assert subset["name"] == "gef"
+    assert subset["optimal_index"] == peak
+    # |e> and |f> sit 0.5 rad apart, closer than either is to |g>.
+    assert subset["limiting_pair"] == (1, 2)
+    assert subset["optimal_phase_separation"] == pytest.approx(0.5)
+
+
+def test_readout_scan_phases_are_referenced_to_the_ground_state() -> None:
+    """Given any scan, when analyzed, then the ground-state trace is flat at zero."""
+    rng = np.random.default_rng(1)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, 9)))
+
+    data = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+
+    assert np.allclose(data["relative_phases"][0], 0.0)
+
+
+def test_readout_scan_is_invariant_to_a_common_phase_factor() -> None:
+    """Given a cable delay, when analyzed, then neither optimum moves."""
+    rng = np.random.default_rng(2)
+    n_points = 17
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, n_points)))
+    delay = np.exp(1j * np.linspace(0.0, 40.0, n_points))
+
+    plain = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+    delayed = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals * delay)
+    )
+
+    for left, right in zip(plain["subsets"], delayed["subsets"], strict=True):
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert (
+            left["optimal_frequency_by_distance"]
+            == (right["optimal_frequency_by_distance"])
+        )
+        assert np.allclose(left["phase_separation"], right["phase_separation"])
+        assert np.allclose(left["distance_separation"], right["distance_separation"])
+
+
+def test_readout_scan_distance_optimum_can_differ_from_the_phase_optimum() -> None:
+    """Given contrast that peaks elsewhere, when analyzed, then the optima split."""
+    n_points = 21
+    phase_peak, distance_peak = 5, 15
+    phases = np.zeros((2, n_points))
+    phases[1] = 0.2
+    phases[1, phase_peak] = 1.0
+    amplitudes = np.ones((2, n_points))
+    amplitudes[1, distance_peak] = 4.0
+    run_result = _readout_scan_run_result(signals=_phasors(phases, amplitudes))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subset = data["subsets"][0]
+    assert subset["optimal_index"] == phase_peak
+    assert subset["optimal_index_by_distance"] == distance_peak
+
+
+def test_readout_scan_raises_when_no_point_is_usable() -> None:
+    """Given an all non-finite scan, when analyzed, then it raises."""
+    signals = np.full((2, 5), np.nan, dtype=np.complex128)
+
+    with pytest.raises(ValueError, match="No frequency of the scan is usable"):
+        analyze_measure_dispersive_shift_extended(
+            run_result=_readout_scan_run_result(signals=signals)
+        )

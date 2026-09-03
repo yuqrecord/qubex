@@ -6,6 +6,7 @@ from .calibrate_1q_transition_based_on_ground import (
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
     chevron_pattern_based_on_ground,
+    measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
 )
 from .chevron_matched_transform import (
@@ -159,6 +160,7 @@ __all__ = [
     "measure_bell_states",
     "measure_chevron_pattern",
     "measure_cr_crosstalk",
+    "measure_dispersive_shift_extended",
     "measure_ghz_state",
     "measure_graph_state",
     "measure_thermal_excitation",

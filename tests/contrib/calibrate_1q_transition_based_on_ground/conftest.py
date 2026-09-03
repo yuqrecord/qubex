@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
@@ -505,6 +506,212 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
                             else 0.25 / (hpi_area * experiment.rabi_rates[qubit])
                         ),
                         "tau": 12,
+                    },
+                )
+        return experiment
+
+    return factory
+
+
+#: Resting readout frequency of the stub resonator, in GHz.
+READOUT_FREQUENCY = 10.0
+
+#: Fine (NCO) frequency of the stub readout channel, in GHz.
+READOUT_NCO_FREQUENCY = 10.0
+
+#: Linewidth of the stub resonator, in GHz.
+RESONATOR_KAPPA = 0.002
+
+#: Frequency the stub resonator moves by for each level of the qubit, in GHz.
+DISPERSIVE_SHIFT = 0.0006
+
+#: Configured readout amplitude of every stub qubit.
+READOUT_AMPLITUDE = 0.05
+
+
+class _ReadoutTarget:
+    """Minimal stand-in for a `Target` that carries a tunable frequency."""
+
+    def __init__(self, label: str, frequency: float, fine_frequency: float) -> None:
+        self.label = label
+        self.frequency = frequency
+        self.fine_frequency = fine_frequency
+
+
+class _ReadoutParameters:
+    """Minimal stand-in for `ControlParameters` on the readout side."""
+
+    @staticmethod
+    def get_readout_amplitude(qubit: str) -> float:
+        """Return the configured readout amplitude of a qubit."""
+        return READOUT_AMPLITUDE
+
+
+class _ReadoutContext:
+    """Minimal stand-in for `ExperimentContext` for a readout-frequency scan."""
+
+    def __init__(
+        self,
+        *,
+        qubit_labels: Sequence[str],
+        labels: Mapping[str, float],
+    ) -> None:
+        self.qubit_labels = list(qubit_labels)
+        self.params = _ReadoutParameters()
+        self.reset_calls: list[tuple[str, ...]] = []
+        self.targets: dict[str, _ReadoutTarget] = {
+            label: _ReadoutTarget(label, frequency, 0.0)
+            for label, frequency in labels.items()
+        }
+        for qubit in self.qubit_labels:
+            read_label = f"R{qubit}"
+            self.targets[read_label] = _ReadoutTarget(
+                read_label,
+                READOUT_FREQUENCY,
+                READOUT_NCO_FREQUENCY,
+            )
+
+    def resolve_qubit_label(self, label: str) -> str:
+        """Return the qubit label of any target label."""
+        return label.split("-")[0].removeprefix("R")
+
+    def resolve_transition_label(
+        self,
+        label: str,
+        transition: TransitionName,
+    ) -> str:
+        """Return the target label of a transition."""
+        qubit = self.resolve_qubit_label(label)
+        return qubit if transition == "ge" else f"{qubit}-{transition}"
+
+    def resolve_read_label(self, label: str) -> str:
+        """Return the readout target label of a qubit."""
+        return f"R{self.resolve_qubit_label(label)}"
+
+    def reset_awg_and_capunits(
+        self,
+        box_ids: Any = None,
+        qubits: Sequence[str] | None = None,
+    ) -> None:
+        """Record a reset request instead of touching anything."""
+        self.reset_calls.append(tuple(qubits or ()))
+
+
+class _MeasureData:
+    """Minimal stand-in for `MeasureData` in average mode."""
+
+    def __init__(self, value: complex) -> None:
+        self.kerneled = np.asarray(value)
+
+
+class _MeasureResult:
+    """Minimal stand-in for `MeasureResult`, keyed by qubit label."""
+
+    def __init__(self, data: dict[str, _MeasureData]) -> None:
+        self.data = data
+
+
+class ReadoutScanExperiment:
+    """
+    An `Experiment` look-alike whose resonator moves with the qubit level.
+
+    The response is the single-pole reflection `1 / (1 + 2 i d / kappa)` around a
+    resonance that sits `k * chi` above the resting one for level `k`, so the
+    phase of each level crosses zero at its own resonance and the levels can be
+    separated. The prepared level is read back out of the schedule - it is the
+    number of channels the schedule actually drives - so the ladder the
+    experiment builds is exercised rather than re-derived.
+    """
+
+    def __init__(
+        self,
+        *,
+        qubits: Sequence[str],
+        registered_labels: Mapping[str, float],
+        chi: float = DISPERSIVE_SHIFT,
+        kappa: float = RESONATOR_KAPPA,
+    ) -> None:
+        self.chi = chi
+        self.kappa = kappa
+        self.calib_note = _CalibNote()
+        self.ctx = _ReadoutContext(qubit_labels=qubits, labels=registered_labels)
+        self.pulse = _Pulse(self.calib_note)
+        self.measure_calls: list[dict[str, Any]] = []
+
+    @contextmanager
+    def modified_frequencies(self, frequencies: dict[str, float]) -> Iterator[None]:
+        """Override target frequencies for the duration of the context."""
+        original = {label: self.ctx.targets[label].frequency for label in frequencies}
+        for label, frequency in frequencies.items():
+            self.ctx.targets[label].frequency = frequency
+        try:
+            yield
+        finally:
+            for label, frequency in original.items():
+                self.ctx.targets[label].frequency = frequency
+
+    def measure(self, sequence: PulseSchedule, **kwargs: Any) -> _MeasureResult:
+        """Return the reflection of the resonator at the applied frequency."""
+        self.measure_calls.append(dict(kwargs))
+        sequences = sequence.get_sampled_sequences()
+        qubits = {self.ctx.resolve_qubit_label(label) for label in sequences}
+        if len(qubits) != 1:
+            raise AssertionError(f"The schedule spans {sorted(qubits)}.")
+        qubit = qubits.pop()
+        level = sum(1 for values in sequences.values() if np.any(np.abs(values) > 0))
+        applied = self.ctx.targets[f"R{qubit}"].frequency
+        detuning = applied - (READOUT_FREQUENCY + level * self.chi)
+        return _MeasureResult(
+            {qubit: _MeasureData(1.0 / (1.0 + 2j * detuning / self.kappa))}
+        )
+
+
+@pytest.fixture
+def readout_scan_experiment_factory() -> Callable[..., ReadoutScanExperiment]:
+    """
+    Return a factory building a `ReadoutScanExperiment` with a calibrated ladder.
+
+    The factory registers every transition target up to `max_level` and seeds a
+    pi pulse on each rung, which is what a readout scan needs. A qubit left out
+    of `registered_qubits` has no transition targets, and one left out of
+    `calibrated_qubits` has no pi pulses, so both preflight failures can be
+    provoked.
+    """
+
+    def factory(
+        *,
+        max_level: int,
+        qubits: Sequence[str] | None = None,
+        registered_qubits: Sequence[str] | None = None,
+        calibrated_qubits: Sequence[str] | None = None,
+        chi: float = DISPERSIVE_SHIFT,
+        kappa: float = RESONATOR_KAPPA,
+    ) -> ReadoutScanExperiment:
+        labels = [QUBIT] if qubits is None else list(qubits)
+        registered = labels if registered_qubits is None else list(registered_qubits)
+        rungs = TRANSITION_NAMES[:max_level]
+        experiment = ReadoutScanExperiment(
+            qubits=labels,
+            registered_labels={
+                transition_label(name, qubit): GE_FREQUENCY
+                + transition_index(name) * ALPHA
+                for qubit in registered
+                for name in rungs
+            },
+            chi=chi,
+            kappa=kappa,
+        )
+        calibrated = labels if calibrated_qubits is None else list(calibrated_qubits)
+        for qubit in calibrated:
+            for name in rungs:
+                label = transition_label(name, qubit)
+                experiment.calib_note.update_pi_param(
+                    label,
+                    {
+                        "target": label,
+                        "duration": PREP_PI.duration,
+                        "amplitude": PREP_PI.amplitude,
+                        "tau": PREP_PI.tau,
                     },
                 )
         return experiment
