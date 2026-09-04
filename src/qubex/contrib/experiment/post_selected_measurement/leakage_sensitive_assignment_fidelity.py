@@ -58,6 +58,7 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
     max_level: int,
     ge_readout_pulse: Waveform | None = None,
     leakage_sensitive_readout_pulse: Waveform | None = None,
+    leakage_sensitive_readout_detuning: float = 0.0,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
     pump_buffer_time: float,
@@ -77,9 +78,14 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
     padded_ge_readout_pulse = ge_readout_pulse.padded(
         ge_readout_pulse.duration + exp.readout_post_margin
     )
-    padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.padded(
-        leakage_sensitive_readout_pulse.duration + exp.readout_post_margin
-    )
+    # The heralding readout stays on the registered carrier, because the
+    # pretrained ge classifier is applied to it. Only M_leak is moved, and it is
+    # moved by detuning the waveform rather than by `frequencies=`, which would
+    # shift the whole schedule. Detuning before padding keeps the padding neutral:
+    # a `Blank` stays zero whatever phase it is given.
+    padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.detuned(
+        leakage_sensitive_readout_detuning
+    ).padded(leakage_sensitive_readout_pulse.duration + exp.readout_post_margin)
     ladder_labels, ladder_pulses = _resolve_ladder(
         exp, qubit=qubit, max_level=max_level
     )
@@ -327,7 +333,14 @@ def _population_matrix(*, iq_data, classifier, post_selection):
 
 
 def analyze_post_selected_leakage_sensitive_assignment_fidelity(
-    *, target, ge_classifier, run_result, n_train, n_test
+    *,
+    target,
+    ge_classifier,
+    run_result,
+    n_train,
+    n_test,
+    leakage_sensitive_readout_detuning=0.0,
+    capture_sampling_period=None,
 ):
     iq_data = {
         s: {
@@ -341,6 +354,24 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         }
         for s in run_result.keys()
     }
+    # M_leak is driven off the registered carrier but the capture still
+    # demodulates at it, so the posterior traces come back rotating at the
+    # detuning. Undo that here, before the matched filter and the classifier see
+    # them, so the traces read as the resonator response. The prior capture is
+    # left alone: the heralding readout was never moved. The raw traces survive
+    # untouched in the run payload.
+    if leakage_sensitive_readout_detuning:
+        n_samples = next(iter(iq_data.values()))["posterior"]["train"].shape[1]
+        derotation = np.exp(
+            -2j
+            * np.pi
+            * leakage_sensitive_readout_detuning
+            * np.arange(n_samples)
+            * capture_sampling_period
+        )
+        for s in iq_data.keys():
+            for d in ["train", "test"]:
+                iq_data[s]["posterior"][d] = iq_data[s]["posterior"][d] * derotation
     # The herald classifier is pretrained on the ge readout and is applied only to
     # the prior capture; the leakage classifier below is fit here and applied only
     # to the posterior capture. Keeping the two apart avoids both a weight/sample
@@ -477,6 +508,7 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
     target: str,
     max_level: int,
     leakage_sensitive_readout_pulse: Waveform | None = None,
+    leakage_sensitive_readout_frequency: float | None = None,
     ge_readout_classifier: dict,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
@@ -509,6 +541,15 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
     )
     qubit = exp.ctx.qubits[target].label
+    resonator = exp.ctx.resonators[target].label
+    # The schedule can only carry one demodulation frequency, so M_leak is placed
+    # by detuning it away from the carrier the readout target is registered with.
+    if leakage_sensitive_readout_frequency is None:
+        leakage_sensitive_readout_detuning = 0.0
+    else:
+        leakage_sensitive_readout_detuning = (
+            leakage_sensitive_readout_frequency - exp.ctx.targets[resonator].frequency
+        )
     _, ladder_pulses = _resolve_ladder(exp, qubit=qubit, max_level=max_level)
     _validate_readout_pulse_start_position(
         ge_readout_duration=ge_readout_pulse.duration,
@@ -523,6 +564,7 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
         max_level=max_level,
         ge_readout_pulse=ge_readout_pulse,
         leakage_sensitive_readout_pulse=leakage_sensitive_readout_pulse,
+        leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
         pump_buffer_time=pump_buffer_time,
@@ -538,6 +580,8 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
         run_result=run_result,
         n_train=n_train,
         n_test=n_test,
+        leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
+        capture_sampling_period=capture_sampling_period,
     )
     iq_data = analyze_result["iq_data"]
     classifier = analyze_result["classifier"]
@@ -562,6 +606,8 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
             "target": target,
             "raw": run_result,
             "leakage_sensitive_readout_pulse": leakage_sensitive_readout_pulse,
+            "leakage_sensitive_readout_frequency": leakage_sensitive_readout_frequency,
+            "leakage_sensitive_readout_detuning": leakage_sensitive_readout_detuning,
             "ge_readout_pulse": ge_readout_pulse,
             "ge_classifier": ge_classifier,
             "iq_data": iq_data,
