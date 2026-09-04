@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import qubex.visualization as viz
 from qubex.analysis import FitStatus, IQPlotter, fitting

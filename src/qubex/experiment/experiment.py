@@ -2503,6 +2503,9 @@ class Experiment:
         plot: bool | None = None,
         store_params: bool | None = None,
         simultaneous: bool | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[RabiData]:
         """
@@ -2543,6 +2546,9 @@ class Experiment:
             plot=plot,
             store_params=store_params,
             simultaneous=simultaneous,
+            plot_initial_pulse_schedule=plot_initial_pulse_schedule,
+            plot_middle_pulse_schedule=plot_middle_pulse_schedule,
+            plot_final_pulse_schedule=plot_final_pulse_schedule,
             **deprecated_options,
         )
 
@@ -2668,6 +2674,7 @@ class Experiment:
         add_pump_pulses: bool | None = None,
         simultaneous: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
         """Build state classifiers from measurement data."""
@@ -2685,6 +2692,7 @@ class Experiment:
             add_pump_pulses=add_pump_pulses,
             simultaneous=simultaneous,
             plot=plot,
+            plot_pulse_schedule=plot_pulse_schedule,
             **deprecated_options,
         )
 
@@ -4965,10 +4973,12 @@ class Experiment:
         subrange_width: float | None = None,
         peak_height: float | None = None,
         peak_distance: int | None = None,
+        simultaneous_drive: bool | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """
         Scan qubit frequencies to locate resonances.
@@ -4994,10 +5004,12 @@ class Experiment:
             subrange_width=subrange_width,
             peak_height=peak_height,
             peak_distance=peak_distance,
+            simultaneous_drive=simultaneous_drive,
             shots=n_shots,
             interval=shot_interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
 
     def estimate_control_amplitude(
@@ -5034,10 +5046,12 @@ class Experiment:
         control_amplitude: float | None = None,
         readout_amplitude: float | None = None,
         target_rabi_rate: float | None = None,
+        simultaneous_drive: bool | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """Measure qubit resonance over a frequency sweep."""
         return self.characterization_service.measure_qubit_resonance(
@@ -5046,10 +5060,12 @@ class Experiment:
             control_amplitude=control_amplitude,
             readout_amplitude=readout_amplitude,
             target_rabi_rate=target_rabi_rate,
+            simultaneous_drive=simultaneous_drive,
             shots=n_shots,
             interval=shot_interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
 
     def qubit_spectroscopy(
@@ -5058,11 +5074,13 @@ class Experiment:
         frequency_range: ArrayLike | None = None,
         power_range: ArrayLike | None = None,
         readout_amplitude: float | None = None,
+        simultaneous_drive: bool | None = None,
         readout_frequency: float | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """Run qubit spectroscopy over frequency and power."""
         return self.characterization_service.qubit_spectroscopy(
@@ -5070,11 +5088,13 @@ class Experiment:
             frequency_range=frequency_range,
             power_range=power_range,
             readout_amplitude=readout_amplitude,
+            simultaneous_drive=simultaneous_drive,
             readout_frequency=readout_frequency,
             shots=n_shots,
             interval=shot_interval,
             plot=plot,
             save_image=save_image,
+            plot_pulse_schedule=plot_pulse_schedule,
         )
 
     def measure_dispersive_shift(

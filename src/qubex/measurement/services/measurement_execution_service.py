@@ -860,6 +860,7 @@ class MeasurementExecutionService:
         classification_line_param0: tuple[float, float, float] | None = None,
         classification_line_param1: tuple[float, float, float] | None = None,
         plot: bool | None = None,
+        plot_title: str | None = None,
         **deprecated_options: Any,
     ) -> MeasureResult:
         """
@@ -942,6 +943,7 @@ class MeasurementExecutionService:
             classification_line_param0=classification_line_param0,
             classification_line_param1=classification_line_param1,
             plot=plot,
+            plot_title=plot_title,
             **deprecated_options,
         )
         data = {target: measures[0] for target, measures in result.data.items()}
@@ -973,6 +975,7 @@ class MeasurementExecutionService:
         classification_line_param0: tuple[float, float, float] | None = None,
         classification_line_param1: tuple[float, float, float] | None = None,
         plot: bool | None = None,
+        plot_title: str | None = None,
         **deprecated_options: Any,
     ) -> MultipleMeasureResult:
         """
@@ -1025,7 +1028,7 @@ class MeasurementExecutionService:
         classification_line_param1 : tuple[float, float, float] | None, optional
             Optional QuEL-1 classification line parameter 1.
         plot : bool | None, optional
-            Whether to plot the results.
+            Whether to plot the measurement schedule.
 
         Returns
         -------
@@ -1179,6 +1182,7 @@ class MeasurementExecutionService:
             readout_amplification=readout_amplification,
             final_measurement=final_measurement,
             plot=plot,
+            plot_title=plot_title,
         )
 
         if classification_line_param0 is None and classification_line_param1 is None:
@@ -1347,6 +1351,7 @@ class MeasurementExecutionService:
         capture_placement: CapturePlacement | None = None,
         capture_targets: list[str] | None = None,
         plot: bool | None = None,
+        plot_title: str | None = None,
     ) -> MeasurementSchedule:
         """Build a `MeasurementSchedule` from a pulse schedule and options."""
         measurement_schedule = self.schedule_builder.build(
@@ -1364,5 +1369,6 @@ class MeasurementExecutionService:
             capture_placement=capture_placement,
             capture_targets=capture_targets,
             plot=plot,
+            plot_title=plot_title,
         )
         return measurement_schedule

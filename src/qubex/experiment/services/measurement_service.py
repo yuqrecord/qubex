@@ -26,7 +26,7 @@ from qxpulse import (
     Waveform,
 )
 from rich.console import Console
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import qubex.visualization as viz
 from qubex.analysis import FitStatus, IQPlotter, fitting
@@ -740,6 +740,8 @@ class MeasurementService:
         classification_line_param1: tuple[float, float, float] | None = None,
         reset_awg_and_capunits: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
+        plot_pulse_schedule_title: str | None = None,
         **deprecated_options: Any,
     ) -> MeasureResult:
         """
@@ -785,6 +787,8 @@ class MeasurementService:
             Whether to reset AWGs/capture units before measurement.
         plot
             Whether to plot the result.
+        plot_pulse_schedule
+            Whether to plot the measurement pulse schedule.
         **deprecated_options
             Deprecated aliases forwarded to the measurement layer.
         """
@@ -792,6 +796,8 @@ class MeasurementService:
             reset_awg_and_capunits = False
         if plot is None:
             plot = False
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         waveforms: dict[str, NDArray[np.complex128]] = {}
 
@@ -872,6 +878,8 @@ class MeasurementService:
                 readout_amplification=readout_amplification,
                 classification_line_param0=classification_line_param0,
                 classification_line_param1=classification_line_param1,
+                plot=plot_pulse_schedule,
+                plot_title=plot_pulse_schedule_title,
                 **deprecated_options,
             )
         if plot:
@@ -893,6 +901,7 @@ class MeasurementService:
         readout_post_margin: float | None = None,
         readout_amplification: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> MeasureResult:
         """Prepare given states and measure readout results."""
@@ -900,6 +909,8 @@ class MeasurementService:
             mode = "single"
         if plot is None:
             plot = False
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         targets = []
 
@@ -933,6 +944,7 @@ class MeasurementService:
             readout_post_margin=readout_post_margin,
             readout_amplification=readout_amplification,
             plot=plot,
+            plot_pulse_schedule=plot_pulse_schedule,
             **deprecated_options,
         )
 
@@ -1067,6 +1079,9 @@ class MeasurementService:
         ylabel: str | None = None,
         xaxis_type: Literal["linear", "log"] | None = None,
         yaxis_type: Literal["linear", "log"] | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[SweepData]:
         """
@@ -1099,6 +1114,12 @@ class MeasurementService:
             xaxis_type = "linear"
         if yaxis_type is None:
             yaxis_type = "linear"
+        if plot_initial_pulse_schedule is None:
+            plot_initial_pulse_schedule = False
+        if plot_middle_pulse_schedule is None:
+            plot_middle_pulse_schedule = False
+        if plot_final_pulse_schedule is None:
+            plot_final_pulse_schedule = False
 
         sweep_range = np.array(sweep_range)
 
@@ -1142,11 +1163,23 @@ class MeasurementService:
         self.ctx.reset_awg_and_capunits(qubits=set(ordered_qubits))
 
         with self.ctx.modified_frequencies(frequencies):
+            i_seq = 0
+            plot_pulse_schedule = False
+            plot_pulse_schedule_title = None
             for seq in tqdm(
                 sequences,
                 desc="Sweeping parameters",
                 disable=not enable_tqdm,
             ):
+                if i_seq == 0 and plot_initial_pulse_schedule:
+                    plot_pulse_schedule = True
+                    plot_pulse_schedule_title = "Initial pulse schedule"
+                elif i_seq == len(sequences) // 2 and plot_middle_pulse_schedule:
+                    plot_pulse_schedule = True
+                    plot_pulse_schedule_title = "Middle pulse schedule"
+                elif i_seq == len(sequences) - 1 and plot_final_pulse_schedule:
+                    plot_pulse_schedule = True
+                    plot_pulse_schedule_title = "Final pulse schedule"
                 result = self.measure(
                     seq,
                     initial_states=initial_states,
@@ -1158,8 +1191,12 @@ class MeasurementService:
                     readout_pre_margin=readout_pre_margin,
                     readout_post_margin=readout_post_margin,
                     reset_awg_and_capunits=False,
+                    plot_pulse_schedule=plot_pulse_schedule,
+                    plot_pulse_schedule_title=plot_pulse_schedule_title,
                     **deprecated_options,
                 )
+                plot_pulse_schedule = False
+                plot_pulse_schedule_title = None
                 for target in ordered_qubits:
                     if target in result.data:
                         signals[target].append(result.data[target].kerneled)
@@ -1175,6 +1212,7 @@ class MeasurementService:
                             if values
                         }
                     )
+                i_seq += 1
 
         if plot:
             plotter.show()
@@ -1291,6 +1329,9 @@ class MeasurementService:
         plot: bool | None = None,
         store_params: bool | None = None,
         simultaneous: bool | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[RabiData]:
         """
@@ -1324,6 +1365,12 @@ class MeasurementService:
             store_params = True
         if simultaneous is None:
             simultaneous = False
+        if plot_initial_pulse_schedule is None:
+            plot_initial_pulse_schedule = False
+        if plot_middle_pulse_schedule is None:
+            plot_middle_pulse_schedule = False
+        if plot_final_pulse_schedule is None:
+            plot_final_pulse_schedule = False
 
         if targets is None:
             targets = self.ctx.qubit_labels
@@ -1353,11 +1400,15 @@ class MeasurementService:
                 shot_interval=shot_interval,
                 plot=plot,
                 store_params=store_params,
+                plot_initial_pulse_schedule=plot_initial_pulse_schedule,
+                plot_middle_pulse_schedule=plot_middle_pulse_schedule,
+                plot_final_pulse_schedule=plot_final_pulse_schedule,
                 **deprecated_options,
             )
         else:
             rabi_data = {}
             rabi_params = {}
+            pulse_schedule_is_plotted = False
             for target in targets:
                 data = self.rabi_experiment(
                     amplitudes={target: amplitudes[target]},
@@ -1370,10 +1421,14 @@ class MeasurementService:
                     shot_interval=shot_interval,
                     store_params=store_params,
                     plot=plot,
+                    plot_initial_pulse_schedule=(plot_initial_pulse_schedule and not pulse_schedule_is_plotted),
+                    plot_middle_pulse_schedule=(plot_middle_pulse_schedule and not pulse_schedule_is_plotted),
+                    plot_final_pulse_schedule=(plot_final_pulse_schedule and not pulse_schedule_is_plotted),
                     **deprecated_options,
                 ).data[target]
                 rabi_data[target] = data
                 rabi_params[target] = data.rabi_param
+            pulse_schedule_is_plotted = True
             result = ExperimentResult(
                 data=rabi_data,
                 rabi_params=rabi_params,
@@ -1682,6 +1737,9 @@ class MeasurementService:
         shot_interval: float | None = None,
         plot: bool | None = None,
         store_params: bool | None = None,
+        plot_initial_pulse_schedule: bool | None = None,
+        plot_middle_pulse_schedule: bool | None = None,
+        plot_final_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> ExperimentResult[RabiData]:
         """
@@ -1713,6 +1771,12 @@ class MeasurementService:
             plot = True
         if store_params is None:
             store_params = False
+        if plot_initial_pulse_schedule is None:
+            plot_initial_pulse_schedule = False
+        if plot_middle_pulse_schedule is None:
+            plot_middle_pulse_schedule = False
+        if plot_final_pulse_schedule is None:
+            plot_final_pulse_schedule = False
 
         # target labels
         targets = list(amplitudes.keys())
@@ -1771,6 +1835,9 @@ class MeasurementService:
             n_shots=n_shots,
             shot_interval=shot_interval,
             plot=plot,
+            plot_initial_pulse_schedule=plot_initial_pulse_schedule,
+            plot_middle_pulse_schedule=plot_middle_pulse_schedule,
+            plot_final_pulse_schedule=plot_final_pulse_schedule,
             **deprecated_options,
         )
 
@@ -1993,6 +2060,7 @@ class MeasurementService:
         readout_post_margin: float | None = None,
         readout_amplification: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> list[MeasureResult]:
         """
@@ -2017,6 +2085,8 @@ class MeasurementService:
             targets = [targets]
         else:
             targets = list(targets)
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         states = ["g", "e", "f"][:n_states]
         result = {
@@ -2029,6 +2099,7 @@ class MeasurementService:
                 readout_pre_margin=readout_pre_margin,
                 readout_post_margin=readout_post_margin,
                 readout_amplification=readout_amplification,
+                plot_pulse_schedule=plot_pulse_schedule,
                 **deprecated_options,
             )
             for state in states
@@ -2060,6 +2131,7 @@ class MeasurementService:
         readout_amplification: bool | None = None,
         simultaneous: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
         """
@@ -2086,6 +2158,8 @@ class MeasurementService:
             targets = [targets]
         else:
             targets = list(targets)
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
 
         if simultaneous:
             return self._build_classifier(
@@ -2101,11 +2175,14 @@ class MeasurementService:
                 readout_post_margin=readout_post_margin,
                 readout_amplification=readout_amplification,
                 plot=plot,
+                plot_pulse_schedule=plot_pulse_schedule,
                 **deprecated_options,
             )
         else:
             fidelities = {}
             average_fidelities = {}
+            centers = {}
+            stds = {}
             data = {}
             classifiers = {}
             figures: dict[str, go.Figure] = {}
@@ -2124,10 +2201,13 @@ class MeasurementService:
                     readout_post_margin=readout_post_margin,
                     readout_amplification=readout_amplification,
                     plot=plot,
+                    plot_pulse_schedule=plot_pulse_schedule,
                     **deprecated_options,
                 )
                 fidelities[target] = result["readout_fidelities"][target]
                 average_fidelities[target] = result["average_readout_fidelity"][target]
+                centers[target] = result["centers"][target]
+                stds[target] = result["stddevs"][target]
                 data[target] = result["data"]
                 classifiers[target] = result["classifiers"][target]
                 if figure is None:
@@ -2140,6 +2220,8 @@ class MeasurementService:
                     "readout_fidelities": fidelities,
                     "average_readout_fidelity": average_fidelities,
                     "data": data,
+                    "centers": centers,
+                    "stddevs": stds,
                     "classifiers": classifiers,
                 },
                 figure=figure,
@@ -2161,6 +2243,7 @@ class MeasurementService:
         readout_post_margin: float | None = None,
         readout_amplification: bool | None = None,
         plot: bool | None = None,
+        plot_pulse_schedule: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
         if save_classifier is None:
@@ -2175,6 +2258,8 @@ class MeasurementService:
             targets = list(targets)
         if n_states is None:
             n_states = 2
+        if plot_pulse_schedule is None:
+            plot_pulse_schedule = False
         normalized_options, deprecated_options = partition_deprecated_options(
             values={"n_shots": n_shots},
             deprecated_options=deprecated_options,
@@ -2198,6 +2283,7 @@ class MeasurementService:
             readout_amplitudes=readout_amplitudes,
             readout_amplification=readout_amplification,
             plot=False,
+            plot_pulse_schedule=plot_pulse_schedule,
             **deprecated_options,
         )
 
@@ -2231,13 +2317,15 @@ class MeasurementService:
                 if save_dir is not None:
                     path = Path(save_dir) / self.ctx.chip_id / f"{label}.pkl"
                 else:
-                    path = Path(CLASSIFIER_DIR) / self.ctx.chip_id / f"{label}.pkl"
+                    path = self.ctx.classifier_dir / self.ctx.chip_id / f"{label}.pkl"
                 if not path.parent.exists():
                     path.parent.mkdir(parents=True, exist_ok=True)
                 classifier.save(path)
 
         fidelities = {}
         average_fidelities = {}
+        centers = {}
+        stds = {}
         figures: dict[str, go.Figure] = {}
         for target in targets:
             clf = classifiers[target]
@@ -2266,6 +2354,10 @@ class MeasurementService:
             ]
             fidelities[target] = fidelity
             average_fidelities[target] = np.mean(fidelity)
+            centers[target] = clf.centers
+            stds[target] = _get_classifier_stddevs(clf)
+            # PS edit
+
 
             if plot:
                 print(f"{target}:")
@@ -2294,6 +2386,8 @@ class MeasurementService:
             data={
                 "readout_fidelities": fidelities,
                 "average_readout_fidelity": average_fidelities,
+                "centers": centers,
+                "stddevs": stds,
                 "data": data,
                 "classifiers": classifiers,
             },

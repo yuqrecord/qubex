@@ -126,6 +126,16 @@ from .experiment.superconducting_gap import (
 from .experiment.thermal_excitation_characterization import (
     measure_thermal_excitation,
 )
+from .experiment.post_selected_measurement.assignment_fidelity import (
+    post_selected_assignment_fidelity_experiment,
+)
+from .experiment.post_selected_measurement.quantum_efficiency import (
+    post_selected_quantum_efficiency_experiment,
+)
+
+from .experiment.ac_stark_spectroscopy import ac_stark_spectroscopy
+
+from .experiment.skew_check_qr import skew_check_qr
 
 __all__ = [
     "analyze_chevron_matched_transform",
@@ -213,4 +223,8 @@ __all__ = [
     "stark_t1_experiment",
     "sweep_readout_snr",
     "visualize_graph",
+    "ac_stark_spectroscopy",
+    "skew_check_qr",
+    "post_selected_assignment_fidelity_experiment",
+    "post_selected_quantum_efficiency_experiment",
 ]

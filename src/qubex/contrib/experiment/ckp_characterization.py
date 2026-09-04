@@ -41,7 +41,7 @@ from qxpulse import (
     Waveform,
 )
 from scipy.optimize import least_squares
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import qubex.visualization as viz
 from qubex.analysis import fitting
@@ -234,6 +234,7 @@ def ckp_measurement_v2(
     save_image: bool | None = None,
     enable_early_stop: bool | None = None,
     f0_lower_qubit_detuning_limit: float | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> Result:
     """
     Run a CKP measurement sweep and extract qubit resonance frequencies.
@@ -334,6 +335,9 @@ def ckp_measurement_v2(
 
         If None, a default value is used when early stop is enabled.
 
+    plot_pulse_schedule : bool, optional
+        If True, plot the generated CKP pulse schedule.
+
     Returns
     -------
     Result
@@ -393,6 +397,8 @@ def ckp_measurement_v2(
         enable_early_stop = False
     if enable_early_stop and f0_lower_qubit_detuning_limit is None:
         f0_lower_qubit_detuning_limit = -0.035
+    if plot_pulse_schedule is None:
+        plot_pulse_schedule = False
 
     qubit_label = exp.ctx.resolve_qubit_label(target)
     read_label = exp.ctx.resolve_read_label(target)
@@ -415,25 +421,32 @@ def ckp_measurement_v2(
     fit_results = []
     exp.ctx.reset_awg_and_capunits(qubits=[qubit_label])
 
-    def measure_one_resonator_point(resonator_detuning: float) -> None:
+    def measure_one_resonator_point(
+        resonator_detuning: float, plot_pulse_schedule: bool = False
+    ) -> None:
         nonlocal early_stopped
 
         measured_resonator_frequencies.append(float(f_resonator + resonator_detuning))
         result1d = []
+        pulse_schedule_is_plotted = False
         for qubit_detuning in qubit_detuning_range:
+            schedule = ckp_sequence_v2(
+                exp=exp,
+                target=target,
+                qubit_initial_state=qubit_initial_state,
+                qubit_drive_detuning=qubit_detuning,
+                qubit_pi_pulse=qubit_pi_pulse,
+                qubit_drive_scale=qubit_drive_scale,
+                qubit_drive_duration=qubit_drive_duration,
+                resonator_drive_detuning=resonator_detuning,
+                resonator_drive_amplitude=resonator_drive_amplitude,
+                resonator_settle_duration=resonator_settle_duration,
+            )
+            if plot_pulse_schedule and not pulse_schedule_is_plotted:
+                schedule.plot()
+                pulse_schedule_is_plotted = True
             result = exp.measurement_service.execute(
-                ckp_sequence_v2(
-                    exp=exp,
-                    target=target,
-                    qubit_initial_state=qubit_initial_state,
-                    qubit_drive_detuning=qubit_detuning,
-                    qubit_pi_pulse=qubit_pi_pulse,
-                    qubit_drive_scale=qubit_drive_scale,
-                    qubit_drive_duration=qubit_drive_duration,
-                    resonator_drive_detuning=resonator_detuning,
-                    resonator_drive_amplitude=resonator_drive_amplitude,
-                    resonator_settle_duration=resonator_settle_duration,
-                ),
+                schedule=schedule,
                 reset_awg_and_capunits=False,
                 n_shots=n_shots,
             )
@@ -502,8 +515,13 @@ def ckp_measurement_v2(
             if f0 < f0_lower_frequency_limit:
                 early_stopped = True
 
+    pulse_schedule_is_plotted = False
     for resonator_detuning in tqdm(resonator_detuning_range):
-        measure_one_resonator_point(float(resonator_detuning))
+        measure_one_resonator_point(
+            float(resonator_detuning),
+            plot_pulse_schedule and not pulse_schedule_is_plotted,
+        )
+        pulse_schedule_is_plotted = True
         if early_stopped:
             break
 
@@ -645,6 +663,7 @@ def filtered_ckp_experiment(
     target_min_qubit_detuning: float | None = None,
     max_rough_search_reductions: int | None = None,
     max_rough_search_increases: int | None = None,
+    plot_pulse_schedule: bool | None = None,
 ) -> Result:
     """
     Run a full filtered CKP experiment and estimate readout resonator parameters.
@@ -745,6 +764,9 @@ def filtered_ckp_experiment(
     max_rough_search_increases : int, optional
         Maximum number of times the resonator drive amplitude
         may be increased during rough search.
+
+    plot_pulse_schedule : bool, optional
+        If True, plot the generated CKP pulse schedule.
 
     Returns
     -------
@@ -888,6 +910,8 @@ def filtered_ckp_experiment(
             / 2
         )
     verbose = False
+    if plot_pulse_schedule is None:
+        plot_pulse_schedule = False
 
     rough_search_results = []
     n_reduces = 0
@@ -1048,6 +1072,7 @@ def filtered_ckp_experiment(
         plot=plot,
         verbose=verbose,
         save_image=save_image,
+        plot_pulse_schedule=plot_pulse_schedule,
     )
     result_1 = ckp_measurement_v2(
         exp=exp,
@@ -1064,6 +1089,7 @@ def filtered_ckp_experiment(
         plot=plot,
         verbose=verbose,
         save_image=save_image,
+        plot_pulse_schedule=plot_pulse_schedule,
     )
 
     x_g = np.asarray(result_0.data["valid_resonator_frequencies"], dtype=float)

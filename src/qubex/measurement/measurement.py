@@ -829,6 +829,7 @@ class Measurement:
         classification_line_param0: tuple[float, float, float] | None = None,
         classification_line_param1: tuple[float, float, float] | None = None,
         plot: bool | None = None,
+        plot_title: str | None = None,
         **deprecated_options: Any,
     ) -> MeasureResult:
         """
@@ -872,7 +873,7 @@ class Measurement:
         classification_line_param1 : tuple[float, float, float] | None, optional
             Optional QuEL-1 classification line parameter 1.
         plot : bool | None, optional
-            Whether to plot readout waveforms and/or results.
+            Whether to plot pulse schedule.
         **deprecated_options : Any
             Deprecated option aliases kept for backward compatibility.
 
@@ -914,6 +915,7 @@ class Measurement:
             classification_line_param0=classification_line_param0,
             classification_line_param1=classification_line_param1,
             plot=plot,
+            plot_title=plot_title,
             **deprecated_options,
         )
 
