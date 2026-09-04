@@ -7,3 +7,6 @@ from .quantum_efficiency import (
 from .qnd_fidelity import (
     qnd_fidelity_experiment,
 )
+from .leakage_sensitive_assignment_fidelity import (
+    post_selected_leakage_sensitive_assignment_fidelity_experiment,
+)

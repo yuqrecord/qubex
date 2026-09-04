@@ -2,12 +2,9 @@ import numpy as np
 import qubex as qx
 import matplotlib.pyplot as plt
 from qubex.experiment.models import Result
+from qubex.system.transition import LEVEL_NAMES, TRANSITION_NAMES
 from qxpulse import Waveform
-from sklearn.linear_model import LogisticRegression
-from scipy.optimize import curve_fit
-from scipy.special import erfc
-from .assignment_fidelity import STATE_TO_COLOR, STATE_TO_LABEL
-from copy import deepcopy
+from .assignment_fidelity import Classifier, STATE_TO_COLOR, STATE_TO_LABEL
 
 __all__ = [
     "post_selected_leakage_sensitive_assignment_fidelity_experiment",
@@ -17,22 +14,25 @@ __all__ = [
     "plot_post_selected_leakage_sensitive_assignment_fidelity",
 ]
 
+# The leakage-sensitive readout resolves three outcomes: |g>, |e>, and a single
+# merged leakage class L holding every level from |f> up. The order fixes the
+# integer labels the classifier returns.
+OBSERVED_STATES = ["g", "e", "L"]
+OBSERVED_LABELS = ["|g>", "|e>", "L"]
+
 
 def _validate_readout_pulse_start_position(
-    exp: qx.Experiment,
     *,
-    target: str,
     ge_readout_duration: float,
+    ladder_duration: float,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
     capture_sampling_period: float,
 ):
-    qubit = exp.ctx.qubits[target].label
-    drag_pi_pulse_duration = exp.drag_pi_pulse[qubit].duration
     second_readout_start = (
         ge_readout_duration
         + waittime_after_readout_pulse
-        + drag_pi_pulse_duration
+        + ladder_duration
         + waittime_after_ctrl_pulse
     )
     if second_readout_start % capture_sampling_period != 0:
@@ -40,6 +40,15 @@ def _validate_readout_pulse_start_position(
             f"The start position of the second readout pulse ({second_readout_start} ns) "
             f"is not aligned with the capture sampling period ({capture_sampling_period} ns)."
         )
+
+
+def _resolve_ladder(exp: qx.Experiment, *, qubit: str, max_level: int):
+    labels = [
+        exp.ctx.resolve_transition_label(qubit, name)
+        for name in TRANSITION_NAMES[:max_level]
+    ]
+    pulses = [exp.pulse.x180(label) for label in labels]
+    return labels, pulses
 
 
 def run_post_selected_leakage_sensitive_assignment_fidelity(
@@ -63,24 +72,33 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     if ge_readout_pulse is None:
         ge_readout_pulse = exp.readout(target)
+    if leakage_sensitive_readout_pulse is None:
+        leakage_sensitive_readout_pulse = exp.readout(target)
     padded_ge_readout_pulse = ge_readout_pulse.padded(
         ge_readout_pulse.duration + exp.readout_post_margin
     )
     padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.padded(
         leakage_sensitive_readout_pulse.duration + exp.readout_post_margin
     )
-    barrier_labels = [qubit, resonator]
+    ladder_labels, ladder_pulses = _resolve_ladder(
+        exp, qubit=qubit, max_level=max_level
+    )
+    ladder_duration = sum(pulse.duration for pulse in ladder_pulses)
+    # Successive rungs are played on different channels, so they have to be
+    # serialized with barriers. The mux stays out of the set, as in the sibling
+    # experiment, so the barriers never truncate the pump tone.
+    barrier_labels = [resonator, *ladder_labels]
     pump_duration = (
         padded_ge_readout_pulse.duration
         + padded_leakage_sensitive_readout_pulse.duration
         + waittime_after_readout_pulse
-        + exp.drag_pi_pulse[qubit].duration
+        + ladder_duration
         + waittime_after_ctrl_pulse
         + 2 * pump_buffer_time
     )
     result = dict()
     for state_idx in range(max_level + 1):
-        state =  # MSG TO AI: 0なら"g", 1なら"e", 2以上なら"f"のように変換するコードを作成してください
+        state = LEVEL_NAMES[state_idx]
         schedule = qx.PulseSchedule()
         with schedule as s:
             s.add(
@@ -94,13 +112,26 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
             s.add(resonator, padded_ge_readout_pulse)
             s.add(
                 qubit,
-                qx.pulse.Blank(readout_pulse.duration + waittime_after_readout_pulse),
+                qx.pulse.Blank(
+                    ge_readout_pulse.duration + waittime_after_readout_pulse
+                ),
             )
-            # MSG TO AI: このコメントアウトでは2状態しか準備できないので、state_idxに応じて適切な制御パルスを追加するコードを作成してください
-            # if state_idx == "e":
-            #     s.add(qubit, exp.drag_pi_pulse[qubit])
-            # else:
-            #     s.add(qubit, qx.pulse.Blank(exp.drag_pi_pulse[qubit].duration))
+            # The ladder is padded at the front, not the back, so that every
+            # prepared state has the same interval between its last pi pulse and
+            # the leakage-sensitive readout. Padding afterwards would let the
+            # lower states relax for longer and bias the assignment matrix.
+            s.add(
+                qubit,
+                qx.pulse.Blank(
+                    ladder_duration
+                    - sum(pulse.duration for pulse in ladder_pulses[:state_idx])
+                ),
+            )
+            for rung in range(state_idx):
+                if rung > 0:
+                    s.barrier(labels=barrier_labels)
+                s.add(ladder_labels[rung], ladder_pulses[rung])
+            s.barrier(labels=barrier_labels)
             s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
             s.barrier(labels=barrier_labels)
             s.add(resonator, padded_leakage_sensitive_readout_pulse)
@@ -117,7 +148,7 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
     return result
 
 
-def plot_post_selected_assignment_fidelity(
+def plot_post_selected_leakage_sensitive_assignment_fidelity(
     *,
     iq_data,
     classifier,
@@ -126,15 +157,14 @@ def plot_post_selected_assignment_fidelity(
     population_matrix,
     capture_sampling_period,
     alpha_scatter=0.01,
-    alpa_histogram=0.5,
     colors=STATE_TO_COLOR,
-    labels=STATE_TO_LABEL
+    labels=STATE_TO_LABEL,
 ):
     figures = dict()
     posterior_averaged_iq = dict()
     for w in ["before_post_selection", "after_post_selection"]:
         posterior_averaged_iq[w] = dict()
-        for s in ["g", "e"]:
+        for s in iq_data.keys():
             posterior_averaged_iq[w][s] = dict()
             for d in ["train", "test"]:
                 if w == "before_post_selection":
@@ -228,12 +258,19 @@ def plot_post_selected_assignment_fidelity(
         figures["population_matrix"][w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
+            prepared_states = list(population_matrix[w].keys())
             matrix = np.array(
-                # MSG TO AI: population_matrix[w][s_prepared][s_observed][d]の値を使って行列を作成してください。
+                [
+                    [
+                        population_matrix[w][s_prepared][s_observed][d]
+                        for s_observed in OBSERVED_STATES
+                    ]
+                    for s_prepared in prepared_states
+                ]
             )
-            im = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=1)
-            for i in range(2):
-                for j in range(2):
+            im = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=1, aspect="auto")
+            for i in range(len(prepared_states)):
+                for j in range(len(OBSERVED_STATES)):
                     ax.text(
                         j,
                         i,
@@ -242,13 +279,13 @@ def plot_post_selected_assignment_fidelity(
                         va="center",
                         color="black" if matrix[i, j] < 0.5 else "white",
                     )
-            ax.set_xticks([0, 1])
-            ax.set_yticks([0, 1])
-            ax.set_xticklabels(["|g>", "|e>"])
-            ax.set_yticklabels(["|g>", "|e>"])
+            ax.set_xticks(range(len(OBSERVED_STATES)))
+            ax.set_yticks(range(len(prepared_states)))
+            ax.set_xticklabels(OBSERVED_LABELS)
+            ax.set_yticklabels([labels[s] for s in prepared_states])
             ax.set_xlabel("Observed State")
             ax.set_ylabel("Prepared State")
-            title = f"Assignment Fidelity Matrix {w.replace('_', ' ')} ({d} set)"
+            title = f"Assignment matrix {w.replace('_', ' ')} ({d} set)"
             ax.set_title(title)
             fig.colorbar(im, ax=ax)
             plt.close(fig)
@@ -264,28 +301,32 @@ def _population_matrix(*, iq_data, classifier, post_selection):
     population_matrix[w] = dict()
     for s_prepared in iq_data.keys():
         population_matrix[w][s_prepared] = dict()
-        for s_observed in ["g", "e", "L"]:
+        for s_observed in OBSERVED_STATES:
             population_matrix[w][s_prepared][s_observed] = dict()
             for d in ["train", "test"]:
                 population_matrix[w][s_prepared][s_observed][d] = sum(
                     classifier.predict(iq_data[s_prepared]["posterior"][d])
-                    == (0 if s_observed == "g" else 1 if s_observed == "e" else 2)
+                    == OBSERVED_STATES.index(s_observed)
                 ) / len(iq_data[s_prepared]["posterior"][d])
     w = "after_post_selection"
     population_matrix[w] = dict()
     for s_prepared in iq_data.keys():
         population_matrix[w][s_prepared] = dict()
-        for s_observed in ["g", "e", "L"]:
+        for s_observed in OBSERVED_STATES:
             population_matrix[w][s_prepared][s_observed] = dict()
             for d in ["train", "test"]:
-                population_matrix[w][s_prepared][d] = sum(
-                    classifier.predict(iq_data[s_prepared]["posterior"][d][post_selection[s_prepared][d]])
-                    == (0 if s_observed == "g" else 1 if s_observed == "e" else 2)
+                population_matrix[w][s_prepared][s_observed][d] = sum(
+                    classifier.predict(
+                        iq_data[s_prepared]["posterior"][d][
+                            post_selection[s_prepared][d]
+                        ]
+                    )
+                    == OBSERVED_STATES.index(s_observed)
                 ) / sum(post_selection[s_prepared][d])
     return population_matrix
 
 
-def analyze_post_selected_assignment_fidelity(
+def analyze_post_selected_leakage_sensitive_assignment_fidelity(
     *, target, ge_classifier, run_result, n_train, n_test
 ):
     iq_data = {
@@ -300,6 +341,10 @@ def analyze_post_selected_assignment_fidelity(
         }
         for s in run_result.keys()
     }
+    # The herald classifier is pretrained on the ge readout and is applied only to
+    # the prior capture; the leakage classifier below is fit here and applied only
+    # to the posterior capture. Keeping the two apart avoids both a weight/sample
+    # length mismatch and circular heralding.
     post_selection = {
         s: {
             d: ge_classifier.predict(iq_data[s]["prior"][d]) == 0
@@ -307,11 +352,27 @@ def analyze_post_selected_assignment_fidelity(
         }
         for s in iq_data.keys()
     }
-    classifier = deepcopy(ge_classifier)
+    classifier = Classifier()
+    classifier.update_weight(
+        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+    )
+    # Exactly three fit groups, so that `predict` returns 0 for |g>, 1 for |e> and
+    # 2 for L. Merging every level from |f> up into L gives that class
+    # (max_level - 1) times as many training shots as |g> or |e>, which tilts the
+    # logistic-regression boundary towards L. The imbalance is deliberate: the
+    # reference experiment trains the same way.
     classifier.fit(
         [
-            iq_data[s]["posterior"]["train"][post_selection[s]["train"]]
-            for s in iq_data.keys()
+            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+            np.concatenate(
+                [
+                    iq_data[s]["posterior"]["train"][post_selection[s]["train"], :]
+                    for s in iq_data.keys()
+                    if s not in ["g", "e"]
+                ]
+            ),
         ]
     )
     post_selection_rate = {
@@ -348,7 +409,9 @@ def analyze_post_selected_assignment_fidelity(
     }
 
 
-def display_post_selected_assignment_fidelity(result: Result, plot: bool = True):
+def display_post_selected_leakage_sensitive_assignment_fidelity(
+    result: Result, plot: bool = True
+):
     try:
         from IPython.display import display
     except ImportError:
@@ -358,7 +421,7 @@ def display_post_selected_assignment_fidelity(result: Result, plot: bool = True)
         for fig in figures:
             display(fig)
 
-    def tiled_display(figures, n_cols=3):
+    def tiled_display(figures, n_cols=2):
         outputs = []
         for fig in figures:
             output = widgets.Output()
@@ -374,54 +437,41 @@ def display_post_selected_assignment_fidelity(result: Result, plot: bool = True)
         )
         display(grid)
 
+    population_matrix = result.data["population_matrix"]
+    post_selection_rate = result.data["post_selection_rate"]
     for w in ["before_post_selection", "after_post_selection"]:
         for d in ["train", "test"]:
             if plot:
                 figures_to_display = [
                     result.figures["td_iq"][w][d]["figure"],
                     result.figures["td_iq_distance"][w][d]["figure"],
-                    result.figures["td_separation"][w][d]["figure"],
                     result.figures["iq_scatter"][w][d]["figure"],
-                    result.figures["iq_histogram"][w][d]["figure"],
-                    result.figures["assignment_fidelity"][w][d]["figure"],
+                    result.figures["population_matrix"][w][d]["figure"],
                 ]
                 try:
                     import ipywidgets as widgets
 
-                    tiled_display(figures_to_display, n_cols=3)
+                    tiled_display(figures_to_display, n_cols=2)
                 except ImportError:
                     simple_display(figures_to_display)
             print(f"{w.replace('_', ' ')} ({d} set):")
-            print("Assignment fidelity")
-            for s in ["g", "e"]:
-                print(f"  |{s}>: {result.data['assignment_fidelity'][w][s][d]:.4f}")
-            print(f"  avg: {result.data['assignment_fidelity'][w]['avg'][d]:.4f}")
-            if w == "after_post_selection":
-                for s in ["g", "e"]:
-                    print(
-                        f"Post-selection rate |{s}>: {result.data['post_selection_rate'][s][d]:.4f}"
-                    )
-            snr = result.data["snr"][w][d]
-            print(f"SNR: {snr:.4f}")
-            print(
-                f"1-erfc(SNR/(2*sqrt(2)))/2: {1 - erfc(snr / (2 * np.sqrt(2))) / 2:.4f} "
-                "(equal-variance Gaussian, midpoint threshold)"
-            )
-            gaussian_fit_snr = result.data["weighted_signal_histogram"][
-                "gaussian_fit_snr"
-            ][w][d]
-            if gaussian_fit_snr is None:
-                print("Gaussian fit SNR: N/A (fit failed)")
-                print("1-erfc(Gaussian fit SNR/(2*sqrt(2)))/2: N/A (fit failed)")
-            else:
-                print(f"Gaussian fit SNR: {gaussian_fit_snr:.4f}")
-                print(
-                    "1-erfc(Gaussian fit SNR/(2*sqrt(2)))/2: "
-                    f"{1 - erfc(gaussian_fit_snr / (2 * np.sqrt(2))) / 2:.4f}"
+            print("Assignment matrix P(observed | prepared)")
+            print("  prepared |" + "".join(f"{o:>9}" for o in OBSERVED_LABELS))
+            for s_prepared in population_matrix[w].keys():
+                row = "".join(
+                    f"{population_matrix[w][s_prepared][s_observed][d]:9.4f}"
+                    for s_observed in OBSERVED_STATES
                 )
+                print(f"  {STATE_TO_LABEL[s_prepared]:>8} |" + row)
+            if w == "after_post_selection":
+                for s in post_selection_rate.keys():
+                    print(
+                        f"Post-selection rate {STATE_TO_LABEL[s]}: "
+                        f"{post_selection_rate[s][d]:.4f}"
+                    )
 
 
-def post_selected_assignment_fidelity_experiment(
+def post_selected_leakage_sensitive_assignment_fidelity_experiment(
     exp: qx.Experiment,
     *,
     target: str,
@@ -445,6 +495,11 @@ def post_selected_assignment_fidelity_experiment(
             "`readout_classifier` must contain the keys 'readout_pulse' and "
             f"'classifier' (missing: {sorted(missing_keys)})."
         )
+    if max_level < 2:
+        raise ValueError(
+            f"max_level must be at least 2 for leakage-sensitive assignment fidelity "
+            f"(got {max_level})."
+        )
     ge_readout_pulse = ge_readout_classifier["readout_pulse"]
     ge_classifier = ge_readout_classifier["classifier"]
     if leakage_sensitive_readout_pulse is None:
@@ -453,19 +508,15 @@ def post_selected_assignment_fidelity_experiment(
         exp.backend_controller.sampling_period_ns
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
     )
+    qubit = exp.ctx.qubits[target].label
+    _, ladder_pulses = _resolve_ladder(exp, qubit=qubit, max_level=max_level)
     _validate_readout_pulse_start_position(
-        exp,
-        target=target,
         ge_readout_duration=ge_readout_pulse.duration,
+        ladder_duration=sum(pulse.duration for pulse in ladder_pulses),
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
         capture_sampling_period=capture_sampling_period,
     )
-    if max_level < 2:
-        raise ValueError(
-            f"max_level must be at least 2 for leakage-sensitive assignment fidelity "
-            f"(got {max_level})."
-        )
     run_result = run_post_selected_leakage_sensitive_assignment_fidelity(
         exp,
         target=target,
@@ -481,7 +532,7 @@ def post_selected_assignment_fidelity_experiment(
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
     )
-    analyze_result = analyze_post_selected_assignment_fidelity(
+    analyze_result = analyze_post_selected_leakage_sensitive_assignment_fidelity(
         target=target,
         ge_classifier=ge_classifier,
         run_result=run_result,
@@ -494,7 +545,7 @@ def post_selected_assignment_fidelity_experiment(
     post_selection_rate = analyze_result["post_selection_rate"]
     posterior_weighted_signal = analyze_result["posterior_weighted_signal"]
     population_matrix = analyze_result["population_matrix"]
-    plot_result = plot_post_selected_assignment_fidelity(
+    plot_result = plot_post_selected_leakage_sensitive_assignment_fidelity(
         iq_data=iq_data,
         classifier=classifier,
         post_selection=post_selection,
@@ -502,7 +553,6 @@ def post_selected_assignment_fidelity_experiment(
         population_matrix=population_matrix,
         capture_sampling_period=capture_sampling_period,
         alpha_scatter=0.05,
-        alpa_histogram=0.5,
         colors=STATE_TO_COLOR,
         labels=STATE_TO_LABEL,
     )
@@ -518,11 +568,12 @@ def post_selected_assignment_fidelity_experiment(
             "classifier": classifier,
             "post_selection": post_selection,
             "post_selection_rate": post_selection_rate,
+            "posterior_weighted_signal": posterior_weighted_signal,
             "population_matrix": population_matrix,
             "capture_sampling_period": capture_sampling_period,
         },
         figure=None,
         figures=figures,
     )
-    display_post_selected_assignment_fidelity(result, plot)
+    display_post_selected_leakage_sensitive_assignment_fidelity(result, plot)
     return result
