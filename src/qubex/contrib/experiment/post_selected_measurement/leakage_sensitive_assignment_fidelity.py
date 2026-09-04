@@ -14,9 +14,6 @@ __all__ = [
     "plot_post_selected_leakage_sensitive_assignment_fidelity",
 ]
 
-# The leakage-sensitive readout resolves three outcomes: |g>, |e>, and a single
-# merged leakage class L holding every level from |f> up. The order fixes the
-# integer labels the classifier returns.
 OBSERVED_STATES = ["g", "e", "L"]
 OBSERVED_LABELS = ["|g>", "|e>", "L"]
 
@@ -78,11 +75,6 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
     padded_ge_readout_pulse = ge_readout_pulse.padded(
         ge_readout_pulse.duration + exp.readout_post_margin
     )
-    # The heralding readout stays on the registered carrier, because the
-    # pretrained ge classifier is applied to it. Only M_leak is moved, and it is
-    # moved by detuning the waveform rather than by `frequencies=`, which would
-    # shift the whole schedule. Detuning before padding keeps the padding neutral:
-    # a `Blank` stays zero whatever phase it is given.
     padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.detuned(
         leakage_sensitive_readout_detuning
     ).padded(leakage_sensitive_readout_pulse.duration + exp.readout_post_margin)
@@ -90,9 +82,6 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
         exp, qubit=qubit, max_level=max_level
     )
     ladder_duration = sum(pulse.duration for pulse in ladder_pulses)
-    # Successive rungs are played on different channels, so they have to be
-    # serialized with barriers. The mux stays out of the set, as in the sibling
-    # experiment, so the barriers never truncate the pump tone.
     barrier_labels = [resonator, *ladder_labels]
     pump_duration = (
         padded_ge_readout_pulse.duration
@@ -122,10 +111,6 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
                     ge_readout_pulse.duration + waittime_after_readout_pulse
                 ),
             )
-            # The ladder is padded at the front, not the back, so that every
-            # prepared state has the same interval between its last pi pulse and
-            # the leakage-sensitive readout. Padding afterwards would let the
-            # lower states relax for longer and bias the assignment matrix.
             s.add(
                 qubit,
                 qx.pulse.Blank(
@@ -354,12 +339,6 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         }
         for s in run_result.keys()
     }
-    # M_leak is driven off the registered carrier but the capture still
-    # demodulates at it, so the posterior traces come back rotating at the
-    # detuning. Undo that here, before the matched filter and the classifier see
-    # them, so the traces read as the resonator response. The prior capture is
-    # left alone: the heralding readout was never moved. The raw traces survive
-    # untouched in the run payload.
     if leakage_sensitive_readout_detuning:
         n_samples = next(iter(iq_data.values()))["posterior"]["train"].shape[1]
         derotation = np.exp(
@@ -372,10 +351,6 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         for s in iq_data.keys():
             for d in ["train", "test"]:
                 iq_data[s]["posterior"][d] = iq_data[s]["posterior"][d] * derotation
-    # The herald classifier is pretrained on the ge readout and is applied only to
-    # the prior capture; the leakage classifier below is fit here and applied only
-    # to the posterior capture. Keeping the two apart avoids both a weight/sample
-    # length mismatch and circular heralding.
     post_selection = {
         s: {
             d: ge_classifier.predict(iq_data[s]["prior"][d]) == 0
@@ -388,11 +363,6 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
         iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
     )
-    # Exactly three fit groups, so that `predict` returns 0 for |g>, 1 for |e> and
-    # 2 for L. Merging every level from |f> up into L gives that class
-    # (max_level - 1) times as many training shots as |g> or |e>, which tilts the
-    # logistic-regression boundary towards L. The imbalance is deliberate: the
-    # reference experiment trains the same way.
     classifier.fit(
         [
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
@@ -542,8 +512,6 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
     )
     qubit = exp.ctx.qubits[target].label
     resonator = exp.ctx.resonators[target].label
-    # The schedule can only carry one demodulation frequency, so M_leak is placed
-    # by detuning it away from the carrier the readout target is registered with.
     if leakage_sensitive_readout_frequency is None:
         leakage_sensitive_readout_detuning = 0.0
     else:
