@@ -8,6 +8,15 @@ from scipy.optimize import curve_fit
 from scipy.special import erfc
 
 MIN_POST_SELECTED_SHOTS = 10
+STATE_TO_COLOR = {
+    "g": "blue",
+    "e": "red",
+    "f": "orange",
+    "h": "green",
+    "i": "purple",
+    "j": "pink",
+}
+STATE_TO_LABEL = {k: f"|{k}>" for k in STATE_TO_COLOR.keys()}
 
 __all__ = [
     "post_selected_assignment_fidelity_experiment",
@@ -100,12 +109,15 @@ class Classifier:
             )
         self.weight = self.weight / norm
 
-    def fit(self, iq_data_g, iq_data_e):
-        signal_g = self.weighted_signal(iq_data_g)
-        signal_e = self.weighted_signal(iq_data_e)
-        train_data = np.concatenate([signal_g, signal_e])
+    def fit(self, iq_data_list):
+        train_data = np.concatenate(
+            [self.weighted_signal(iq_data) for iq_data in iq_data_list]
+        )
         train_label = np.concatenate(
-            [np.zeros(len(signal_g), dtype=int), np.ones(len(signal_e), dtype=int)]
+            [
+                np.full(len(iq_data), i, dtype=int)
+                for i, iq_data in enumerate(iq_data_list)
+            ]
         )
         self.model.fit(self.expand_complex_feature(train_data), train_label)
 
@@ -192,8 +204,8 @@ def plot_post_selected_assignment_fidelity(
     capture_sampling_period,
     alpha_scatter=0.01,
     alpa_histogram=0.5,
-    colors={"g": "blue", "e": "red"},
-    labels={"g": "|g>", "e": "|e>"},
+    colors=STATE_TO_COLOR,
+    labels=STATE_TO_LABEL,
 ):
     figures = dict()
     posterior_averaged_iq = dict()
@@ -422,8 +434,10 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
             iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
         )
         classifier.fit(
-            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+            [
+                iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+                iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+            ]
         )
         post_selection_prev = {s: post_selection[s]["train"] for s in ["g", "e"]}
         for s in ["g", "e"]:
@@ -450,8 +464,10 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
         iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
     )
     classifier.fit(
-        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+        [
+            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+        ]
     )
     for s in ["g", "e"]:
         post_selection[s]["test"] = classifier.predict(iq_data[s]["prior"]["test"]) == 0
@@ -744,8 +760,8 @@ def post_selected_assignment_fidelity_experiment(
         capture_sampling_period=capture_sampling_period,
         alpha_scatter=0.05,
         alpa_histogram=0.5,
-        colors={"g": "blue", "e": "red"},
-        labels={"g": "|g>", "e": "|e>"},
+        colors=STATE_TO_COLOR,
+        labels=STATE_TO_LABEL,
     )
     figures = plot_result["figures"]
     result = Result(
