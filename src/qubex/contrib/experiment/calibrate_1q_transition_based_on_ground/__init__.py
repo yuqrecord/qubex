@@ -161,6 +161,7 @@ from .chevron_pattern_based_on_ground import (
 )
 from .measure_dispersive_shift_extended import (
     analyze_measure_dispersive_shift_extended,
+    apply_electrical_delay,
     display_measure_dispersive_shift_extended,
     measure_dispersive_shift_extended,
     plot_measure_dispersive_shift_extended,
@@ -182,6 +183,7 @@ __all__ = [
     "analyze_chevron_pattern_based_on_ground",
     "analyze_measure_dispersive_shift_extended",
     "analyze_obtain_rabi_params_based_on_ground",
+    "apply_electrical_delay",
     "calibrate_drag_hpi_pulse_based_on_ground",
     "calibrate_drag_pi_pulse_based_on_ground",
     "calibrate_hpi_pulse_based_on_ground",

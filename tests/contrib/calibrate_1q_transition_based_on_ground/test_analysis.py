@@ -1008,3 +1008,121 @@ def test_readout_scan_raises_when_no_point_is_usable() -> None:
         analyze_measure_dispersive_shift_extended(
             run_result=_readout_scan_run_result(signals=signals)
         )
+
+
+def test_readout_scan_corrects_the_signals_by_the_electrical_delay() -> None:
+    """Given a delay, when analyzed, then the corrected signals de-embed it."""
+    n_points = 13
+    tau = 250.0
+    signals = _phasors(np.zeros((2, n_points)))
+    run_result = _readout_scan_run_result(signals=signals)
+    run_result["electrical_delay"] = tau
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    frequencies = run_result["frequency_range"]
+    assert np.allclose(
+        data["corrected_signals"],
+        signals * np.exp(2j * np.pi * frequencies * tau),
+    )
+    # The raw signals survive beside the corrected ones.
+    assert np.array_equal(data["signals"], signals)
+
+
+def test_readout_scan_leaves_the_signals_alone_at_zero_delay() -> None:
+    """Given no delay, when analyzed, then corrected and raw agree exactly."""
+    rng = np.random.default_rng(4)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(2, 9)))
+
+    data = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+
+    assert np.array_equal(data["corrected_signals"], signals)
+
+
+def test_readout_scan_de_embeds_the_cable_from_the_absolute_phase() -> None:
+    """Given a cable ramp, when corrected, then the absolute phase goes flat."""
+    n_points = 41
+    frequencies = np.linspace(10.0, 10.01, n_points)
+    tau = 300.0
+    offsets = (0.0, 0.4)
+    # A flat resonator response seen through a long cable.
+    signals = np.stack(
+        [
+            np.exp(1j * offset) * np.exp(-2j * np.pi * frequencies * tau)
+            for offset in offsets
+        ]
+    )
+    run_result = _readout_scan_run_result(
+        signals=signals,
+        frequency_range=frequencies,
+    )
+
+    uncorrected = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    corrected = analyze_measure_dispersive_shift_extended(
+        run_result={**run_result, "electrical_delay": tau}
+    )
+
+    # Without the correction the trace winds through many turns.
+    winding = uncorrected["absolute_phases"][0]
+    assert abs(winding[-1] - winding[0]) > 2 * np.pi
+    # With it, only the constant the resonator set is left.
+    flat = corrected["absolute_phases"]
+    assert np.allclose(flat[0], flat[0][0])
+    assert np.allclose(flat[1] - flat[0], offsets[1] - offsets[0])
+
+
+def test_readout_scan_optimum_does_not_move_with_the_electrical_delay() -> None:
+    """Given any delay, when analyzed, then neither metric changes at all."""
+    rng = np.random.default_rng(5)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, 17)))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    delayed = analyze_measure_dispersive_shift_extended(
+        run_result={**run_result, "electrical_delay": 137.0}
+    )
+
+    for left, right in zip(plain["subsets"], delayed["subsets"], strict=True):
+        # The metrics come from the raw signals, so this is exact, not close.
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["optimal_phase_separation"] == right["optimal_phase_separation"]
+        assert np.array_equal(left["phase_separation"], right["phase_separation"])
+        assert np.array_equal(left["distance_separation"], right["distance_separation"])
+
+
+def test_readout_scan_analysis_is_idempotent() -> None:
+    """Given an analyzed payload, when analyzed again, then nothing changes."""
+    rng = np.random.default_rng(6)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, 15)))
+    run_result = {
+        **_readout_scan_run_result(signals=signals),
+        "electrical_delay": 90.0,
+    }
+
+    once = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    twice = analyze_measure_dispersive_shift_extended(run_result=once)
+
+    for key in (
+        "signals",
+        "corrected_signals",
+        "phases",
+        "absolute_phases",
+        "relative_phases",
+        "amplitudes",
+        "valid_mask",
+    ):
+        assert np.array_equal(once[key], twice[key]), key
+    for left, right in zip(once["subsets"], twice["subsets"], strict=True):
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["limiting_pair"] == right["limiting_pair"]
+
+
+def test_readout_scan_requires_the_electrical_delay_to_be_present() -> None:
+    """Given a payload without the key, when analyzed, then it says so."""
+    run_result = _readout_scan_run_result(signals=_phasors(np.zeros((2, 5))))
+    del run_result["electrical_delay"]
+
+    with pytest.raises(KeyError, match="electrical_delay"):
+        analyze_measure_dispersive_shift_extended(run_result=run_result)

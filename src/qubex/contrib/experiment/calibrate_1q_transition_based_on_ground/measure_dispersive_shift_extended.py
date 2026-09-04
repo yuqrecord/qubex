@@ -67,11 +67,21 @@ Assumptions and caveats
 - Phase is meaningless where the response vanishes, so a frequency at which any
   level drops below `MIN_AMPLITUDE_FRACTION` of the scan's median amplitude is
   dropped from the search. Such points are still plotted.
-- The cable delay is a common factor `exp(-2 pi i f tau)` at a given frequency,
-  so it cancels exactly from both metrics and is never measured here. The
-  optional `electrical_delay` only straightens the frequency-wise trajectories
-  for the eye. Drift *between* the per-level acquisitions does not cancel; run
-  with `alternate_state_order=True` to expose it.
+- The cable delay is a factor common to every level at a given frequency, so it
+  cancels exactly from both metrics: correcting for it cannot move an optimum.
+  What it does change is the traces, where it is the whole difference between
+  reading the cable and reading the resonator. Both are therefore kept - the raw
+  `"signals"` and the de-embedded `"corrected_signals"` - and the delay can be
+  applied after the fact, without measuring again, through
+  `apply_electrical_delay`.
+- The delay is never measured here, deliberately.
+  `Experiment.measure_electrical_delay` resets the AWG and capture units of the
+  readout box on a path that its public signature cannot suppress, and its
+  `confirm` defaults to True, which blocks on stdin. Neither belongs inside an
+  experiment that promises not to touch hardware on its own. Measure it
+  explicitly instead, and pass or apply the value.
+- Drift *between* the per-level acquisitions does not cancel the way the cable
+  delay does; run with `alternate_state_order=True` to expose it.
 - The sweep has to stay inside the readout NCO window, 250 MHz around the
   channel's fine frequency. A wider scan needs the LO and CNCO retuning that
   `Experiment.scan_resonator_frequencies` does.
@@ -103,6 +113,7 @@ from . import _core
 
 __all__ = [
     "analyze_measure_dispersive_shift_extended",
+    "apply_electrical_delay",
     "display_measure_dispersive_shift_extended",
     "measure_dispersive_shift_extended",
     "plot_measure_dispersive_shift_extended",
@@ -614,9 +625,6 @@ def run_measure_dispersive_shift_extended(
                 )
                 signals[level, index] = _extract_signal(result, qubit=qubit)
 
-    if electrical_delay:
-        signals = signals * np.exp(2j * np.pi * frequencies * electrical_delay)
-
     return {
         "target": qubit,
         "qubit": qubit,
@@ -676,17 +684,28 @@ def analyze_measure_dispersive_shift_extended(
     center_frequency = float(run_result["center_frequency"])
     max_level = int(run_result["max_level"])
     state_labels = tuple(run_result["state_labels"])
+    # Read rather than defaulted: a payload without this key did not come from
+    # `run_`, and quietly leaving the data un-corrected would hide the mistake.
+    electrical_delay = float(run_result["electrical_delay"])
+
+    # The delay is a factor common to every level at a given frequency, so it
+    # cancels from both metrics exactly and the optimum cannot move. It is
+    # de-embedded for the traces and the trajectories, where it is the whole
+    # difference between reading the cable and reading the resonator. The raw
+    # signals are kept beside the corrected ones.
+    corrected_signals = signals * np.exp(2j * np.pi * frequencies * electrical_delay)
 
     amplitudes = np.abs(signals)
     phases = np.angle(signals)
-    # The phase of each level as measured, made continuous along the frequency
-    # axis. It still carries the common cable-delay slope, which is exactly what
-    # separates it from the relative phase below.
-    absolute_phases = np.unwrap(phases, axis=1)
-    # The ground state is the reference, so that common slope drops out;
-    # unwrapping the relative phase directly is more robust than unwrapping each
-    # level and subtracting afterwards.
-    relative_phases = np.unwrap(np.angle(signals * np.conj(signals[0])), axis=1)
+    # The phase of each level as the de-embedded resonator shows it, made
+    # continuous along the frequency axis.
+    absolute_phases = np.unwrap(np.angle(corrected_signals), axis=1)
+    # The ground state is the reference, so the common slope drops out either
+    # way; unwrapping the relative phase directly is more robust than unwrapping
+    # each level and subtracting afterwards.
+    relative_phases = np.unwrap(
+        np.angle(corrected_signals * np.conj(corrected_signals[0])), axis=1
+    )
 
     finite = np.isfinite(signals)
     usable = amplitudes[finite]
@@ -750,6 +769,7 @@ def analyze_measure_dispersive_shift_extended(
 
     return {
         **run_result,
+        "corrected_signals": corrected_signals,
         "phases": phases,
         "absolute_phases": absolute_phases,
         "relative_phases": relative_phases,
@@ -782,7 +802,8 @@ def plot_measure_dispersive_shift_extended(
     qubit = data["qubit"]
     frequencies = np.asarray(data["frequency_range"], dtype=np.float64)
     state_labels = tuple(data["state_labels"])
-    signals = np.asarray(data["signals"], dtype=np.complex128)
+    corrected_signals = np.asarray(data["corrected_signals"], dtype=np.complex128)
+    electrical_delay = float(data["electrical_delay"])
     absolute_phases = np.asarray(data["absolute_phases"], dtype=np.float64)
     relative_phases = np.asarray(data["relative_phases"], dtype=np.float64)
     amplitudes = np.asarray(data["amplitudes"], dtype=np.float64)
@@ -802,6 +823,17 @@ def plot_measure_dispersive_shift_extended(
         state_labels=state_labels,
         values=relative_phases,
     )
+    if electrical_delay:
+        absolute_phase_figure.update_layout(
+            title=dict(
+                text=f"Readout phase of the level ladder : {qubit}",
+                subtitle=dict(
+                    text=f"electrical delay {electrical_delay:.4g} ns de-embedded",
+                    font=dict(size=13, family="monospace"),
+                ),
+            ),
+            margin=dict(t=80),
+        )
     for figure in (absolute_phase_figure, phase_figure):
         for subset in subsets:
             figure.add_vline(
@@ -841,7 +873,10 @@ def plot_measure_dispersive_shift_extended(
             values=amplitudes,
         ),
         "iq": viz.make_iq_scatter_figure(
-            {f"|{label}>": signals[level] for level, label in enumerate(state_labels)},
+            {
+                f"|{label}>": corrected_signals[level]
+                for level, label in enumerate(state_labels)
+            },
             mode="lines+markers",
             title=f"Readout response : {qubit}",
             xlabel="I (arb. units)",
@@ -887,6 +922,7 @@ def display_measure_dispersive_shift_extended(
         f"{frequencies.size} points"
     )
     print(f"  readout amplitude   : {data['readout_amplitude']:.9g}")
+    print(f"  electrical delay    : {data['electrical_delay']:.4g} ns")
     print(f"  shots               : {data['n_shots']}")
     print(f"  usable points       : {int(np.count_nonzero(valid))} / {valid.size}")
 
@@ -1093,4 +1129,93 @@ def measure_dispersive_shift_extended(
             {f"{payload['target']}:{name}": fig for name, fig in target_figures.items()}
         )
 
+    return Result(data=data, figures=figures)
+
+
+def apply_electrical_delay(
+    result: Result,
+    electrical_delay: Mapping[str, float] | float,
+) -> Result:
+    """
+    Re-derive a finished readout scan with a different cable delay.
+
+    The delay is a factor common to every level at a given frequency, so it
+    cancels from both metrics and no optimum can move. It is worth applying all
+    the same: it is the whole difference between a phase trace that shows the
+    cable winding through several turns and one that shows the resonator. Since
+    nothing about it needs the hardware, it is applied afterwards rather than
+    chosen before the sweep, and a delay can be tried, looked at and replaced
+    without paying for the acquisition again.
+
+    The scan itself never measures the delay - see the module docstring for why -
+    so obtain it explicitly. `confirm=False` matters: the default blocks on
+    stdin whenever the sweep sits far enough from the readout NCO::
+
+        result = measure_dispersive_shift_extended(exp, targets="Q00", max_level=3)
+        tau = exp.measure_electrical_delay("Q00", plot=False, confirm=False)
+        result = apply_electrical_delay(result, tau)
+
+    Parameters
+    ----------
+    result : Result
+        Result returned by `measure_dispersive_shift_extended`. It is not
+        modified.
+    electrical_delay : Mapping[str, float] | float
+        Cable delay in ns, one value per qubit label or one shared by every
+        qubit. Readout lines differ, so a mapping is accepted. `0.0` removes a
+        correction that was applied earlier.
+
+    Returns
+    -------
+    Result
+        A new `Result` whose payloads and figures are re-derived at the given
+        delay. A target whose analysis had failed is passed through untouched,
+        carrying its original `"error"`: there is nothing to re-derive, and the
+        delay could not have changed the outcome anyway.
+    """
+    qubits = list(result.data)
+    resolved = _resolve_per_qubit(
+        qubits=qubits,
+        values=electrical_delay,
+        # Unreachable: `electrical_delay` is required, so the default is never
+        # consulted. It is spelled out because the resolver takes one.
+        default=lambda _qubit: 0.0,
+        name="electrical_delay",
+    )
+    for qubit, delay in resolved.items():
+        if not np.isfinite(delay):
+            raise ValueError(
+                f"`electrical_delay` for {qubit!r} must be a finite number, "
+                f"got {delay!r}."
+            )
+
+    original_figures = dict(result.figures or {})
+    data: dict[str, Any] = {}
+    figures: dict[str, go.Figure] = {}
+    for qubit in qubits:
+        payload = result.data[qubit]
+        if "error" in payload:
+            data[qubit] = payload
+            figures.update(
+                {
+                    key: figure
+                    for key, figure in original_figures.items()
+                    if key.startswith(f"{qubit}:")
+                }
+            )
+            continue
+        analyzed = analyze_measure_dispersive_shift_extended(
+            run_result={**payload, "electrical_delay": resolved[qubit]},
+            min_amplitude_fraction=payload["min_amplitude_fraction"],
+            min_resolved_separation=payload["min_resolved_separation"],
+        )
+        data[qubit] = analyzed
+        figures.update(
+            {
+                f"{qubit}:{name}": figure
+                for name, figure in plot_measure_dispersive_shift_extended(
+                    analyzed
+                ).items()
+            }
+        )
     return Result(data=data, figures=figures)

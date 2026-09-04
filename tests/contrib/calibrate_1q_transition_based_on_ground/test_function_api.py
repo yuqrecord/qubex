@@ -18,6 +18,10 @@ ENTRY_POINTS = (
 
 STAGE_PREFIXES = ("run_", "analyze_", "plot_", "display_")
 
+#: Public names that are not an entry point and not a stage of one. They are
+#: declared here so the export surface stays pinned rather than open-ended.
+EXTRA_EXPORTS = ("apply_electrical_delay",)
+
 
 def test_entry_points_are_exported_from_contrib() -> None:
     """Given the contrib package, when imported, then the entry points exist."""
@@ -36,6 +40,15 @@ def test_entry_points_are_exported_from_experiment() -> None:
 def test_all_stage_functions_are_exported_from_the_package() -> None:
     """Given the package, when imported, then every run/analyze/plot/display exists."""
     expected = {f"{prefix}{name}" for prefix in STAGE_PREFIXES for name in ENTRY_POINTS}
-    assert expected | set(ENTRY_POINTS) == set(package.__all__)
+    assert expected | set(ENTRY_POINTS) | set(EXTRA_EXPORTS) == set(package.__all__)
     for name in package.__all__:
         assert callable(getattr(package, name))
+
+
+def test_extra_exports_are_reachable_from_every_tier() -> None:
+    """Given a non-entry-point export, when imported, then all three tiers agree."""
+    for name in EXTRA_EXPORTS:
+        assert getattr(contrib, name) is getattr(package, name)
+        assert getattr(contrib_experiment, name) is getattr(package, name)
+        assert name in contrib.__all__
+        assert name in contrib_experiment.__all__

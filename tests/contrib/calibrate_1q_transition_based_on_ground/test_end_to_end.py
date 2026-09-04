@@ -12,6 +12,7 @@ import pytest
 
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
+    apply_electrical_delay,
     calibrate_drag_hpi_pulse_based_on_ground,
     calibrate_drag_pi_pulse_based_on_ground,
     calibrate_hpi_pulse_based_on_ground,
@@ -21,6 +22,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     obtain_rabi_params_based_on_ground,
     run_chevron_pattern_based_on_ground,
 )
+from qubex.experiment.models import Result
 from qubex.system.transition import TRANSITION_NAMES
 
 from .conftest import CONTROL_AMPLITUDE, DISPERSIVE_SHIFT, READOUT_FREQUENCY
@@ -1366,3 +1368,144 @@ def test_readout_scan_rejects_a_level_outside_the_ladder(
         _readout_scan(exp, max_level=max_level)
 
     assert exp.measure_calls == []
+
+
+DELAY = 250.0
+
+
+def test_apply_electrical_delay_rederives_without_touching_hardware(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a finished scan, when a delay is applied, then nothing is measured."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    acquisitions = len(exp.measure_calls)
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    assert len(exp.measure_calls) == acquisitions
+    payload = updated.data[QUBIT]
+    assert payload["electrical_delay"] == DELAY
+    assert np.allclose(
+        payload["corrected_signals"],
+        payload["signals"] * np.exp(2j * np.pi * payload["frequency_range"] * DELAY),
+    )
+    assert set(updated.figures or {}) == set(result.figures or {})
+
+
+def test_apply_electrical_delay_leaves_the_original_result_alone(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a result, when a delay is applied, then the input is not modified."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+    before = np.array(result.data[QUBIT]["corrected_signals"], copy=True)
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    assert result.data[QUBIT]["electrical_delay"] == 0.0
+    assert np.array_equal(result.data[QUBIT]["corrected_signals"], before)
+    assert updated.data[QUBIT] is not result.data[QUBIT]
+
+
+def test_apply_electrical_delay_does_not_move_the_optimum(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a delay, when applied, then every reported optimum is unchanged."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    for left, right in zip(
+        result.data[QUBIT]["subsets"],
+        updated.data[QUBIT]["subsets"],
+        strict=True,
+    ):
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["optimal_phase_separation"] == right["optimal_phase_separation"]
+        assert (
+            left["optimal_frequency_by_distance"]
+            == right["optimal_frequency_by_distance"]
+        )
+
+
+def test_apply_electrical_delay_takes_one_value_per_qubit(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a mapping, when applied, then each qubit gets its own delay."""
+    exp = readout_scan_experiment_factory(max_level=1, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=1)
+
+    updated = apply_electrical_delay(result, {QUBIT: 100.0, QUBIT_2: 200.0})
+
+    assert updated.data[QUBIT]["electrical_delay"] == 100.0
+    assert updated.data[QUBIT_2]["electrical_delay"] == 200.0
+
+
+def test_apply_electrical_delay_rejects_an_incomplete_mapping(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a mapping missing a qubit, when applied, then it raises."""
+    exp = readout_scan_experiment_factory(max_level=1, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=1)
+
+    with pytest.raises(ValueError, match="has no entry for"):
+        apply_electrical_delay(result, {QUBIT: 100.0})
+
+
+def test_apply_electrical_delay_rejects_a_non_finite_delay(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a non-finite delay, when applied, then it raises."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        apply_electrical_delay(result, float("nan"))
+
+
+def test_apply_electrical_delay_is_idempotent(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given the same delay twice, when applied, then the result is unchanged."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+
+    once = apply_electrical_delay(result, DELAY)
+    twice = apply_electrical_delay(once, DELAY)
+
+    assert np.array_equal(
+        once.data[QUBIT]["corrected_signals"],
+        twice.data[QUBIT]["corrected_signals"],
+    )
+    assert np.array_equal(
+        once.data[QUBIT]["absolute_phases"],
+        twice.data[QUBIT]["absolute_phases"],
+    )
+
+
+def test_apply_electrical_delay_can_be_undone_with_zero(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a corrected result, when zero is applied, then the raw data is back."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+
+    restored = apply_electrical_delay(apply_electrical_delay(result, DELAY), 0.0)
+
+    assert np.array_equal(
+        restored.data[QUBIT]["corrected_signals"],
+        restored.data[QUBIT]["signals"],
+    )
+
+
+def test_apply_electrical_delay_passes_a_failed_target_through() -> None:
+    """Given a target whose analysis failed, when applied, then it is untouched."""
+    error = ValueError("the analysis never got there")
+    result = Result(data={QUBIT: {"target": QUBIT, "error": error}}, figures={})
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    assert updated.data[QUBIT]["error"] is error
+    assert "corrected_signals" not in updated.data[QUBIT]
