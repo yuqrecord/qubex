@@ -135,6 +135,9 @@ from .experiment.post_selected_measurement.leakage_sensitive_assignment_fidelity
 from .experiment.post_selected_measurement.quantum_efficiency import (
     post_selected_quantum_efficiency_experiment,
 )
+from .experiment.post_selected_measurement.mist_benchmarking import (
+    mist_benchmarking_experiment,
+)
 
 from .experiment.ac_stark_spectroscopy import ac_stark_spectroscopy
 
@@ -231,4 +234,5 @@ __all__ = [
     "post_selected_assignment_fidelity_experiment",
     "post_selected_leakage_sensitive_assignment_fidelity_experiment",
     "post_selected_quantum_efficiency_experiment",
+    "mist_benchmarking_experiment",
 ]

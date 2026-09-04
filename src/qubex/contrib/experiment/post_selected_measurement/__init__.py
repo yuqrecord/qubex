@@ -10,3 +10,6 @@ from .qnd_fidelity import (
 from .leakage_sensitive_assignment_fidelity import (
     post_selected_leakage_sensitive_assignment_fidelity_experiment,
 )
+from .mist_benchmarking import (
+    mist_benchmarking_experiment,
+)

@@ -121,6 +121,9 @@ from .post_selected_measurement.leakage_sensitive_assignment_fidelity import (
 from .post_selected_measurement.quantum_efficiency import (
     post_selected_quantum_efficiency_experiment,
 )
+from .post_selected_measurement.mist_benchmarking import (
+    mist_benchmarking_experiment,
+)
 from .post_selected_measurement.qnd_fidelity import (
     qnd_fidelity_experiment,
 )
@@ -215,5 +218,6 @@ __all__ = [
     "post_selected_assignment_fidelity_experiment",
     "post_selected_leakage_sensitive_assignment_fidelity_experiment",
     "post_selected_quantum_efficiency_experiment",
+    "mist_benchmarking_experiment",
     "qnd_fidelity_experiment",
 ]
