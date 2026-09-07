@@ -12,16 +12,20 @@ import pytest
 
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
+    apply_electrical_delay,
     calibrate_drag_hpi_pulse_based_on_ground,
     calibrate_drag_pi_pulse_based_on_ground,
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
     chevron_pattern_based_on_ground,
+    measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
     run_chevron_pattern_based_on_ground,
 )
+from qubex.experiment.models import Result
+from qubex.system.transition import TRANSITION_NAMES
 
-from .conftest import CONTROL_AMPLITUDE
+from .conftest import CONTROL_AMPLITUDE, DISPERSIVE_SHIFT, READOUT_FREQUENCY
 
 QUBIT = "Q00"
 QUBIT_2 = "Q01"
@@ -1167,3 +1171,341 @@ def test_a_non_finite_beta_is_rejected(
 
     with pytest.raises(ValueError, match="must be a finite number"):
         _run_drag_with_beta(exp, beta=float("nan"))
+
+
+READOUT_DF = 0.0001
+READOUT_WIDTH = 0.01
+
+
+def _readout_scan(
+    experiment: Any,
+    *,
+    max_level: int,
+    **kwargs: Any,
+) -> Any:
+    """Run a readout scan with a fine grid and no figures shown."""
+    kwargs.setdefault("frequency_width", READOUT_WIDTH)
+    kwargs.setdefault("df", READOUT_DF)
+    return measure_dispersive_shift_extended(
+        experiment,
+        max_level=max_level,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+        **kwargs,
+    )
+
+
+def test_readout_scan_finds_the_frequency_between_two_levels(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two levels, when scanned, then the optimum sits between them."""
+    exp = readout_scan_experiment_factory(max_level=1)
+
+    result = _readout_scan(exp, max_level=1)
+
+    subset = result.data[QUBIT]["subsets"][0]
+    midpoint = READOUT_FREQUENCY + DISPERSIVE_SHIFT / 2
+    assert subset["name"] == "ge"
+    assert subset["limiting_pair"] == (0, 1)
+    assert subset["resolved"]
+    assert abs(subset["optimal_frequency"] - midpoint) <= READOUT_DF
+
+
+def test_readout_scan_reports_one_optimum_per_nested_subset(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a three-rung ladder, when scanned, then every subset is reported."""
+    exp = readout_scan_experiment_factory(max_level=3)
+
+    result = _readout_scan(exp, max_level=3)
+
+    payload = result.data[QUBIT]
+    assert "error" not in payload
+    assert [subset["name"] for subset in payload["subsets"]] == ["ge", "gef", "gefh"]
+    assert payload["signals"].shape == (4, payload["frequency_range"].size)
+    assert set(result.figures) == {
+        f"{QUBIT}:{name}"
+        for name in (
+            "absolute_phase",
+            "phase",
+            "phase_separation",
+            "distance_separation",
+            "amplitude",
+            "iq",
+        )
+    }
+
+
+def test_readout_scan_measures_every_level_at_every_frequency(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a scan, when run, then each level is acquired once per frequency."""
+    exp = readout_scan_experiment_factory(max_level=2)
+
+    result = _readout_scan(exp, max_level=2)
+
+    n_points = result.data[QUBIT]["frequency_range"].size
+    assert len(exp.measure_calls) == 3 * n_points
+    assert all(call["mode"] == "avg" for call in exp.measure_calls)
+    assert all(call["n_shots"] == N_SHOTS for call in exp.measure_calls)
+    assert all(not call["reset_awg_and_capunits"] for call in exp.measure_calls)
+
+
+def test_readout_scan_leaves_the_hardware_alone_by_default(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given no request, when scanned, then the AWG is not reset."""
+    exp = readout_scan_experiment_factory(max_level=1)
+
+    _readout_scan(exp, max_level=1)
+
+    assert exp.ctx.reset_calls == []
+
+
+def test_readout_scan_resets_the_hardware_once_when_asked(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given the flag, when scanned, then the AWG is reset once per target."""
+    exp = readout_scan_experiment_factory(max_level=1)
+
+    _readout_scan(exp, max_level=1, reset_awg_and_capunits=True)
+
+    assert exp.ctx.reset_calls == [(QUBIT,)]
+
+
+def test_readout_scan_alternates_the_level_order_when_asked(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given the flag, when scanned, then the level order flips every point."""
+    exp = readout_scan_experiment_factory(max_level=2)
+
+    result = _readout_scan(exp, max_level=2, alternate_state_order=True)
+
+    order = result.data[QUBIT]["acquisition_order"]
+    assert order[0] == (0, 1, 2)
+    assert order[1] == (2, 1, 0)
+    assert order[2] == (0, 1, 2)
+
+
+def test_readout_scan_sweeps_a_given_range_in_the_order_given(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an explicit range, when scanned, then it is used and not sorted."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    given = [10.003, 10.001, 10.002]
+
+    result = _readout_scan(exp, max_level=1, frequency_range=given)
+
+    assert np.array_equal(result.data[QUBIT]["frequency_range"], given)
+
+
+def test_readout_scan_refuses_a_sweep_outside_the_tuning_window(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given too wide a sweep, when scanned, then it raises before measuring."""
+    exp = readout_scan_experiment_factory(max_level=1)
+
+    with pytest.raises(ValueError, match="tuning window"):
+        _readout_scan(exp, max_level=1, frequency_width=0.8, df=0.01)
+
+    assert exp.measure_calls == []
+
+
+def test_readout_scan_refuses_an_uncalibrated_rung_before_measuring(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a missing pi pulse, when scanned, then it raises before measuring."""
+    exp = readout_scan_experiment_factory(
+        max_level=2,
+        qubits=[QUBIT, QUBIT_2],
+        calibrated_qubits=[QUBIT],
+    )
+
+    with pytest.raises(ValueError, match="Pi pulses are not calibrated"):
+        _readout_scan(exp, max_level=2)
+
+    assert exp.measure_calls == []
+
+
+def test_readout_scan_refuses_an_unregistered_rung_before_measuring(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a missing target, when scanned, then it raises before measuring."""
+    exp = readout_scan_experiment_factory(max_level=1)
+
+    with pytest.raises(ValueError, match="not registered"):
+        _readout_scan(exp, max_level=2, targets=QUBIT)
+
+    assert exp.measure_calls == []
+
+
+def test_readout_scan_keys_the_result_by_qubit_label(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given several qubits, when scanned, then each is keyed by its own label."""
+    exp = readout_scan_experiment_factory(max_level=1, qubits=[QUBIT, QUBIT_2])
+
+    result = _readout_scan(exp, max_level=1)
+
+    assert set(result.data) == {QUBIT, QUBIT_2}
+    for qubit in (QUBIT, QUBIT_2):
+        assert result.data[qubit]["qubit"] == qubit
+        assert result.data[qubit]["read_label"] == f"R{qubit}"
+        assert f"{qubit}:phase" in result.figures
+
+
+@pytest.mark.parametrize("max_level", [0, len(TRANSITION_NAMES) + 1])
+def test_readout_scan_rejects_a_level_outside_the_ladder(
+    readout_scan_experiment_factory: Callable[..., Any],
+    max_level: int,
+) -> None:
+    """Given an impossible level, when scanned, then it raises before measuring."""
+    exp = readout_scan_experiment_factory(max_level=1)
+
+    with pytest.raises(ValueError, match="`max_level` must lie in"):
+        _readout_scan(exp, max_level=max_level)
+
+    assert exp.measure_calls == []
+
+
+DELAY = 250.0
+
+
+def test_apply_electrical_delay_rederives_without_touching_hardware(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a finished scan, when a delay is applied, then nothing is measured."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    acquisitions = len(exp.measure_calls)
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    assert len(exp.measure_calls) == acquisitions
+    payload = updated.data[QUBIT]
+    assert payload["electrical_delay"] == DELAY
+    assert np.allclose(
+        payload["corrected_signals"],
+        payload["signals"] * np.exp(2j * np.pi * payload["frequency_range"] * DELAY),
+    )
+    assert set(updated.figures or {}) == set(result.figures or {})
+
+
+def test_apply_electrical_delay_leaves_the_original_result_alone(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a result, when a delay is applied, then the input is not modified."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+    before = np.array(result.data[QUBIT]["corrected_signals"], copy=True)
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    assert result.data[QUBIT]["electrical_delay"] == 0.0
+    assert np.array_equal(result.data[QUBIT]["corrected_signals"], before)
+    assert updated.data[QUBIT] is not result.data[QUBIT]
+
+
+def test_apply_electrical_delay_does_not_move_the_optimum(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a delay, when applied, then every reported optimum is unchanged."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    for left, right in zip(
+        result.data[QUBIT]["subsets"],
+        updated.data[QUBIT]["subsets"],
+        strict=True,
+    ):
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["optimal_phase_separation"] == right["optimal_phase_separation"]
+        assert (
+            left["optimal_frequency_by_distance"]
+            == right["optimal_frequency_by_distance"]
+        )
+
+
+def test_apply_electrical_delay_takes_one_value_per_qubit(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a mapping, when applied, then each qubit gets its own delay."""
+    exp = readout_scan_experiment_factory(max_level=1, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=1)
+
+    updated = apply_electrical_delay(result, {QUBIT: 100.0, QUBIT_2: 200.0})
+
+    assert updated.data[QUBIT]["electrical_delay"] == 100.0
+    assert updated.data[QUBIT_2]["electrical_delay"] == 200.0
+
+
+def test_apply_electrical_delay_rejects_an_incomplete_mapping(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a mapping missing a qubit, when applied, then it raises."""
+    exp = readout_scan_experiment_factory(max_level=1, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=1)
+
+    with pytest.raises(ValueError, match="has no entry for"):
+        apply_electrical_delay(result, {QUBIT: 100.0})
+
+
+def test_apply_electrical_delay_rejects_a_non_finite_delay(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a non-finite delay, when applied, then it raises."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        apply_electrical_delay(result, float("nan"))
+
+
+def test_apply_electrical_delay_is_idempotent(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given the same delay twice, when applied, then the result is unchanged."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+
+    once = apply_electrical_delay(result, DELAY)
+    twice = apply_electrical_delay(once, DELAY)
+
+    assert np.array_equal(
+        once.data[QUBIT]["corrected_signals"],
+        twice.data[QUBIT]["corrected_signals"],
+    )
+    assert np.array_equal(
+        once.data[QUBIT]["absolute_phases"],
+        twice.data[QUBIT]["absolute_phases"],
+    )
+
+
+def test_apply_electrical_delay_can_be_undone_with_zero(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a corrected result, when zero is applied, then the raw data is back."""
+    exp = readout_scan_experiment_factory(max_level=1)
+    result = _readout_scan(exp, max_level=1)
+
+    restored = apply_electrical_delay(apply_electrical_delay(result, DELAY), 0.0)
+
+    assert np.array_equal(
+        restored.data[QUBIT]["corrected_signals"],
+        restored.data[QUBIT]["signals"],
+    )
+
+
+def test_apply_electrical_delay_passes_a_failed_target_through() -> None:
+    """Given a target whose analysis failed, when applied, then it is untouched."""
+    error = ValueError("the analysis never got there")
+    result = Result(data={QUBIT: {"target": QUBIT, "error": error}}, figures={})
+
+    updated = apply_electrical_delay(result, DELAY)
+
+    assert updated.data[QUBIT]["error"] is error
+    assert "corrected_signals" not in updated.data[QUBIT]

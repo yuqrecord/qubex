@@ -27,6 +27,8 @@ against the ground state at every rung of the ladder.
   `+-pi/2` tipping pulse whose own error cancels exactly.
 - `calibrate_drag_hpi_pulse_based_on_ground`: DRAG half-pi amplitude and beta.
 - `calibrate_drag_pi_pulse_based_on_ground`: DRAG pi amplitude and beta.
+- `measure_dispersive_shift_extended`: readout phase of every level against
+  the readout frequency, and the frequency that separates the levels best.
 
 The four calibrations locate the amplitude at a *zero crossing* rather than at
 the extremum of a fitted cosine: the Bloch vector is driven by (n - 1/4) and by
@@ -44,9 +46,11 @@ calibrations use the pulse under test as its own tipping pulse: inverting the
 leading pulse realizes `(4n - 1) theta` exactly as dropping two would, without
 the imbalance.
 
-All of them write their result to `exp.calib_note` under the *transition* label,
-for example `"Q00-fh"`. `chevron_pattern_based_on_ground` deliberately persists
-nothing, because the transition frequency belongs to the registered `Target`.
+The four calibrations write their result to `exp.calib_note` under the
+*transition* label, for example `"Q00-fh"`. `chevron_pattern_based_on_ground`
+deliberately persists nothing, because the transition frequency belongs to the
+registered `Target`, and `measure_dispersive_shift_extended` persists nothing
+either, because the readout frequency belongs to the configuration.
 `calib_note` does not autosave; call `Experiment.save_calib_note` when done.
 
 Each entry point follows the argument conventions of the core `Experiment` API.
@@ -64,6 +68,12 @@ The result is keyed by transition label whatever the number of targets::
     result = calibrate_hpi_pulse_based_on_ground(exp, transition="fh")
     result.data["Q00-fh"]["amplitude"]
     result.figures["Q00-fh:branches"]
+
+`measure_dispersive_shift_extended` is the one exception: no single transition
+owns a readout scan, so it keys its result by qubit label instead. It also
+takes `max_level` rather than `transition`, for the same reason `transition` is
+required elsewhere - guessing how far up the ladder to go would silently
+measure the wrong states.
 
 A fit that does not converge must not cost the measurement that produced it, so
 the analysis, the calibration-note write, the plotting and the display are each
@@ -149,6 +159,14 @@ from .chevron_pattern_based_on_ground import (
     plot_chevron_pattern_based_on_ground,
     run_chevron_pattern_based_on_ground,
 )
+from .measure_dispersive_shift_extended import (
+    analyze_measure_dispersive_shift_extended,
+    apply_electrical_delay,
+    display_measure_dispersive_shift_extended,
+    measure_dispersive_shift_extended,
+    plot_measure_dispersive_shift_extended,
+    run_measure_dispersive_shift_extended,
+)
 from .obtain_rabi_params_based_on_ground import (
     analyze_obtain_rabi_params_based_on_ground,
     display_obtain_rabi_params_based_on_ground,
@@ -163,7 +181,9 @@ __all__ = [
     "analyze_calibrate_hpi_pulse_based_on_ground",
     "analyze_calibrate_pi_pulse_based_on_ground",
     "analyze_chevron_pattern_based_on_ground",
+    "analyze_measure_dispersive_shift_extended",
     "analyze_obtain_rabi_params_based_on_ground",
+    "apply_electrical_delay",
     "calibrate_drag_hpi_pulse_based_on_ground",
     "calibrate_drag_pi_pulse_based_on_ground",
     "calibrate_hpi_pulse_based_on_ground",
@@ -174,18 +194,22 @@ __all__ = [
     "display_calibrate_hpi_pulse_based_on_ground",
     "display_calibrate_pi_pulse_based_on_ground",
     "display_chevron_pattern_based_on_ground",
+    "display_measure_dispersive_shift_extended",
     "display_obtain_rabi_params_based_on_ground",
+    "measure_dispersive_shift_extended",
     "obtain_rabi_params_based_on_ground",
     "plot_calibrate_drag_hpi_pulse_based_on_ground",
     "plot_calibrate_drag_pi_pulse_based_on_ground",
     "plot_calibrate_hpi_pulse_based_on_ground",
     "plot_calibrate_pi_pulse_based_on_ground",
     "plot_chevron_pattern_based_on_ground",
+    "plot_measure_dispersive_shift_extended",
     "plot_obtain_rabi_params_based_on_ground",
     "run_calibrate_drag_hpi_pulse_based_on_ground",
     "run_calibrate_drag_pi_pulse_based_on_ground",
     "run_calibrate_hpi_pulse_based_on_ground",
     "run_calibrate_pi_pulse_based_on_ground",
     "run_chevron_pattern_based_on_ground",
+    "run_measure_dispersive_shift_extended",
     "run_obtain_rabi_params_based_on_ground",
 ]

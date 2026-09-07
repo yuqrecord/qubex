@@ -1,11 +1,13 @@
 """Experiment-oriented contrib modules."""
 
 from .calibrate_1q_transition_based_on_ground import (
+    apply_electrical_delay,
     calibrate_drag_hpi_pulse_based_on_ground,
     calibrate_drag_pi_pulse_based_on_ground,
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
     chevron_pattern_based_on_ground,
+    measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
 )
 from .chevron_matched_transform import (
@@ -114,14 +116,10 @@ from .ac_stark_spectroscopy import (
 
 from .skew_check_qr import skew_check_qr
 
+from .skew_check_qr import skew_check_qr
+
 from .post_selected_measurement.assignment_fidelity import (
     post_selected_assignment_fidelity_experiment,
-)
-from .post_selected_measurement.quantum_efficiency import (
-    post_selected_quantum_efficiency_experiment,
-)
-from .post_selected_measurement.qnd_fidelity import (
-    qnd_fidelity_experiment,
 )
 
 from .impa_calibration.impa_voltage_calibration import (
@@ -131,8 +129,22 @@ from .impa_calibration.impa_pump_pulse_calibration import (
     impa_pump_pulse_calibration,
 )
 
+from .post_selected_measurement.leakage_sensitive_assignment_fidelity import (
+    post_selected_leakage_sensitive_assignment_fidelity_experiment,
+)
+from .post_selected_measurement.quantum_efficiency import (
+    post_selected_quantum_efficiency_experiment,
+)
+from .post_selected_measurement.mist_benchmarking import (
+    mist_benchmarking_experiment,
+)
+from .post_selected_measurement.qnd_fidelity import (
+    qnd_fidelity_experiment,
+)
+
 __all__ = [
     "analyze_chevron_matched_transform",
+    "apply_electrical_delay",
     "calibrate_cr_pi_pulse",
     "calibrate_drag_hpi_pulse_based_on_ground",
     "calibrate_drag_pi_pulse_based_on_ground",
@@ -183,6 +195,7 @@ __all__ = [
     "measure_bell_states",
     "measure_chevron_pattern",
     "measure_cr_crosstalk",
+    "measure_dispersive_shift_extended",
     "measure_ghz_state",
     "measure_graph_state",
     "measure_thermal_excitation",
@@ -215,12 +228,15 @@ __all__ = [
     "stark_t1_experiment",
     "sweep_readout_snr",
     "visualize_graph",
-    "skew_check_qr",
-    "post_selected_assignment_fidelity_experiment",
-    "post_selected_quantum_efficiency_experiment",
     "impa_voltage_calibration",
     "impa_pump_pulse_calibration",
-    "qnd_fidelity_experiment",
     "ac_stark_spectroscopy_arbitrary_readout_drive",
     "ac_stark_spectroscopy_flattop_readout_drive",
+    "ac_stark_spectroscopy",
+    "skew_check_qr",
+    "post_selected_assignment_fidelity_experiment",
+    "post_selected_leakage_sensitive_assignment_fidelity_experiment",
+    "post_selected_quantum_efficiency_experiment",
+    "mist_benchmarking_experiment",
+    "qnd_fidelity_experiment",
 ]

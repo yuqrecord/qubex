@@ -1,0 +1,544 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import qubex as qx
+from qubex.experiment.models import Result
+from qxpulse import Waveform
+from scipy.optimize import minimize
+
+from .assignment_fidelity import (
+    STATE_TO_COLOR,
+    STATE_TO_LABEL,
+    gaussian,
+    gaussian_fit,
+)
+
+__all__ = [
+    "mist_benchmarking_experiment",
+    "run_mist_benchmarking",
+    "analyze_mist_benchmarking",
+    "display_mist_benchmarking",
+    "plot_mist_benchmarking",
+]
+
+SEQUENCES = ["off", "on"]
+STATES = ["g", "e"]
+OBSERVED_STATES = ["g", "e", "L"]
+OBSERVED_LABELS = ["|g>", "|e>", "L"]
+SEQUENCE_TO_LINESTYLE = {"off": "--", "on": "-"}
+RATE_NAMES = ["P01", "P0L", "P10", "P1L", "PL0", "PL1"]
+INITIAL_RATES = [1e-4, 1e-5, 5e-3, 1e-5, 1e-6, 1e-6]
+# The rates span decades, so the fit runs on log10(rate). That keeps them positive
+# and conditions the problem: fitted linearly, the gradient is ~1e7 while the rates
+# are ~1e-5 and the line search stalls on the first iteration. The upper bound keeps
+# every row of the transition matrix stochastic.
+LOG_RATE_BOUNDS = (-12.0, np.log10(0.4))
+INITIAL_POPULATION = {"g": [1.0, 0.0, 0.0], "e": [0.0, 1.0, 0.0]}
+
+
+def _transition_matrix(rates):
+    p01, p0l, p10, p1l, pl0, pl1 = rates
+    return np.array(
+        [
+            [1 - p01 - p0l, p01, p0l],
+            [p10, 1 - p10 - p1l, p1l],
+            [pl0, pl1, 1 - pl0 - pl1],
+        ]
+    )
+
+
+def _model_population(rates, state, n_repeats):
+    matrix = _transition_matrix(rates)
+    return np.array(INITIAL_POPULATION[state]) @ np.linalg.matrix_power(
+        matrix, n_repeats
+    )
+
+
+def _histogram_fit(signal, n_bins):
+    counts, bin_edges = np.histogram(signal, bins=n_bins)
+    bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+    return gaussian_fit(bin_centers, counts)
+
+
+def _fit_three_class_model(*, counts, n_repeats_list, block_duration):
+    # Multinomial likelihood rather than least squares: the leakage class holds
+    # only a handful of counts per point, where Gaussian weights break down.
+    def negative_log_likelihood(log_rates):
+        matrix = _transition_matrix(10.0 ** np.asarray(log_rates))
+        total = 0.0
+        for state in STATES:
+            population = np.array(INITIAL_POPULATION[state])
+            for n_repeats in n_repeats_list:
+                q = population @ np.linalg.matrix_power(matrix, n_repeats)
+                total -= np.sum(
+                    counts[state][n_repeats] * np.log(np.clip(q, 1e-15, None))
+                )
+        return total
+
+    fit = minimize(
+        negative_log_likelihood,
+        np.log10(INITIAL_RATES),
+        method="L-BFGS-B",
+        bounds=[LOG_RATE_BOUNDS] * len(RATE_NAMES),
+    )
+    rates = dict(zip(RATE_NAMES, 10.0**fit.x, strict=True))
+    p10 = rates["P10"]
+    return {
+        "rates": rates,
+        "t1_meas": -block_duration / np.log(1 - p10) if 0 < p10 < 1 else np.nan,
+        "leakage_per_measurement": (rates["P0L"] + rates["P1L"]) / 2,
+        "negative_log_likelihood": float(fit.fun),
+        "success": bool(fit.success),
+    }
+
+
+def run_mist_benchmarking(
+    exp: qx.Experiment,
+    *,
+    target: str,
+    ge_readout_pulse: Waveform,
+    leakage_sensitive_readout_pulse: Waveform,
+    leakage_sensitive_readout_detuning: float,
+    waittime_after_readout_pulse: float,
+    waittime_after_ctrl_pulse: float,
+    n_repeats_list,
+    pump_buffer_time: float,
+    pump_ramptime: float,
+    pump_amplitude: float,
+    shot_interval: float,
+    n_shots: int,
+    plot_pulse_schedule: bool = True,
+):
+    qubit = exp.ctx.qubits[target].label
+    resonator = exp.ctx.resonators[target].label
+    mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
+    drag_pi_pulse = exp.drag_pi_pulse[qubit]
+    padded_ge_readout_pulse = ge_readout_pulse.padded(
+        ge_readout_pulse.duration + exp.readout_post_margin
+    )
+    padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.detuned(
+        leakage_sensitive_readout_detuning
+    ).padded(leakage_sensitive_readout_pulse.duration + exp.readout_post_margin)
+    # The off block is a zero-amplitude pulse rather than a Blank so that it still
+    # opens its capture window. That keeps the window layout identical between the
+    # two sequences and leaves the first block readable as the assignment
+    # measurement in both.
+    block_pulse = {
+        "on": padded_ge_readout_pulse,
+        "off": padded_ge_readout_pulse.scaled(0),
+    }
+    block_duration = padded_ge_readout_pulse.duration + waittime_after_readout_pulse
+    barrier_labels = [qubit, resonator]
+    result = dict()
+    for n_repeats in n_repeats_list:
+        result[n_repeats] = dict()
+        pump_duration = (
+            2 * pump_buffer_time
+            + padded_ge_readout_pulse.duration
+            + waittime_after_readout_pulse
+            + drag_pi_pulse.duration
+            + waittime_after_ctrl_pulse
+            + n_repeats * block_duration
+            + padded_leakage_sensitive_readout_pulse.duration
+        )
+        for sequence in SEQUENCES:
+            result[n_repeats][sequence] = dict()
+            for state in STATES:
+                schedule = qx.PulseSchedule()
+                with schedule as s:
+                    s.add(
+                        mux,
+                        qx.pulse.FlatTop(
+                            duration=pump_duration,
+                            tau=pump_ramptime,
+                            amplitude=pump_amplitude,
+                        ),
+                    )
+                    s.add(resonator, qx.pulse.Blank(pump_buffer_time))
+                    s.barrier(labels=barrier_labels)
+                    s.add(resonator, padded_ge_readout_pulse)
+                    s.add(
+                        qubit,
+                        qx.pulse.Blank(
+                            ge_readout_pulse.duration + waittime_after_readout_pulse
+                        ),
+                    )
+                    if state == "e":
+                        s.add(qubit, drag_pi_pulse)
+                    else:
+                        s.add(qubit, qx.pulse.Blank(drag_pi_pulse.duration))
+                    s.add(qubit, qx.pulse.Blank(waittime_after_ctrl_pulse))
+                    s.barrier(labels=barrier_labels)
+                    for _ in range(n_repeats):
+                        s.add(resonator, block_pulse[sequence])
+                        s.add(resonator, qx.pulse.Blank(waittime_after_readout_pulse))
+                    s.barrier(labels=barrier_labels)
+                    s.add(resonator, padded_leakage_sensitive_readout_pulse)
+                    s.add(resonator, qx.pulse.Blank(pump_buffer_time))
+                if plot_pulse_schedule and n_repeats == n_repeats_list[0]:
+                    schedule.plot(
+                        title=f"Pulse Schedule {sequence} m={n_repeats} |{state}>"
+                    )
+                result[n_repeats][sequence][state] = exp.execute(
+                    schedule=schedule,
+                    mode="single",
+                    time_integration=False,
+                    n_shots=n_shots,
+                    shot_interval=shot_interval,
+                )
+    return result
+
+
+def analyze_mist_benchmarking(
+    *,
+    target,
+    run_result,
+    ge_classifier,
+    leakage_sensitive_classifier,
+    leakage_sensitive_readout_detuning,
+    capture_sampling_period,
+    block_duration,
+    n_bins=100,
+):
+    n_repeats_list = sorted(run_result.keys())
+    counts = dict()
+    populations = dict()
+    post_selection_rate = dict()
+    assignment_signal = dict()
+    for sequence in SEQUENCES:
+        counts[sequence] = dict()
+        populations[sequence] = dict()
+        post_selection_rate[sequence] = dict()
+        assignment_signal[sequence] = dict()
+        for state in STATES:
+            counts[sequence][state] = dict()
+            populations[sequence][state] = dict()
+            post_selection_rate[sequence][state] = dict()
+            signals = []
+            for n_repeats in n_repeats_list:
+                readouts = run_result[n_repeats][sequence][state].data[target]
+                herald = readouts[0].raw
+                assignment = readouts[1].raw
+                leakage_sensitive = readouts[-1].raw
+                selected = ge_classifier.predict(herald) == 0
+                # The leakage classifier was trained on de-rotated traces, so the
+                # same rotation has to come off here before it is applied.
+                derotation = np.exp(
+                    -2j
+                    * np.pi
+                    * leakage_sensitive_readout_detuning
+                    * np.arange(leakage_sensitive.shape[1])
+                    * capture_sampling_period
+                )
+                prediction = leakage_sensitive_classifier.predict(
+                    leakage_sensitive[selected] * derotation
+                )
+                count = np.array(
+                    [np.sum(prediction == i) for i in range(len(OBSERVED_STATES))]
+                )
+                counts[sequence][state][n_repeats] = count
+                populations[sequence][state][n_repeats] = count / count.sum()
+                post_selection_rate[sequence][state][n_repeats] = sum(selected) / len(
+                    selected
+                )
+                signals.append(
+                    np.real(ge_classifier.weighted_signal(assignment[selected]))
+                )
+            assignment_signal[sequence][state] = np.concatenate(signals)
+    fit = {
+        sequence: _fit_three_class_model(
+            counts=counts[sequence],
+            n_repeats_list=n_repeats_list,
+            block_duration=block_duration,
+        )
+        for sequence in SEQUENCES
+    }
+    model_population = {
+        sequence: {
+            state: {
+                n_repeats: _model_population(
+                    list(fit[sequence]["rates"].values()), state, n_repeats
+                )
+                for n_repeats in n_repeats_list
+            }
+            for state in STATES
+        }
+        for sequence in SEQUENCES
+    }
+    assignment_histogram = {
+        sequence: {
+            state: _histogram_fit(assignment_signal[sequence][state], n_bins)
+            for state in STATES
+        }
+        for sequence in SEQUENCES
+    }
+    return {
+        "n_repeats_list": n_repeats_list,
+        "counts": counts,
+        "populations": populations,
+        "post_selection_rate": post_selection_rate,
+        "assignment_signal": assignment_signal,
+        "assignment_histogram": assignment_histogram,
+        "fit": fit,
+        "model_population": model_population,
+        "block_duration": block_duration,
+    }
+
+
+def plot_mist_benchmarking(
+    *,
+    n_repeats_list,
+    populations,
+    model_population,
+    assignment_signal,
+    assignment_histogram,
+    n_bins=100,
+    alpha_histogram=0.5,
+    colors=STATE_TO_COLOR,
+    labels=STATE_TO_LABEL,
+):
+    figures = dict()
+    fig, axes = plt.subplots(1, len(SEQUENCES), figsize=(11, 4), sharey=True)
+    for ax, sequence in zip(axes, SEQUENCES, strict=True):
+        for state in STATES:
+            counts, bin_edges = np.histogram(
+                assignment_signal[sequence][state], bins=n_bins
+            )
+            ax.stairs(
+                counts,
+                bin_edges,
+                color=colors[state],
+                label=labels[state],
+                fill=True,
+                alpha=alpha_histogram,
+            )
+            fit_params = assignment_histogram[sequence][state]
+            if fit_params is not None:
+                x_fit = np.linspace(bin_edges[0], bin_edges[-1], 1000)
+                ax.plot(
+                    x_fit,
+                    gaussian(
+                        x_fit, fit_params["a"], fit_params["mu"], fit_params["sigma"]
+                    ),
+                    color="black",
+                    linestyle="--",
+                )
+        ax.set_xlabel("S_I")
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=0.5)
+        ax.grid()
+        ax.set_title(f"Assignment measurement ({sequence})")
+        ax.legend()
+    axes[0].set_ylabel("Counts")
+    plt.close(fig)
+    figures["assignment_histogram"] = {"figure": fig, "ax": axes}
+
+    for name, index, ylabel in [
+        ("population_1", 1, "|e> class population"),
+        ("population_L", 2, "L class population"),
+    ]:
+        fig, ax = plt.subplots()
+        for sequence in SEQUENCES:
+            for state in STATES:
+                ax.scatter(
+                    n_repeats_list,
+                    [populations[sequence][state][m][index] for m in n_repeats_list],
+                    color=colors[state],
+                    marker="o" if sequence == "on" else "x",
+                    label=f"{labels[state]} ({sequence})",
+                )
+                ax.plot(
+                    n_repeats_list,
+                    [
+                        model_population[sequence][state][m][index]
+                        for m in n_repeats_list
+                    ],
+                    color="black",
+                    linestyle=SEQUENCE_TO_LINESTYLE[sequence],
+                    linewidth=1,
+                )
+        ax.set_xlabel("Number of repeated measurements m")
+        ax.set_ylabel(ylabel)
+        if name == "population_L":
+            ax.set_yscale("log")
+        ax.grid()
+        ax.legend()
+        plt.close(fig)
+        figures[name] = {"figure": fig, "ax": ax}
+    return {"figures": figures}
+
+
+def display_mist_benchmarking(result: Result, plot: bool = True):
+    try:
+        from IPython.display import display
+    except ImportError:
+        display = lambda x: None
+
+    def simple_display(figures):
+        for fig in figures:
+            display(fig)
+
+    def tiled_display(figures, n_cols=2):
+        outputs = []
+        for fig in figures:
+            output = widgets.Output()
+            with output:
+                display(fig)
+            outputs.append(output)
+        grid = widgets.GridBox(
+            outputs,
+            layout=widgets.Layout(
+                grid_template_columns=f"repeat({n_cols}, 1fr)",
+                grid_gap="10px",
+            ),
+        )
+        display(grid)
+
+    if plot:
+        figures_to_display = [
+            result.figures["assignment_histogram"]["figure"],
+            result.figures["population_1"]["figure"],
+            result.figures["population_L"]["figure"],
+        ]
+        try:
+            import ipywidgets as widgets
+
+            tiled_display(figures_to_display, n_cols=2)
+        except ImportError:
+            simple_display(figures_to_display)
+
+    fit = result.data["fit"]
+    post_selection_rate = result.data["post_selection_rate"]
+    n_repeats_list = result.data["n_repeats_list"]
+    for sequence in SEQUENCES:
+        print(f"{sequence} sequence:")
+        for name in RATE_NAMES:
+            print(f"  {name}: {fit[sequence]['rates'][name]:.3e}")
+        print(f"  T1_meas: {fit[sequence]['t1_meas'] * 1e-3:.2f} us")
+        print(f"  P_L: {fit[sequence]['leakage_per_measurement']:.3e}")
+        if not fit[sequence]["success"]:
+            print("  The fit did not converge.")
+        rates = [
+            post_selection_rate[sequence][state][m]
+            for state in STATES
+            for m in n_repeats_list
+        ]
+        print(
+            f"  Post-selection rate: {min(rates):.4f} - {max(rates):.4f} "
+            f"over {len(n_repeats_list)} repetition counts"
+        )
+
+
+def mist_benchmarking_experiment(
+    exp: qx.Experiment,
+    *,
+    target: str,
+    leakage_sensitive_readout_classifier: dict,
+    leakage_sensitive_readout_frequency: float | None = None,
+    ge_readout_classifier: dict,
+    waittime_after_readout_pulse: float,
+    waittime_after_ctrl_pulse: float,
+    n_repeats_list,
+    pump_buffer_time: float,
+    pump_ramptime: float,
+    pump_amplitude: float,
+    shot_interval: float,
+    n_shots: int,
+    plot: bool = True,
+    plot_pulse_schedule: bool = True,
+) -> Result:
+    missing_keys = {"readout_pulse", "classifier"} - set(
+        leakage_sensitive_readout_classifier
+    )
+    if missing_keys:
+        raise ValueError(
+            "`leakage_sensitive_readout_classifier` must contain the keys 'readout_pulse' and "
+            f"'classifier' (missing: {sorted(missing_keys)})."
+        )
+    missing_keys = {"readout_pulse", "classifier"} - set(ge_readout_classifier)
+    if missing_keys:
+        raise ValueError(
+            "`readout_classifier` must contain the keys 'readout_pulse' and "
+            f"'classifier' (missing: {sorted(missing_keys)})."
+        )
+    ge_readout_pulse = ge_readout_classifier["readout_pulse"]
+    ge_classifier = ge_readout_classifier["classifier"]
+    leakage_sensitive_readout_pulse = leakage_sensitive_readout_classifier[
+        "readout_pulse"
+    ]
+    leakage_sensitive_classifier = leakage_sensitive_readout_classifier["classifier"]
+    resonator = exp.ctx.resonators[target].label
+    if leakage_sensitive_readout_frequency is None:
+        leakage_sensitive_readout_detuning = 0.0
+    else:
+        leakage_sensitive_readout_detuning = (
+            leakage_sensitive_readout_frequency - exp.ctx.targets[resonator].frequency
+        )
+    capture_sampling_period = (
+        exp.backend_controller.sampling_period_ns
+        * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
+    )
+    block_duration = (
+        ge_readout_pulse.duration
+        + exp.readout_post_margin
+        + waittime_after_readout_pulse
+    )
+    run_result = run_mist_benchmarking(
+        exp,
+        target=target,
+        ge_readout_pulse=ge_readout_pulse,
+        leakage_sensitive_readout_pulse=leakage_sensitive_readout_pulse,
+        leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
+        waittime_after_readout_pulse=waittime_after_readout_pulse,
+        waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
+        n_repeats_list=n_repeats_list,
+        pump_buffer_time=pump_buffer_time,
+        pump_ramptime=pump_ramptime,
+        pump_amplitude=pump_amplitude,
+        shot_interval=shot_interval,
+        n_shots=n_shots,
+        plot_pulse_schedule=plot_pulse_schedule,
+    )
+    analyze_result = analyze_mist_benchmarking(
+        target=target,
+        run_result=run_result,
+        ge_classifier=ge_classifier,
+        leakage_sensitive_classifier=leakage_sensitive_classifier,
+        leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
+        capture_sampling_period=capture_sampling_period,
+        block_duration=block_duration,
+    )
+    plot_result = plot_mist_benchmarking(
+        n_repeats_list=analyze_result["n_repeats_list"],
+        populations=analyze_result["populations"],
+        model_population=analyze_result["model_population"],
+        assignment_signal=analyze_result["assignment_signal"],
+        assignment_histogram=analyze_result["assignment_histogram"],
+        colors=STATE_TO_COLOR,
+        labels=STATE_TO_LABEL,
+    )
+    result = Result(
+        data={
+            "target": target,
+            "raw": run_result,
+            "ge_readout_pulse": ge_readout_pulse,
+            "ge_classifier": ge_classifier,
+            "leakage_sensitive_readout_pulse": leakage_sensitive_readout_pulse,
+            "leakage_sensitive_classifier": leakage_sensitive_classifier,
+            "leakage_sensitive_readout_frequency": leakage_sensitive_readout_frequency,
+            "leakage_sensitive_readout_detuning": leakage_sensitive_readout_detuning,
+            "n_repeats_list": analyze_result["n_repeats_list"],
+            "counts": analyze_result["counts"],
+            "populations": analyze_result["populations"],
+            "post_selection_rate": analyze_result["post_selection_rate"],
+            "assignment_signal": analyze_result["assignment_signal"],
+            "assignment_histogram": analyze_result["assignment_histogram"],
+            "fit": analyze_result["fit"],
+            "model_population": analyze_result["model_population"],
+            "block_duration": block_duration,
+            "capture_sampling_period": capture_sampling_period,
+        },
+        figure=None,
+        figures=plot_result["figures"],
+    )
+    display_mist_benchmarking(result, plot)
+    return result
