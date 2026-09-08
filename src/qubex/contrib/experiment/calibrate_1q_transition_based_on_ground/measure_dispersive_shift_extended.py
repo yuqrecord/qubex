@@ -398,6 +398,51 @@ def _select_optimum(
     return int(closest[np.argmin(frequency_range[closest])])
 
 
+def _resolve_phase_shift_levels(
+    target_level: int | str | Collection[int | str] | None,
+    *,
+    state_labels: Sequence[str],
+) -> tuple[int, ...] | None:
+    """
+    Return the level indices a phase shift applies to, or `None` for all of them.
+
+    Parameters
+    ----------
+    target_level : int | str | Collection[int | str] | None
+        Level index, level name, or several of either. `None` selects every
+        level.
+    state_labels : Sequence[str]
+        Level names of the scan, in level order.
+
+    Returns
+    -------
+    tuple[int, ...] | None
+        Level indices, or `None` when every level is selected.
+    """
+    if target_level is None:
+        return None
+    if isinstance(target_level, (int, str)):
+        target_level = [target_level]
+    resolved: list[int] = []
+    for level in target_level:
+        if isinstance(level, str):
+            if level not in state_labels:
+                raise ValueError(
+                    f"`target_level` names {level!r}, which this scan does not "
+                    f"hold. It measured {list(state_labels)}."
+                )
+            resolved.append(state_labels.index(level))
+        else:
+            index = int(level)
+            if not 0 <= index < len(state_labels):
+                raise ValueError(
+                    f"`target_level` asks for level {index}, which this scan does "
+                    f"not hold. It measured levels 0 to {len(state_labels) - 1}."
+                )
+            resolved.append(index)
+    return tuple(resolved)
+
+
 def _resolve_per_qubit(
     *,
     qubits: Sequence[str],
@@ -653,6 +698,7 @@ def analyze_measure_dispersive_shift_extended(
     min_resolved_separation: float | None = None,
     phase_shift_threshold: float | None = None,
     phase_shift_turns: int | None = None,
+    phase_shift_levels: int | str | Collection[int | str] | None = None,
 ) -> dict[str, Any]:
     """
     Locate the readout frequency that best separates each nested set of levels.
@@ -674,6 +720,9 @@ def analyze_measure_dispersive_shift_extended(
     phase_shift_turns : int | None, optional
         Number of turns to add above the threshold, so `-1` brings a trace down
         by `2 pi`. Defaults to 0.
+    phase_shift_levels : int | str | Collection[int | str] | None, optional
+        Levels the shift applies to, by index or by name. Defaults to every
+        level.
 
     Returns
     -------
@@ -719,8 +768,16 @@ def analyze_measure_dispersive_shift_extended(
     # than in `plot_` so that it survives a later re-analysis. The metrics are
     # computed from the raw `signals` below and cannot see this.
     if phase_shift_turns:
+        shift = absolute_phases > phase_shift_threshold
+        selected = _resolve_phase_shift_levels(
+            phase_shift_levels, state_labels=state_labels
+        )
+        if selected is not None:
+            rows = np.zeros(len(absolute_phases), dtype=bool)
+            rows[list(selected)] = True
+            shift = shift & rows[:, None]
         absolute_phases = np.where(
-            absolute_phases > phase_shift_threshold,
+            shift,
             absolute_phases + phase_shift_turns * 2 * np.pi,
             absolute_phases,
         )
@@ -805,6 +862,7 @@ def analyze_measure_dispersive_shift_extended(
         "min_resolved_separation": min_resolved_separation,
         "phase_shift_threshold": phase_shift_threshold,
         "phase_shift_turns": phase_shift_turns,
+        "phase_shift_levels": phase_shift_levels,
         "subsets": subsets,
     }
 
@@ -1223,6 +1281,7 @@ def apply_phase_shift(
     *,
     threshold: Mapping[str, float] | float,
     turns: Mapping[str, int] | int,
+    target_level: int | str | Collection[int | str] | None = None,
 ) -> Result:
     """
     Move whole turns of the plotted absolute phase above a threshold.
@@ -1241,6 +1300,12 @@ def apply_phase_shift(
         result = measure_dispersive_shift_extended(exp, targets="Q00", max_level=3)
         result = apply_phase_shift(result, threshold=3.0, turns=-1)
 
+    `target_level` narrows it to the levels that actually need moving, by name
+    or by index, so the rest of the figure is left alone::
+
+        result = apply_phase_shift(result, threshold=3.0, turns=-1, target_level="f")
+        result = apply_phase_shift(result, threshold=3.0, turns=-1, target_level=["f", "h"])
+
     The shift is stored with the payload and reapplied whenever the analysis
     runs again, so it composes with `apply_electrical_delay` in either order.
 
@@ -1255,6 +1320,11 @@ def apply_phase_shift(
     turns : Mapping[str, int] | int
         Whole turns to add above the threshold, so `-1` brings a trace down by
         `2 pi`. `0` removes a shift applied earlier.
+    target_level : int | str | Collection[int | str] | None, optional
+        Levels to move, as a level index, a level name such as `"f"`, or several
+        of either. Defaults to every level. It is one selection for the whole
+        batch; to move a different level on a different qubit, pass `turns` as a
+        mapping and set the qubits to leave alone to `0`.
 
     Returns
     -------
@@ -1267,7 +1337,8 @@ def apply_phase_shift(
     The test is applied point by point, so a trace that crosses the threshold is
     shifted only where it is above it and shows a step of `turns * 2 pi` at the
     crossing. Choose a threshold that no trace straddles - which is the usual
-    case, since the point is to separate one level's trace from the others.
+    case, since the point is to separate one level's trace from the others - or
+    name that level with `target_level` and let the threshold be loose.
     """
     qubits = list(result.data)
     resolved_threshold = _resolve_per_qubit(
@@ -1292,6 +1363,7 @@ def apply_phase_shift(
         result,
         phase_shift_threshold=resolved_threshold,
         phase_shift_turns=resolved_turns,
+        phase_shift_levels={qubit: target_level for qubit in qubits},
     )
 
 
@@ -1301,6 +1373,7 @@ def _reanalyze(
     electrical_delay: Mapping[str, float] | None = None,
     phase_shift_threshold: Mapping[str, float] | None = None,
     phase_shift_turns: Mapping[str, int] | None = None,
+    phase_shift_levels: Mapping[str, Any] | None = None,
 ) -> Result:
     """
     Re-run the analysis and the figures, overriding one display knob per qubit.
@@ -1338,6 +1411,9 @@ def _reanalyze(
             phase_shift_turns=payload.get("phase_shift_turns")
             if phase_shift_turns is None
             else phase_shift_turns[qubit],
+            phase_shift_levels=payload.get("phase_shift_levels")
+            if phase_shift_levels is None
+            else phase_shift_levels[qubit],
         )
         data[qubit] = analyzed
         figures.update(

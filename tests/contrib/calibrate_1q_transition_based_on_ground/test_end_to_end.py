@@ -1607,3 +1607,42 @@ def test_apply_phase_shift_takes_one_value_per_qubit(
     assert updated.data[QUBIT]["phase_shift_turns"] == -1
     assert updated.data[QUBIT_2]["phase_shift_turns"] == 2
     assert updated.data[QUBIT_2]["phase_shift_threshold"] == 1.0
+
+
+def test_apply_phase_shift_moves_only_the_named_level(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a target level, when a shift is applied, then only that level moves."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    before = np.array(result.data[QUBIT]["absolute_phases"], copy=True)
+
+    updated = apply_phase_shift(result, threshold=-np.inf, turns=-1, target_level="f")
+
+    difference = updated.data[QUBIT]["absolute_phases"] - before
+    assert np.allclose(difference[2], -2 * np.pi)
+    assert np.allclose(difference[:2], 0.0)
+    assert updated.data[QUBIT]["phase_shift_levels"] == "f"
+
+
+def test_apply_phase_shift_target_level_survives_a_delay_change(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a targeted shift, when the delay changes, then the target is kept."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    shifted = apply_phase_shift(result, threshold=-np.inf, turns=-1, target_level="f")
+    delayed = apply_electrical_delay(shifted, DELAY)
+    both_at_once = apply_phase_shift(
+        apply_electrical_delay(result, DELAY),
+        threshold=-np.inf,
+        turns=-1,
+        target_level="f",
+    )
+
+    assert delayed.data[QUBIT]["phase_shift_levels"] == "f"
+    assert np.allclose(
+        delayed.data[QUBIT]["absolute_phases"],
+        both_at_once.data[QUBIT]["absolute_phases"],
+    )

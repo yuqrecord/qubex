@@ -1208,3 +1208,95 @@ def test_readout_scan_phase_shift_does_not_move_the_optimum() -> None:
         assert np.array_equal(left["phase_separation"], right["phase_separation"])
         assert np.array_equal(left["distance_separation"], right["distance_separation"])
     assert np.array_equal(plain["relative_phases"], shifted["relative_phases"])
+
+
+def _three_level_ramp_run_result() -> dict[str, Any]:
+    """Return a g/e/f scan whose every trace sits above 0.5 rad."""
+    n_points = 11
+    ramp = np.linspace(7.0, 8.0, n_points)
+    signals = _phasors(np.stack([ramp, ramp + 0.05, ramp + 0.1]))
+    return _readout_scan_run_result(signals=signals)
+
+
+def test_readout_scan_phase_shift_moves_only_the_named_level() -> None:
+    """Given a target level, when shifted, then the other levels stay put."""
+    run_result = _three_level_ramp_run_result()
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.5,
+        phase_shift_turns=-1,
+        phase_shift_levels="f",
+    )
+
+    difference = shifted["absolute_phases"] - plain["absolute_phases"]
+    assert np.allclose(difference[2], -2 * np.pi)
+    assert np.allclose(difference[:2], 0.0)
+
+
+def test_readout_scan_phase_shift_takes_a_level_index_or_a_name() -> None:
+    """Given either spelling of a level, when shifted, then the result agrees."""
+    run_result = _three_level_ramp_run_result()
+
+    by_name = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.5,
+        phase_shift_turns=-1,
+        phase_shift_levels="f",
+    )
+    by_index = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.5,
+        phase_shift_turns=-1,
+        phase_shift_levels=2,
+    )
+
+    assert np.array_equal(by_name["absolute_phases"], by_index["absolute_phases"])
+
+
+def test_readout_scan_phase_shift_takes_several_levels() -> None:
+    """Given several levels, when shifted, then all of them move."""
+    run_result = _three_level_ramp_run_result()
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.5,
+        phase_shift_turns=-1,
+        phase_shift_levels=["e", 2],
+    )
+
+    difference = shifted["absolute_phases"] - plain["absolute_phases"]
+    assert np.allclose(difference[0], 0.0)
+    assert np.allclose(difference[1:], -2 * np.pi)
+
+
+def test_readout_scan_phase_shift_defaults_to_every_level() -> None:
+    """Given no target level, when shifted, then every level moves."""
+    run_result = _three_level_ramp_run_result()
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.5,
+        phase_shift_turns=-1,
+    )
+
+    assert np.allclose(
+        shifted["absolute_phases"] - plain["absolute_phases"], -2 * np.pi
+    )
+
+
+@pytest.mark.parametrize("target_level", ["x", 5, -1])
+def test_readout_scan_phase_shift_rejects_a_level_the_scan_lacks(
+    target_level: Any,
+) -> None:
+    """Given a level that was not measured, when shifted, then it says so."""
+    with pytest.raises(ValueError, match="this scan does not hold"):
+        analyze_measure_dispersive_shift_extended(
+            run_result=_three_level_ramp_run_result(),
+            phase_shift_threshold=0.5,
+            phase_shift_turns=-1,
+            phase_shift_levels=target_level,
+        )
