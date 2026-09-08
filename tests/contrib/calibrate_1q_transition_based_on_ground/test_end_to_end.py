@@ -1214,17 +1214,17 @@ def test_readout_scan_finds_the_frequency_between_two_levels(
     assert abs(subset["optimal_frequency"] - midpoint) <= READOUT_DF
 
 
-def test_readout_scan_reports_one_optimum_per_nested_subset(
+def test_readout_scan_reports_both_readout_criteria(
     readout_scan_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given a three-rung ladder, when scanned, then every subset is reported."""
+    """Given a three-rung ladder, when scanned, then both criteria are reported."""
     exp = readout_scan_experiment_factory(max_level=3)
 
     result = _readout_scan(exp, max_level=3)
 
     payload = result.data[QUBIT]
     assert "error" not in payload
-    assert [subset["name"] for subset in payload["subsets"]] == ["ge", "gef", "gefh"]
+    assert [subset["name"] for subset in payload["subsets"]] == ["ge", "geL"]
     assert payload["signals"].shape == (4, payload["frequency_range"].size)
     assert set(result.figures) == {
         f"{QUBIT}:{name}"

@@ -821,8 +821,8 @@ def test_readout_scan_phase_distance_folds_across_pi() -> None:
     assert subset["optimal_phase_separation"] == pytest.approx(np.pi)
 
 
-def test_readout_scan_subsets_are_named_after_their_levels() -> None:
-    """Given a three-transition ladder, when analyzed, then subsets nest by name."""
+def test_readout_scan_reports_the_two_readout_criteria() -> None:
+    """Given a three-transition ladder, when analyzed, then ge and geL come back."""
     rng = np.random.default_rng(0)
     signals = _phasors(rng.uniform(0, 2 * np.pi, size=(4, 15)))
     run_result = _readout_scan_run_result(signals=signals)
@@ -830,11 +830,74 @@ def test_readout_scan_subsets_are_named_after_their_levels() -> None:
     data = analyze_measure_dispersive_shift_extended(run_result=run_result)
 
     subsets = data["subsets"]
-    assert [subset["name"] for subset in subsets] == ["ge", "gef", "gefh"]
-    assert [len(subset["levels"]) for subset in subsets] == [2, 3, 4]
+    assert [subset["name"] for subset in subsets] == ["ge", "geL"]
+    assert [subset["n_classes"] for subset in subsets] == [2, 3]
+    assert [len(subset["levels"]) for subset in subsets] == [2, 4]
+    # The bound counts classes to place on the circle, not levels measured, so it
+    # does not shrink as leakage levels are added.
     assert [subset["ideal_separation"] for subset in subsets] == pytest.approx(
-        [np.pi, 2 * np.pi / 3, np.pi / 2]
+        [np.pi, 2 * np.pi / 3]
     )
+    # `geL` drops the leakage-leakage pairs; with one leakage level there are
+    # none to drop, so it holds every pair of |g>, |e>, |f> and |h> except (2, 3).
+    assert set(subsets[1]["pairs"]) == {(0, 1), (0, 2), (0, 3), (1, 2), (1, 3)}
+
+
+def test_readout_scan_reports_only_ge_without_leakage_levels() -> None:
+    """Given a ge-only scan, when analyzed, then there is no leakage criterion."""
+    rng = np.random.default_rng(1)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(2, 15)))
+
+    data = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+
+    assert [subset["name"] for subset in data["subsets"]] == ["ge"]
+
+
+def test_readout_scan_geL_ignores_the_leakage_leakage_pair() -> None:
+    """Given two leakage levels side by side, when analyzed, then they do not count."""
+    n_points = 9
+    # |g> and |e> a third of a turn apart, |f> and |h> together a third further
+    # on: every pair that matters is 2 pi / 3, and the only close pair is |f>-|h>.
+    third = 2 * np.pi / 3
+    phases = np.stack(
+        [
+            np.zeros(n_points),
+            np.full(n_points, third),
+            np.full(n_points, 2 * third),
+            np.full(n_points, 2 * third + 0.01),
+        ]
+    )
+    run_result = _readout_scan_run_result(signals=_phasors(phases))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subset = data["subsets"][1]
+    assert subset["name"] == "geL"
+    # |h> sits 0.01 past |f>, so |g>-|h> is the tightest pair that counts at
+    # `third - 0.01`. Counting |f>-|h> would have made this 0.01 rad instead.
+    assert subset["optimal_phase_separation"] == pytest.approx(third - 0.01)
+    assert subset["limiting_pair"] not in {(2, 3), (3, 2)}
+
+
+def test_readout_scan_ge_ignores_the_leakage_levels_entirely() -> None:
+    """Given moved leakage levels, when analyzed, then the ge optimum is unchanged."""
+    n_points = 15
+    rng = np.random.default_rng(2)
+    base = rng.uniform(0, 2 * np.pi, size=(2, n_points))
+    with_leakage = np.vstack([base, rng.uniform(0, 2 * np.pi, size=(2, n_points))])
+    moved = np.vstack([base, rng.uniform(0, 2 * np.pi, size=(2, n_points))])
+
+    first = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=_phasors(with_leakage))
+    )["subsets"][0]
+    second = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=_phasors(moved))
+    )["subsets"][0]
+
+    assert first["optimal_frequency"] == second["optimal_frequency"]
+    assert np.array_equal(first["phase_separation"], second["phase_separation"])
 
 
 def test_readout_scan_ignores_points_where_a_level_vanishes() -> None:
@@ -918,9 +981,10 @@ def test_readout_scan_reports_the_pair_that_limits_the_optimum() -> None:
     data = analyze_measure_dispersive_shift_extended(run_result=run_result)
 
     subset = data["subsets"][1]
-    assert subset["name"] == "gef"
+    assert subset["name"] == "geL"
     assert subset["optimal_index"] == peak
-    # |e> and |f> sit 0.5 rad apart, closer than either is to |g>.
+    # |e> and |f> sit 0.5 rad apart, closer than either is to |g>. |f> is the
+    # only leakage level, so no pair is dropped and it still limits the minimum.
     assert subset["limiting_pair"] == (1, 2)
     assert subset["optimal_phase_separation"] == pytest.approx(0.5)
 

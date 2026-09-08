@@ -31,25 +31,41 @@ frequency moves on. The quantity of interest compares levels *at one frequency*,
 so interleaving keeps slow drift common to the traces being compared, and it
 retunes the readout once per group rather than once per level.
 
-For every nested subset `S_m = {|g>, ..., |m>}` the separation at a frequency is
-the smallest pairwise phase distance inside it::
+Two frequencies are reported, because there are two readouts worth tuning. The
+phase distance between two levels is taken as the argument of `z_i conj(z_j)`
+rather than as a difference of two `angle` calls: phase is circular, so that
+needs no unwrapping and lands in [0, pi].
 
-    sep_m(f) = min over i < j in S_m of |arg(z_i(f) conj(z_j(f)))|
+`"ge"` is the plain two-state readout - the frequency where |g> and |e> are
+furthest apart::
 
-and the reported optimum is the frequency where that minimum is largest. Phase
-is a circular quantity, so the distance is taken as the argument of
-`z_i conj(z_j)` rather than as a difference of two `angle` calls, and it lands
-in [0, pi]. The pair that realizes the minimum is reported too, because that
-pair is what limits the readout.
+    sep_ge(f) = |arg(z_g(f) conj(z_e(f)))|
+
+`"geL"` is the leakage-sensitive readout, which has to place a shot in one of
+`{|g>, |e>, L}` where `L` holds every level from |f> up. It therefore needs |g>
+apart from |e>, and both apart from every leakage level - but it never has to
+tell |f> from |h>::
+
+    sep_geL(f) = min( |arg(z_g conj(z_e))|,
+                      min over k in L of |arg(z_g conj(z_k))|,
+                      min over k in L of |arg(z_e conj(z_k))| )
+
+which is the smallest pairwise distance over every pair except the
+leakage-leakage ones. Keeping those pairs would let a frequency that happens to
+spread |f> and |h> apart win over one that actually separates the classes. The
+pair that realizes the minimum is reported too, because that pair is what limits
+the readout.
 
 The same max-min is reported on the Euclidean IQ distance `|z_i - z_j|`, which
 weighs amplitude contrast as well as phase. That is a distance between the
 *centroids* of the levels, not a discrimination fidelity: averaged data carries
 no covariance, so nothing here is noise-aware.
 
-`M` phasors on a circle can be spaced by at most `2 pi / M`, so the achievable
-separation shrinks as levels are added. The ideal bound reported next to each
-measured value is `2 pi / M`, not the two-level bound of `pi`.
+`M` phasors on a circle can be spaced by at most `2 pi / M`, and what has to be
+placed on the circle is one point per *class*, not per level - the leakage
+levels may coincide. So the ideal bound reported next to each measured value is
+`pi` for `"ge"` and `2 pi / 3` for `"geL"`, however many leakage levels the scan
+covered.
 
 Assumptions and caveats
 -----------------------
@@ -94,7 +110,6 @@ Assumptions and caveats
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
@@ -141,6 +156,11 @@ MIN_AMPLITUDE_FRACTION = 0.1
 #: Below it the levels are coincident to within the noise and the argmax is an
 #: arbitrary grid point rather than a readout frequency worth using.
 MIN_RESOLVED_SEPARATION = 0.05
+
+#: First level that counts as leakage. A leakage-sensitive readout resolves
+#: `{|g>, |e>, L}`, so every level from this one up is one class and the levels
+#: inside it never have to be told apart from each other.
+LEAKAGE_LEVEL = 2
 
 #: Relative tolerance within which two separations count as tied. Ties are
 #: broken deterministically, towards the current readout frequency.
@@ -794,10 +814,27 @@ def analyze_measure_dispersive_shift_extended(
     amplitude_floor = median_amplitude * min_amplitude_fraction
     valid = np.all(finite & (amplitudes >= amplitude_floor), axis=0)
 
+    # Two criteria, not one per nested subset. `"ge"` is the plain two-state
+    # readout. `"geL"` drops every leakage-leakage pair, because the readout only
+    # has to place a shot in one of `{|g>, |e>, L}` and never has to tell |f>
+    # from |h>; keeping those pairs would let a frequency that happens to spread
+    # the leakage states out win over one that separates the classes.
+    criteria: list[tuple[str, tuple[tuple[int, int], ...], tuple[int, ...], int]] = [
+        ("ge", ((0, 1),), (0, 1), 2)
+    ]
+    if max_level >= LEAKAGE_LEVEL:
+        leakage = tuple(range(LEAKAGE_LEVEL, max_level + 1))
+        criteria.append(
+            (
+                "geL",
+                ((0, 1), *((0, k) for k in leakage), *((1, k) for k in leakage)),
+                tuple(range(max_level + 1)),
+                3,
+            )
+        )
+
     subsets: list[dict[str, Any]] = []
-    for top in range(1, max_level + 1):
-        levels = tuple(range(top + 1))
-        pairs = tuple(itertools.combinations(levels, 2))
+    for name, pairs, levels, n_classes in criteria:
         phase_pairs = np.asarray(
             [_phase_distance(signals[i], signals[j]) for i, j in pairs]
         )
@@ -806,7 +843,6 @@ def analyze_measure_dispersive_shift_extended(
         )
         phase_separation = phase_pairs.min(axis=0)
         distance_separation = distance_pairs.min(axis=0)
-        name = "".join(state_labels[level] for level in levels)
 
         phase_index = _select_optimum(
             separation=phase_separation,
@@ -833,7 +869,10 @@ def analyze_measure_dispersive_shift_extended(
                 "optimal_index": phase_index,
                 "optimal_frequency": float(frequencies[phase_index]),
                 "optimal_phase_separation": optimal_phase_separation,
-                "ideal_separation": 2 * np.pi / len(levels),
+                "n_classes": n_classes,
+                # Leakage levels may sit on one point of the circle, so the bound
+                # counts classes to place, not levels measured.
+                "ideal_separation": 2 * np.pi / n_classes,
                 "limiting_pair": pairs[int(np.argmin(phase_pairs[:, phase_index]))],
                 "resolved": optimal_phase_separation >= min_resolved_separation,
                 "distance_separation": distance_separation,
@@ -1018,7 +1057,7 @@ def display_measure_dispersive_shift_extended(
             f"    {subset['name']:<6}: {subset['optimal_frequency']:.6f} GHz  "
             f"min |dphi| = {separation:.4f} rad ({np.degrees(separation):6.1f} deg)  "
             f"{separation / subset['ideal_separation']:6.1%} of 2pi/"
-            f"{len(subset['levels'])}  "
+            f"{subset['n_classes']}  "
             f"limited by |{state_labels[first]}>-|{state_labels[second]}>"
         )
         if not subset["resolved"]:
