@@ -2,6 +2,7 @@
 
 from .calibrate_1q_transition_based_on_ground import (
     apply_electrical_delay,
+    apply_phase_shift,
     calibrate_drag_hpi_pulse_based_on_ground,
     calibrate_drag_pi_pulse_based_on_ground,
     calibrate_hpi_pulse_based_on_ground,
@@ -131,6 +132,7 @@ from .post_selected_measurement.qnd_fidelity import (
 __all__ = [
     "analyze_chevron_matched_transform",
     "apply_electrical_delay",
+    "apply_phase_shift",
     "calibrate_cr_pi_pulse",
     "calibrate_drag_hpi_pulse_based_on_ground",
     "calibrate_drag_pi_pulse_based_on_ground",

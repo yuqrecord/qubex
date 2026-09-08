@@ -114,6 +114,7 @@ from . import _core
 __all__ = [
     "analyze_measure_dispersive_shift_extended",
     "apply_electrical_delay",
+    "apply_phase_shift",
     "display_measure_dispersive_shift_extended",
     "measure_dispersive_shift_extended",
     "plot_measure_dispersive_shift_extended",
@@ -650,6 +651,8 @@ def analyze_measure_dispersive_shift_extended(
     run_result: dict[str, Any],
     min_amplitude_fraction: float | None = None,
     min_resolved_separation: float | None = None,
+    phase_shift_threshold: float | None = None,
+    phase_shift_turns: int | None = None,
 ) -> dict[str, Any]:
     """
     Locate the readout frequency that best separates each nested set of levels.
@@ -665,6 +668,12 @@ def analyze_measure_dispersive_shift_extended(
     min_resolved_separation : float | None, optional
         Phase separation in rad below which a subset is reported as unresolved.
         Defaults to `MIN_RESOLVED_SEPARATION`.
+    phase_shift_threshold : float | None, optional
+        Absolute-phase threshold in rad above which whole turns are added to the
+        plotted phase. Display only. Defaults to no shift.
+    phase_shift_turns : int | None, optional
+        Number of turns to add above the threshold, so `-1` brings a trace down
+        by `2 pi`. Defaults to 0.
 
     Returns
     -------
@@ -678,6 +687,10 @@ def analyze_measure_dispersive_shift_extended(
         min_amplitude_fraction = MIN_AMPLITUDE_FRACTION
     if min_resolved_separation is None:
         min_resolved_separation = MIN_RESOLVED_SEPARATION
+    if phase_shift_threshold is None:
+        phase_shift_threshold = float("inf")
+    if phase_shift_turns is None:
+        phase_shift_turns = 0
 
     signals = np.asarray(run_result["signals"], dtype=np.complex128)
     frequencies = np.asarray(run_result["frequency_range"], dtype=np.float64)
@@ -700,6 +713,17 @@ def analyze_measure_dispersive_shift_extended(
     # The phase of each level as the de-embedded resonator shows it, made
     # continuous along the frequency axis.
     absolute_phases = np.unwrap(np.angle(corrected_signals), axis=1)
+    # `np.unwrap` anchors each trace at the principal value of its first sample,
+    # so a whole level can land a turn away from the others. Moving it back is a
+    # gauge choice that changes no information, and it is applied here rather
+    # than in `plot_` so that it survives a later re-analysis. The metrics are
+    # computed from the raw `signals` below and cannot see this.
+    if phase_shift_turns:
+        absolute_phases = np.where(
+            absolute_phases > phase_shift_threshold,
+            absolute_phases + phase_shift_turns * 2 * np.pi,
+            absolute_phases,
+        )
     # The ground state is the reference, so the common slope drops out either
     # way; unwrapping the relative phase directly is more robust than unwrapping
     # each level and subtracting afterwards.
@@ -779,6 +803,8 @@ def analyze_measure_dispersive_shift_extended(
         "valid_mask": valid,
         "min_amplitude_fraction": min_amplitude_fraction,
         "min_resolved_separation": min_resolved_separation,
+        "phase_shift_threshold": phase_shift_threshold,
+        "phase_shift_turns": phase_shift_turns,
         "subsets": subsets,
     }
 
@@ -1189,11 +1215,104 @@ def apply_electrical_delay(
                 f"got {delay!r}."
             )
 
+    return _reanalyze(result, electrical_delay=resolved)
+
+
+def apply_phase_shift(
+    result: Result,
+    *,
+    threshold: Mapping[str, float] | float,
+    turns: Mapping[str, int] | int,
+) -> Result:
+    """
+    Move whole turns of the plotted absolute phase above a threshold.
+
+    `np.unwrap` makes each level's trace continuous but anchors it at the
+    principal value of its first sample, so one level can end up a full turn away
+    from the rest for no physical reason. Adding `2 pi` to a trace changes no
+    information - the phase of a complex number is defined modulo `2 pi` - so
+    bringing it back is a gauge choice, made here for the eye.
+
+    It is a display correction and nothing else. Both reported optima are
+    computed from the raw `"signals"` through the circular distance
+    `|arg(z_i conj(z_j))|`, which never sees the unwrapped traces, so no shift
+    can move an optimum or change a separation curve::
+
+        result = measure_dispersive_shift_extended(exp, targets="Q00", max_level=3)
+        result = apply_phase_shift(result, threshold=3.0, turns=-1)
+
+    The shift is stored with the payload and reapplied whenever the analysis
+    runs again, so it composes with `apply_electrical_delay` in either order.
+
+    Parameters
+    ----------
+    result : Result
+        Result returned by `measure_dispersive_shift_extended`. It is not
+        modified.
+    threshold : Mapping[str, float] | float
+        Absolute phase in rad above which the turns are added, one value per
+        qubit label or one shared by every qubit.
+    turns : Mapping[str, int] | int
+        Whole turns to add above the threshold, so `-1` brings a trace down by
+        `2 pi`. `0` removes a shift applied earlier.
+
+    Returns
+    -------
+    Result
+        A new `Result` whose absolute-phase traces and figures carry the shift.
+        A target whose analysis had failed is passed through untouched.
+
+    Notes
+    -----
+    The test is applied point by point, so a trace that crosses the threshold is
+    shifted only where it is above it and shows a step of `turns * 2 pi` at the
+    crossing. Choose a threshold that no trace straddles - which is the usual
+    case, since the point is to separate one level's trace from the others.
+    """
+    qubits = list(result.data)
+    resolved_threshold = _resolve_per_qubit(
+        qubits=qubits,
+        values=threshold,
+        default=lambda _qubit: float("inf"),
+        name="threshold",
+    )
+    resolved_turns = {
+        qubit: int(value)
+        for qubit, value in _resolve_per_qubit(
+            qubits=qubits,
+            values=turns,
+            default=lambda _qubit: 0.0,
+            name="turns",
+        ).items()
+    }
+    for qubit, value in resolved_threshold.items():
+        if np.isnan(value):
+            raise ValueError(f"`threshold` for {qubit!r} must not be NaN.")
+    return _reanalyze(
+        result,
+        phase_shift_threshold=resolved_threshold,
+        phase_shift_turns=resolved_turns,
+    )
+
+
+def _reanalyze(
+    result: Result,
+    *,
+    electrical_delay: Mapping[str, float] | None = None,
+    phase_shift_threshold: Mapping[str, float] | None = None,
+    phase_shift_turns: Mapping[str, int] | None = None,
+) -> Result:
+    """
+    Re-run the analysis and the figures, overriding one display knob per qubit.
+
+    Every knob that is not overridden is read back out of the payload, so the
+    corrections the `apply_` helpers make survive one another whatever order
+    they are called in.
+    """
     original_figures = dict(result.figures or {})
     data: dict[str, Any] = {}
     figures: dict[str, go.Figure] = {}
-    for qubit in qubits:
-        payload = result.data[qubit]
+    for qubit, payload in result.data.items():
         if "error" in payload:
             data[qubit] = payload
             figures.update(
@@ -1205,9 +1324,20 @@ def apply_electrical_delay(
             )
             continue
         analyzed = analyze_measure_dispersive_shift_extended(
-            run_result={**payload, "electrical_delay": resolved[qubit]},
+            run_result={
+                **payload,
+                "electrical_delay": payload["electrical_delay"]
+                if electrical_delay is None
+                else electrical_delay[qubit],
+            },
             min_amplitude_fraction=payload["min_amplitude_fraction"],
             min_resolved_separation=payload["min_resolved_separation"],
+            phase_shift_threshold=payload.get("phase_shift_threshold")
+            if phase_shift_threshold is None
+            else phase_shift_threshold[qubit],
+            phase_shift_turns=payload.get("phase_shift_turns")
+            if phase_shift_turns is None
+            else phase_shift_turns[qubit],
         )
         data[qubit] = analyzed
         figures.update(

@@ -1126,3 +1126,85 @@ def test_readout_scan_requires_the_electrical_delay_to_be_present() -> None:
 
     with pytest.raises(KeyError, match="electrical_delay"):
         analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+
+def test_readout_scan_shifts_only_the_phases_above_the_threshold() -> None:
+    """Given a threshold, when shifted, then only the points above it move."""
+    n_points = 21
+    ramp = np.linspace(0.0, 3.0, n_points)
+    signals = _phasors(np.stack([np.zeros(n_points), ramp]))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=1.5,
+        phase_shift_turns=-1,
+    )
+
+    above = plain["absolute_phases"] > 1.5
+    assert above.any() and not above.all()
+    difference = shifted["absolute_phases"] - plain["absolute_phases"]
+    assert np.allclose(difference[above], -2 * np.pi)
+    assert np.allclose(difference[~above], 0.0)
+
+
+def test_readout_scan_phase_shift_moves_a_whole_trace() -> None:
+    """Given a trace entirely above the threshold, when shifted, then all of it moves."""
+    n_points = 11
+    # The second level winds past 2 pi, so `np.unwrap` anchors it near +0.7 and
+    # its whole trace sits above the first one.
+    signals = _phasors(np.stack([np.zeros(n_points), np.linspace(7.0, 8.0, n_points)]))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.5,
+        phase_shift_turns=-1,
+    )
+
+    assert (plain["absolute_phases"][1] > 0.5).all()
+    assert (plain["absolute_phases"][0] <= 0.5).all()
+    assert np.allclose(
+        shifted["absolute_phases"][1], plain["absolute_phases"][1] - 2 * np.pi
+    )
+    assert np.array_equal(shifted["absolute_phases"][0], plain["absolute_phases"][0])
+
+
+def test_readout_scan_phase_shift_of_zero_turns_is_identity() -> None:
+    """Given zero turns, when analyzed, then nothing moves."""
+    rng = np.random.default_rng(7)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, 13)))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.0,
+        phase_shift_turns=0,
+    )
+
+    assert np.array_equal(plain["absolute_phases"], shifted["absolute_phases"])
+
+
+def test_readout_scan_phase_shift_does_not_move_the_optimum() -> None:
+    """Given any shift, when analyzed, then neither metric changes at all."""
+    rng = np.random.default_rng(8)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, 17)))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_threshold=0.0,
+        phase_shift_turns=-3,
+    )
+
+    for left, right in zip(plain["subsets"], shifted["subsets"], strict=True):
+        # The metrics come from the raw signals, so this is exact, not close.
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["optimal_phase_separation"] == right["optimal_phase_separation"]
+        assert np.array_equal(left["phase_separation"], right["phase_separation"])
+        assert np.array_equal(left["distance_separation"], right["distance_separation"])
+    assert np.array_equal(plain["relative_phases"], shifted["relative_phases"])
