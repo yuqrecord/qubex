@@ -2,6 +2,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import qubex as qx
 from qubex.experiment.models import Result
+from qubex.measurement import (
+    MeasurementSchedule,
+    MeasurementScheduleRunner,
+    Quel1MeasurementBackendAdapter,
+)
+from qubex.measurement.models.capture_schedule import CaptureSchedule
 from qxpulse import Waveform
 from scipy.optimize import minimize
 
@@ -180,12 +186,59 @@ def run_mist_benchmarking(
                     schedule.plot(
                         title=f"Pulse Schedule {sequence} m={n_repeats} |{state}>"
                     )
-                result[n_repeats][sequence][state] = exp.execute(
-                    schedule=schedule,
-                    mode="single",
-                    time_integration=False,
+                reference_schedule = exp.build_measurement_schedule(
+                    schedule,
+                    final_measurement=False,
+                    capture_placement="pulse_aligned",
+                    readout_amplification=False,
+                )
+                all_captures = sorted(
+                    reference_schedule.capture_schedule.channels[resonator],
+                    key=lambda capture: capture.start_time,
+                )
+                workaround = [
+                    capture for capture in all_captures if capture.is_workaround
+                ][0]
+                real_captures = [
+                    capture for capture in all_captures if not capture.is_workaround
+                ]
+                selected_captures = [
+                    workaround,
+                    real_captures[0],  # Herald
+                    real_captures[1],  # First repeated readout
+                    real_captures[-1],  # Final readout
+                ]
+                capture_schedule = CaptureSchedule(
+                    captures=selected_captures,
+                )
+                measurement_schedule = MeasurementSchedule(
+                    pulse_schedule=reference_schedule.pulse_schedule,
+                    capture_schedule=capture_schedule,
+                )
+
+                class ThreeCaptureAdapter(Quel1MeasurementBackendAdapter):
+                    def validate_schedule(self, _schedule):
+                        super().validate_schedule(reference_schedule)
+
+                adapter = ThreeCaptureAdapter(
+                    backend_controller=exp.backend_controller,
+                    experiment_system=exp.experiment_system,
+                    constraint_profile=exp.measurement.constraint_profile,
+                )
+                runner = MeasurementScheduleRunner(
+                    measurement_backend_adapter=adapter,
+                    backend_controller=exp.backend_controller,
+                )
+                config = exp.measurement.create_measurement_config(
                     n_shots=n_shots,
                     shot_interval=shot_interval,
+                    shot_averaging=False,
+                    time_integration=False,
+                    state_classification=False,
+                )
+                result[n_repeats][sequence][state] = runner.execute_sync(
+                    schedule=measurement_schedule,
+                    config=config,
                 )
     return result
 
@@ -218,9 +271,9 @@ def analyze_mist_benchmarking(
             signals = []
             for n_repeats in n_repeats_list:
                 readouts = run_result[n_repeats][sequence][state].data[target]
-                herald = readouts[0].raw
-                assignment = readouts[1].raw
-                leakage_sensitive = readouts[-1].raw
+                herald = readouts[0].data
+                assignment = readouts[1].data
+                leakage_sensitive = readouts[-1].data
                 selected = ge_classifier.predict(herald) == 0
                 # The leakage classifier was trained on de-rotated traces, so the
                 # same rotation has to come off here before it is applied.
