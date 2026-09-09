@@ -418,49 +418,40 @@ def _select_optimum(
     return int(closest[np.argmin(frequency_range[closest])])
 
 
-def _resolve_phase_shift_levels(
-    target_level: int | str | Collection[int | str] | None,
+def _resolve_level_index(
+    level: int | str,
     *,
     state_labels: Sequence[str],
-) -> tuple[int, ...] | None:
+) -> int:
     """
-    Return the level indices a phase shift applies to, or `None` for all of them.
+    Return the index of one level, named or numbered.
 
     Parameters
     ----------
-    target_level : int | str | Collection[int | str] | None
-        Level index, level name, or several of either. `None` selects every
-        level.
+    level : int | str
+        Level index, or a level name such as `"f"`.
     state_labels : Sequence[str]
         Level names of the scan, in level order.
 
     Returns
     -------
-    tuple[int, ...] | None
-        Level indices, or `None` when every level is selected.
+    int
+        Index into the level axis of the scan.
     """
-    if target_level is None:
-        return None
-    if isinstance(target_level, (int, str)):
-        target_level = [target_level]
-    resolved: list[int] = []
-    for level in target_level:
-        if isinstance(level, str):
-            if level not in state_labels:
-                raise ValueError(
-                    f"`target_level` names {level!r}, which this scan does not "
-                    f"hold. It measured {list(state_labels)}."
-                )
-            resolved.append(state_labels.index(level))
-        else:
-            index = int(level)
-            if not 0 <= index < len(state_labels):
-                raise ValueError(
-                    f"`target_level` asks for level {index}, which this scan does "
-                    f"not hold. It measured levels 0 to {len(state_labels) - 1}."
-                )
-            resolved.append(index)
-    return tuple(resolved)
+    if isinstance(level, str):
+        if level not in state_labels:
+            raise ValueError(
+                f"The phase-shift config names level {level!r}, which this scan "
+                f"does not hold. It measured {list(state_labels)}."
+            )
+        return state_labels.index(level)
+    index = int(level)
+    if not 0 <= index < len(state_labels):
+        raise ValueError(
+            f"The phase-shift config asks for level {index}, which this scan does "
+            f"not hold. It measured levels 0 to {len(state_labels) - 1}."
+        )
+    return index
 
 
 def _resolve_per_qubit(
@@ -716,9 +707,7 @@ def analyze_measure_dispersive_shift_extended(
     run_result: dict[str, Any],
     min_amplitude_fraction: float | None = None,
     min_resolved_separation: float | None = None,
-    phase_shift_threshold: float | None = None,
-    phase_shift_turns: int | None = None,
-    phase_shift_levels: int | str | Collection[int | str] | None = None,
+    phase_shift_config: Mapping[int | str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Locate the readout frequency that best separates each nested set of levels.
@@ -734,15 +723,11 @@ def analyze_measure_dispersive_shift_extended(
     min_resolved_separation : float | None, optional
         Phase separation in rad below which a subset is reported as unresolved.
         Defaults to `MIN_RESOLVED_SEPARATION`.
-    phase_shift_threshold : float | None, optional
-        Absolute-phase threshold in rad above which whole turns are added to the
-        plotted phase. Display only. Defaults to no shift.
-    phase_shift_turns : int | None, optional
-        Number of turns to add above the threshold, so `-1` brings a trace down
-        by `2 pi`. Defaults to 0.
-    phase_shift_levels : int | str | Collection[int | str] | None, optional
-        Levels the shift applies to, by index or by name. Defaults to every
-        level.
+    phase_shift_config : Mapping[int | str, Mapping[str, Any]] | None, optional
+        Whole turns to add to the plotted absolute phase, keyed by level index or
+        level name. Each entry takes `"turns"` and an optional
+        `"frequency_range"` of `[low, high]` in GHz, defaulting to the whole
+        sweep. Display only. Defaults to no shift.
 
     Returns
     -------
@@ -756,10 +741,6 @@ def analyze_measure_dispersive_shift_extended(
         min_amplitude_fraction = MIN_AMPLITUDE_FRACTION
     if min_resolved_separation is None:
         min_resolved_separation = MIN_RESOLVED_SEPARATION
-    if phase_shift_threshold is None:
-        phase_shift_threshold = float("inf")
-    if phase_shift_turns is None:
-        phase_shift_turns = 0
 
     signals = np.asarray(run_result["signals"], dtype=np.complex128)
     frequencies = np.asarray(run_result["frequency_range"], dtype=np.float64)
@@ -787,20 +768,24 @@ def analyze_measure_dispersive_shift_extended(
     # gauge choice that changes no information, and it is applied here rather
     # than in `plot_` so that it survives a later re-analysis. The metrics are
     # computed from the raw `signals` below and cannot see this.
-    if phase_shift_turns:
-        shift = absolute_phases > phase_shift_threshold
-        selected = _resolve_phase_shift_levels(
-            phase_shift_levels, state_labels=state_labels
-        )
-        if selected is not None:
-            rows = np.zeros(len(absolute_phases), dtype=bool)
-            rows[list(selected)] = True
-            shift = shift & rows[:, None]
-        absolute_phases = np.where(
-            shift,
-            absolute_phases + phase_shift_turns * 2 * np.pi,
-            absolute_phases,
-        )
+    if phase_shift_config:
+        absolute_phases = absolute_phases.copy()
+        for level, spec in phase_shift_config.items():
+            index = _resolve_level_index(level, state_labels=state_labels)
+            turns = int(spec["turns"])
+            if not turns:
+                continue
+            window = spec.get("frequency_range")
+            if window is None:
+                inside = np.ones(frequencies.size, dtype=bool)
+            else:
+                low, high = float(window[0]), float(window[1])
+                inside = (frequencies >= low) & (frequencies <= high)
+            absolute_phases[index] = np.where(
+                inside,
+                absolute_phases[index] + turns * 2 * np.pi,
+                absolute_phases[index],
+            )
     # The ground state is the reference, so the common slope drops out either
     # way; unwrapping the relative phase directly is more robust than unwrapping
     # each level and subtracting afterwards.
@@ -899,9 +884,7 @@ def analyze_measure_dispersive_shift_extended(
         "valid_mask": valid,
         "min_amplitude_fraction": min_amplitude_fraction,
         "min_resolved_separation": min_resolved_separation,
-        "phase_shift_threshold": phase_shift_threshold,
-        "phase_shift_turns": phase_shift_turns,
-        "phase_shift_levels": phase_shift_levels,
+        "phase_shift_config": phase_shift_config,
         "subsets": subsets,
     }
 
@@ -1317,53 +1300,45 @@ def apply_electrical_delay(
 
 def apply_phase_shift(
     result: Result,
-    *,
-    threshold: Mapping[str, float] | float,
-    turns: Mapping[str, int] | int,
-    target_level: int | str | Collection[int | str] | None = None,
+    config: Mapping[str, Mapping[int | str, Mapping[str, Any]]],
 ) -> Result:
     """
-    Move whole turns of the plotted absolute phase above a threshold.
+    Move whole turns of the plotted absolute phase over a frequency window.
 
     `np.unwrap` makes each level's trace continuous but anchors it at the
-    principal value of its first sample, so one level can end up a full turn away
-    from the rest for no physical reason. Adding `2 pi` to a trace changes no
-    information - the phase of a complex number is defined modulo `2 pi` - so
-    bringing it back is a gauge choice, made here for the eye.
+    principal value of its first sample, so a trace can end up a full turn away
+    from the rest for no physical reason, and a trace that winds can pick the
+    branch up part way through the sweep. Adding `2 pi` changes no information -
+    the phase of a complex number is defined modulo `2 pi` - so putting it back
+    is a gauge choice, made here for the eye.
 
     It is a display correction and nothing else. Both reported optima are
     computed from the raw `"signals"` through the circular distance
     `|arg(z_i conj(z_j))|`, which never sees the unwrapped traces, so no shift
-    can move an optimum or change a separation curve::
+    can move an optimum or change a separation curve.
 
-        result = measure_dispersive_shift_extended(exp, targets="Q00", max_level=3)
-        result = apply_phase_shift(result, threshold=3.0, turns=-1)
+    The window is given in frequency, which is what the figure's own x axis
+    shows, so a range can be read straight off the plot::
 
-    `target_level` narrows it to the levels that actually need moving, by name
-    or by index, so the rest of the figure is left alone::
-
-        result = apply_phase_shift(result, threshold=3.0, turns=-1, target_level="f")
-        result = apply_phase_shift(result, threshold=3.0, turns=-1, target_level=["f", "h"])
-
-    The shift is stored with the payload and reapplied whenever the analysis
-    runs again, so it composes with `apply_electrical_delay` in either order.
+        config = {
+            "Q04": {
+                "f": {"frequency_range": [10.6, 10.65], "turns": -1},
+                "h": {"turns": -1},
+            },
+        }
+        result = apply_phase_shift(result, config)
 
     Parameters
     ----------
     result : Result
         Result returned by `measure_dispersive_shift_extended`. It is not
         modified.
-    threshold : Mapping[str, float] | float
-        Absolute phase in rad above which the turns are added, one value per
-        qubit label or one shared by every qubit.
-    turns : Mapping[str, int] | int
-        Whole turns to add above the threshold, so `-1` brings a trace down by
-        `2 pi`. `0` removes a shift applied earlier.
-    target_level : int | str | Collection[int | str] | None, optional
-        Levels to move, as a level index, a level name such as `"f"`, or several
-        of either. Defaults to every level. It is one selection for the whole
-        batch; to move a different level on a different qubit, pass `turns` as a
-        mapping and set the qubits to leave alone to `0`.
+    config : Mapping[str, Mapping[int | str, Mapping[str, Any]]]
+        Qubit label to level to specification. A level is named (`"f"`) or
+        numbered, and its specification takes `"turns"`, a signed whole number of
+        turns to add - so `-1` brings a trace down by `2 pi` and `0` does
+        nothing - and an optional `"frequency_range"` of `[low, high]` in GHz,
+        inclusive at both ends, defaulting to the whole sweep.
 
     Returns
     -------
@@ -1373,46 +1348,33 @@ def apply_phase_shift(
 
     Notes
     -----
-    The test is applied point by point, so a trace that crosses the threshold is
-    shifted only where it is above it and shows a step of `turns * 2 pi` at the
-    crossing. Choose a threshold that no trace straddles - which is the usual
-    case, since the point is to separate one level's trace from the others - or
-    name that level with `target_level` and let the threshold be loose.
+    Only the qubits named in `config` are changed; a qubit left out keeps the
+    shift it already had, so one target can be adjusted without disturbing the
+    others. Pass an empty mapping for a qubit to clear its shift.
+
+    The shift is stored with the payload and reapplied whenever the analysis runs
+    again, so it composes with `apply_electrical_delay` in either order.
     """
-    qubits = list(result.data)
-    resolved_threshold = _resolve_per_qubit(
-        qubits=qubits,
-        values=threshold,
-        default=lambda _qubit: float("inf"),
-        name="threshold",
-    )
-    resolved_turns = {
-        qubit: int(value)
-        for qubit, value in _resolve_per_qubit(
-            qubits=qubits,
-            values=turns,
-            default=lambda _qubit: 0.0,
-            name="turns",
-        ).items()
+    unknown = set(config) - set(result.data)
+    if unknown:
+        raise ValueError(
+            f"`config` names {sorted(unknown)}, which this result does not hold. "
+            f"It covers {sorted(result.data)}."
+        )
+    merged = {
+        qubit: config[qubit]
+        if qubit in config
+        else result.data[qubit].get("phase_shift_config")
+        for qubit in result.data
     }
-    for qubit, value in resolved_threshold.items():
-        if np.isnan(value):
-            raise ValueError(f"`threshold` for {qubit!r} must not be NaN.")
-    return _reanalyze(
-        result,
-        phase_shift_threshold=resolved_threshold,
-        phase_shift_turns=resolved_turns,
-        phase_shift_levels={qubit: target_level for qubit in qubits},
-    )
+    return _reanalyze(result, phase_shift_config=merged)
 
 
 def _reanalyze(
     result: Result,
     *,
     electrical_delay: Mapping[str, float] | None = None,
-    phase_shift_threshold: Mapping[str, float] | None = None,
-    phase_shift_turns: Mapping[str, int] | None = None,
-    phase_shift_levels: Mapping[str, Any] | None = None,
+    phase_shift_config: Mapping[str, Any] | None = None,
 ) -> Result:
     """
     Re-run the analysis and the figures, overriding one display knob per qubit.
@@ -1444,15 +1406,9 @@ def _reanalyze(
             },
             min_amplitude_fraction=payload["min_amplitude_fraction"],
             min_resolved_separation=payload["min_resolved_separation"],
-            phase_shift_threshold=payload.get("phase_shift_threshold")
-            if phase_shift_threshold is None
-            else phase_shift_threshold[qubit],
-            phase_shift_turns=payload.get("phase_shift_turns")
-            if phase_shift_turns is None
-            else phase_shift_turns[qubit],
-            phase_shift_levels=payload.get("phase_shift_levels")
-            if phase_shift_levels is None
-            else phase_shift_levels[qubit],
+            phase_shift_config=payload.get("phase_shift_config")
+            if phase_shift_config is None
+            else phase_shift_config[qubit],
         )
         data[qubit] = analyzed
         figures.update(

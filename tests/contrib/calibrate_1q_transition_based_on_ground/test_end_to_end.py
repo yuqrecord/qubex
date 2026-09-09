@@ -1512,34 +1512,36 @@ def test_apply_electrical_delay_passes_a_failed_target_through() -> None:
     assert "corrected_signals" not in updated.data[QUBIT]
 
 
-def test_apply_phase_shift_moves_the_absolute_phase(
+def test_apply_phase_shift_moves_only_inside_the_frequency_window(
     readout_scan_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given a threshold, when a shift is applied, then the traces above it move."""
-    exp = readout_scan_experiment_factory(max_level=1)
-    result = _readout_scan(exp, max_level=1)
+    """Given a window, when a shift is applied, then only that band moves."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
     before = np.array(result.data[QUBIT]["absolute_phases"], copy=True)
-    threshold = float(np.median(before))
+    frequencies = result.data[QUBIT]["frequency_range"]
+    low, high = frequencies[10], frequencies[25]
 
-    updated = apply_phase_shift(result, threshold=threshold, turns=-1)
+    updated = apply_phase_shift(
+        result, {QUBIT: {"f": {"frequency_range": [low, high], "turns": -1}}}
+    )
 
-    after = updated.data[QUBIT]["absolute_phases"]
-    above = before > threshold
-    assert above.any() and not above.all()
-    assert np.allclose((after - before)[above], -2 * np.pi)
-    assert np.allclose((after - before)[~above], 0.0)
-    assert updated.data[QUBIT]["phase_shift_turns"] == -1
+    difference = updated.data[QUBIT]["absolute_phases"] - before
+    inside = (frequencies >= low) & (frequencies <= high)
+    assert np.allclose(difference[2][inside], -2 * np.pi)
+    assert np.allclose(difference[2][~inside], 0.0)
+    assert np.allclose(difference[:2], 0.0)
 
 
 def test_apply_phase_shift_leaves_the_original_result_alone(
     readout_scan_experiment_factory: Callable[..., Any],
 ) -> None:
     """Given a result, when a shift is applied, then the input is not modified."""
-    exp = readout_scan_experiment_factory(max_level=1)
-    result = _readout_scan(exp, max_level=1)
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
     before = np.array(result.data[QUBIT]["absolute_phases"], copy=True)
 
-    updated = apply_phase_shift(result, threshold=0.0, turns=-1)
+    updated = apply_phase_shift(result, {QUBIT: {"f": {"turns": -1}}})
 
     assert np.array_equal(result.data[QUBIT]["absolute_phases"], before)
     assert updated.data[QUBIT] is not result.data[QUBIT]
@@ -1552,7 +1554,7 @@ def test_apply_phase_shift_does_not_move_the_optimum(
     exp = readout_scan_experiment_factory(max_level=2)
     result = _readout_scan(exp, max_level=2)
 
-    updated = apply_phase_shift(result, threshold=0.0, turns=2)
+    updated = apply_phase_shift(result, {QUBIT: {"e": {"turns": 2}}})
 
     for left, right in zip(
         result.data[QUBIT]["subsets"],
@@ -1571,78 +1573,83 @@ def test_apply_phase_shift_composes_with_the_delay_in_either_order(
     readout_scan_experiment_factory: Callable[..., Any],
 ) -> None:
     """Given both corrections, when applied, then the order does not matter."""
-    exp = readout_scan_experiment_factory(max_level=1)
-    result = _readout_scan(exp, max_level=1)
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    config = {QUBIT: {"f": {"turns": -1}}}
 
-    delay_first = apply_phase_shift(
-        apply_electrical_delay(result, DELAY), threshold=0.0, turns=-1
-    )
-    shift_first = apply_electrical_delay(
-        apply_phase_shift(result, threshold=0.0, turns=-1), DELAY
-    )
+    delay_first = apply_phase_shift(apply_electrical_delay(result, DELAY), config)
+    shift_first = apply_electrical_delay(apply_phase_shift(result, config), DELAY)
 
     assert np.allclose(
         delay_first.data[QUBIT]["absolute_phases"],
         shift_first.data[QUBIT]["absolute_phases"],
     )
     assert delay_first.data[QUBIT]["electrical_delay"] == DELAY
-    assert shift_first.data[QUBIT]["electrical_delay"] == DELAY
-    assert delay_first.data[QUBIT]["phase_shift_turns"] == -1
-    assert shift_first.data[QUBIT]["phase_shift_turns"] == -1
+    assert shift_first.data[QUBIT]["phase_shift_config"] == config[QUBIT]
 
 
-def test_apply_phase_shift_takes_one_value_per_qubit(
+def test_apply_phase_shift_takes_a_config_per_qubit(
     readout_scan_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given mappings, when applied, then each qubit gets its own shift."""
-    exp = readout_scan_experiment_factory(max_level=1, qubits=[QUBIT, QUBIT_2])
-    result = _readout_scan(exp, max_level=1)
+    """Given two qubits, when a shift is applied, then each gets its own config."""
+    exp = readout_scan_experiment_factory(max_level=2, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=2)
 
     updated = apply_phase_shift(
         result,
-        threshold={QUBIT: 0.0, QUBIT_2: 1.0},
-        turns={QUBIT: -1, QUBIT_2: 2},
+        {QUBIT: {"f": {"turns": -1}}, QUBIT_2: {"e": {"turns": -2}}},
     )
 
-    assert updated.data[QUBIT]["phase_shift_turns"] == -1
-    assert updated.data[QUBIT_2]["phase_shift_turns"] == 2
-    assert updated.data[QUBIT_2]["phase_shift_threshold"] == 1.0
-
-
-def test_apply_phase_shift_moves_only_the_named_level(
-    readout_scan_experiment_factory: Callable[..., Any],
-) -> None:
-    """Given a target level, when a shift is applied, then only that level moves."""
-    exp = readout_scan_experiment_factory(max_level=2)
-    result = _readout_scan(exp, max_level=2)
-    before = np.array(result.data[QUBIT]["absolute_phases"], copy=True)
-
-    updated = apply_phase_shift(result, threshold=-np.inf, turns=-1, target_level="f")
-
-    difference = updated.data[QUBIT]["absolute_phases"] - before
-    assert np.allclose(difference[2], -2 * np.pi)
-    assert np.allclose(difference[:2], 0.0)
-    assert updated.data[QUBIT]["phase_shift_levels"] == "f"
-
-
-def test_apply_phase_shift_target_level_survives_a_delay_change(
-    readout_scan_experiment_factory: Callable[..., Any],
-) -> None:
-    """Given a targeted shift, when the delay changes, then the target is kept."""
-    exp = readout_scan_experiment_factory(max_level=2)
-    result = _readout_scan(exp, max_level=2)
-
-    shifted = apply_phase_shift(result, threshold=-np.inf, turns=-1, target_level="f")
-    delayed = apply_electrical_delay(shifted, DELAY)
-    both_at_once = apply_phase_shift(
-        apply_electrical_delay(result, DELAY),
-        threshold=-np.inf,
-        turns=-1,
-        target_level="f",
-    )
-
-    assert delayed.data[QUBIT]["phase_shift_levels"] == "f"
+    first = updated.data[QUBIT]["absolute_phases"]
+    second = updated.data[QUBIT_2]["absolute_phases"]
+    assert np.allclose(first[2] - result.data[QUBIT]["absolute_phases"][2], -2 * np.pi)
     assert np.allclose(
-        delayed.data[QUBIT]["absolute_phases"],
-        both_at_once.data[QUBIT]["absolute_phases"],
+        second[1] - result.data[QUBIT_2]["absolute_phases"][1], -4 * np.pi
     )
+
+
+def test_apply_phase_shift_keeps_a_qubit_left_out_of_the_config(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a config naming one qubit, when applied, then the other keeps its shift."""
+    exp = readout_scan_experiment_factory(max_level=2, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=2)
+
+    both = apply_phase_shift(
+        result, {QUBIT: {"f": {"turns": -1}}, QUBIT_2: {"f": {"turns": -1}}}
+    )
+    retuned = apply_phase_shift(both, {QUBIT: {"f": {"turns": -2}}})
+
+    assert retuned.data[QUBIT]["phase_shift_config"] == {"f": {"turns": -2}}
+    assert retuned.data[QUBIT_2]["phase_shift_config"] == {"f": {"turns": -1}}
+    assert np.array_equal(
+        retuned.data[QUBIT_2]["absolute_phases"],
+        both.data[QUBIT_2]["absolute_phases"],
+    )
+
+
+def test_apply_phase_shift_clears_a_qubit_with_an_empty_config(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an empty mapping, when applied, then that qubit's shift is dropped."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    shifted = apply_phase_shift(result, {QUBIT: {"f": {"turns": -1}}})
+    cleared = apply_phase_shift(shifted, {QUBIT: {}})
+
+    assert np.array_equal(
+        cleared.data[QUBIT]["absolute_phases"],
+        result.data[QUBIT]["absolute_phases"],
+    )
+
+
+def test_apply_phase_shift_rejects_an_unknown_qubit(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a qubit the result lacks, when applied, then it says so."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    with pytest.raises(ValueError, match="this result does not hold"):
+        apply_phase_shift(result, {QUBIT_2: {"f": {"turns": -1}}})
