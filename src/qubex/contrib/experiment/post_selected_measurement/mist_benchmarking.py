@@ -175,9 +175,7 @@ def run_mist_benchmarking(
                     s.add(resonator, padded_leakage_sensitive_readout_pulse)
                     s.add(resonator, qx.pulse.Blank(pump_buffer_time))
                 if plot_pulse_schedule and (
-                    n_repeats == n_repeats_list[0]
-                    or n_repeats == n_repeats_list[len(n_repeats_list) // 2]
-                    or n_repeats == n_repeats_list[-1]
+                    n_repeats == n_repeats_list[0] or n_repeats == n_repeats_list[1]
                 ):
                     schedule.plot(
                         title=f"Pulse Schedule {sequence} m={n_repeats} |{state}>"
