@@ -14,6 +14,7 @@ ENTRY_POINTS = (
     "chevron_pattern_based_on_ground",
     "measure_dispersive_shift_extended",
     "obtain_rabi_params_based_on_ground",
+    "ramsey_experiment_based_on_ground",
 )
 
 STAGE_PREFIXES = ("run_", "analyze_", "plot_", "display_")

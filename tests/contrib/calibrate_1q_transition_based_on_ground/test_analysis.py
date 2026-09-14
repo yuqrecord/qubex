@@ -9,10 +9,12 @@ import numpy as np
 import plotly.graph_objects as go
 import pytest
 
+from qubex.analysis import FitStatus, fitting
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
     analyze_measure_dispersive_shift_extended,
+    analyze_ramsey_experiment_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
 from qubex.pulse import Drag, FlatTop
@@ -1307,3 +1309,89 @@ def test_readout_scan_phase_shift_rejects_a_level_the_scan_lacks(level: Any) -> 
             run_result=_four_level_ramp_run_result(),
             phase_shift_config={level: {"turns": -1}},
         )
+
+
+#: True fringe frequency of the synthetic Ramsey traces, in GHz.
+RAMSEY_FRINGE = 0.0012
+
+#: True coherence time of the synthetic Ramsey traces, in ns.
+RAMSEY_T2 = 4000.0
+
+#: Carrier of the synthetic Ramsey traces, in GHz.
+RAMSEY_CARRIER = 7.5
+
+
+def _ramsey_run_result(
+    *,
+    detuning: float = 0.001,
+    fringe: float = RAMSEY_FRINGE,
+    t2: float = RAMSEY_T2,
+    times: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Return a run payload carrying an ideal `-X90` Ramsey trace."""
+    if times is None:
+        times = np.arange(0, 10001, 100, dtype=np.float64)
+    # Closing with -X90 puts the fringe at an extremum at T = 0, so the trace is
+    # a cosine with no phase offset at all.
+    normalized = np.exp(-times / t2) * np.cos(2 * np.pi * fringe * times)
+    return {
+        "qubit": QUBIT,
+        "transition": "fh",
+        "target": f"{QUBIT}-fh",
+        "lower_labels": (QUBIT, f"{QUBIT}-ef"),
+        "time_range": times,
+        "detuning": detuning,
+        "frequency": RAMSEY_CARRIER,
+        "drive_frequency": RAMSEY_CARRIER + detuning,
+        "raw": normalized.astype(np.complex128),
+        "normalized": normalized,
+    }
+
+
+def test_ramsey_fit_recovers_the_fringe_frequency_and_the_coherence_time() -> None:
+    """Given an ideal fringe, when analyzed, then the fit returns its parameters."""
+    payload = analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())
+
+    assert payload["ramsey_frequency"] == pytest.approx(RAMSEY_FRINGE, rel=1e-6)
+    assert payload["t2"] == pytest.approx(RAMSEY_T2, rel=1e-6)
+    assert payload["r2"] == pytest.approx(1.0)
+    # -X90 closes the sequence, so the fringe is a cosine anchored at T = 0.
+    assert payload["phi"] == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("detuning", [0.001, -0.001])
+def test_ramsey_resonance_sits_on_the_carrier_side_of_the_drive(
+    detuning: float,
+) -> None:
+    """Given either sign of detuning, when analyzed, then the branch follows it."""
+    payload = analyze_ramsey_experiment_based_on_ground(
+        run_result=_ramsey_run_result(detuning=detuning)
+    )
+
+    drive = RAMSEY_CARRIER + detuning
+    fringe = payload["ramsey_frequency"]
+    sign = np.sign(detuning)
+    assert payload["resonant_frequency"] == pytest.approx(drive - sign * fringe)
+    assert payload["mirror_frequency"] == pytest.approx(drive + sign * fringe)
+    # The reported branch is the one that moves back towards the carrier.
+    assert abs(payload["resonant_frequency"] - RAMSEY_CARRIER) < abs(
+        payload["mirror_frequency"] - RAMSEY_CARRIER
+    )
+    assert payload["detuning_from_carrier"] == pytest.approx(
+        payload["resonant_frequency"] - RAMSEY_CARRIER
+    )
+
+
+def test_ramsey_analysis_raises_when_the_fit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a failed fit, when analyzed, then it raises instead of indexing it."""
+
+    class _FailedFit:
+        status = FitStatus.ERROR
+        message = "Failed to fit the data."
+
+    monkeypatch.setattr(fitting, "fit_ramsey", lambda **_: _FailedFit())
+
+    with pytest.raises(ValueError, match="Ramsey fit"):
+        analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())

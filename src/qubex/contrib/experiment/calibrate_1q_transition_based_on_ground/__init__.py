@@ -22,6 +22,8 @@ against the ground state at every rung of the ladder.
   measured |g> point, stored under the transition label.
 - `chevron_pattern_based_on_ground`: `detuning x duration` grid and the
   resonance it implies.
+- `ramsey_experiment_based_on_ground`: Ramsey fringe against a deliberate
+  carrier detuning, for T2* and a sharper resonance.
 - `calibrate_hpi_pulse_based_on_ground`: FlatTop half-pi amplitude.
 - `calibrate_pi_pulse_based_on_ground`: FlatTop pi amplitude, using a fixed
   `+-pi/2` tipping pulse whose own error cancels exactly.
@@ -48,9 +50,10 @@ the imbalance.
 
 The four calibrations write their result to `exp.calib_note` under the
 *transition* label, for example `"Q00-fh"`. `chevron_pattern_based_on_ground`
-deliberately persists nothing, because the transition frequency belongs to the
-registered `Target`, and `measure_dispersive_shift_extended` persists nothing
-either, because the readout frequency belongs to the configuration.
+and `ramsey_experiment_based_on_ground` deliberately persist nothing, because
+the transition frequency belongs to the registered `Target`, and
+`measure_dispersive_shift_extended` persists nothing either, because the readout
+frequency belongs to the configuration.
 `calib_note` does not autosave; call `Experiment.save_calib_note` when done.
 
 Each entry point follows the argument conventions of the core `Experiment` API.
@@ -96,6 +99,7 @@ Bootstrap order for a new rung::
     calibrate_hpi_pulse_based_on_ground(exp, transition="fh")
     # then amplify: larger n_rotations over a narrower sweep
     calibrate_hpi_pulse_based_on_ground(exp, transition="fh", n_rotations=4)
+    ramsey_experiment_based_on_ground(exp, transition="fh")   # -> sharper resonance
     calibrate_pi_pulse_based_on_ground(exp, transition="fh")
     calibrate_drag_hpi_pulse_based_on_ground(exp, transition="fh")
     calibrate_drag_pi_pulse_based_on_ground(exp, transition="fh")
@@ -175,6 +179,13 @@ from .obtain_rabi_params_based_on_ground import (
     plot_obtain_rabi_params_based_on_ground,
     run_obtain_rabi_params_based_on_ground,
 )
+from .ramsey_experiment_based_on_ground import (
+    analyze_ramsey_experiment_based_on_ground,
+    display_ramsey_experiment_based_on_ground,
+    plot_ramsey_experiment_based_on_ground,
+    ramsey_experiment_based_on_ground,
+    run_ramsey_experiment_based_on_ground,
+)
 
 __all__ = [
     "analyze_calibrate_drag_hpi_pulse_based_on_ground",
@@ -184,6 +195,7 @@ __all__ = [
     "analyze_chevron_pattern_based_on_ground",
     "analyze_measure_dispersive_shift_extended",
     "analyze_obtain_rabi_params_based_on_ground",
+    "analyze_ramsey_experiment_based_on_ground",
     "apply_electrical_delay",
     "apply_phase_shift",
     "calibrate_drag_hpi_pulse_based_on_ground",
@@ -198,6 +210,7 @@ __all__ = [
     "display_chevron_pattern_based_on_ground",
     "display_measure_dispersive_shift_extended",
     "display_obtain_rabi_params_based_on_ground",
+    "display_ramsey_experiment_based_on_ground",
     "measure_dispersive_shift_extended",
     "obtain_rabi_params_based_on_ground",
     "plot_calibrate_drag_hpi_pulse_based_on_ground",
@@ -207,6 +220,8 @@ __all__ = [
     "plot_chevron_pattern_based_on_ground",
     "plot_measure_dispersive_shift_extended",
     "plot_obtain_rabi_params_based_on_ground",
+    "plot_ramsey_experiment_based_on_ground",
+    "ramsey_experiment_based_on_ground",
     "run_calibrate_drag_hpi_pulse_based_on_ground",
     "run_calibrate_drag_pi_pulse_based_on_ground",
     "run_calibrate_hpi_pulse_based_on_ground",
@@ -214,4 +229,5 @@ __all__ = [
     "run_chevron_pattern_based_on_ground",
     "run_measure_dispersive_shift_extended",
     "run_obtain_rabi_params_based_on_ground",
+    "run_ramsey_experiment_based_on_ground",
 ]
