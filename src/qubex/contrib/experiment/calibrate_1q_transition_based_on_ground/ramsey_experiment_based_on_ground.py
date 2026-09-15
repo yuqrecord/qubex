@@ -48,6 +48,11 @@ Assumptions and caveats
   only right while `|f_resonance - frequency| < |detuning|`. The mirror solution
   is reported alongside it, and a fringe that reaches `2 |detuning|` says the
   assumption has broken down.
+- The decay is fitted from a starting guess, `t2_estimation`, which defaults
+  to the 10 us that `fitting.fit_ramsey` itself assumes. A sweep that runs
+  well past that can settle on a shallow local minimum with a visibly low
+  R2 and a biased fringe frequency, so pass the coherence time you expect
+  when it is far from the default.
 - Nothing is persisted. The transition frequency belongs to the registered
   `Target`, not to `calib_note`, so applying the result stays an explicit act of
   the caller (`Experiment.register_transition_target(frequency=...)`), and T2*
@@ -86,6 +91,10 @@ DEFAULT_TIME_RANGE = np.arange(0, 10001, 100)
 #: Carrier detuning that produces the fringe, in GHz. Same as the core
 #: `Experiment.ramsey_experiment`.
 DEFAULT_DETUNING = 0.001
+
+#: Starting guess for the decay of the fringe, in ns. Same as the one
+#: `fitting.fit_ramsey` falls back to.
+DEFAULT_T2_ESTIMATION = 10_000.0
 
 #: Ramsey fit quality below which the result is called out.
 RELIABLE_RAMSEY_R2 = 0.5
@@ -127,6 +136,15 @@ def _validate_detuning(detuning: float) -> None:
             f"`detuning` must be a non-zero finite number, got {detuning!r}. "
             "The fringe is the beat against the carrier offset, and its sign is "
             "what picks the resonance out of the two mirrored solutions."
+        )
+
+
+def _validate_t2_estimation(t2_estimation: float) -> None:
+    """Raise when the decay guess cannot seed the fit."""
+    if not np.isfinite(t2_estimation) or t2_estimation <= 0:
+        raise ValueError(
+            "`t2_estimation` must be a positive, finite number of ns, got "
+            f"{t2_estimation!r}."
         )
 
 
@@ -259,6 +277,7 @@ def run_ramsey_experiment_based_on_ground(
 def analyze_ramsey_experiment_based_on_ground(
     *,
     run_result: dict[str, Any],
+    t2_estimation: float | None = None,
 ) -> dict[str, Any]:
     """
     Fit the Ramsey fringe and turn it into a resonance estimate.
@@ -273,12 +292,20 @@ def analyze_ramsey_experiment_based_on_ground(
     ----------
     run_result : dict[str, Any]
         Payload returned by `run_ramsey_experiment_based_on_ground`.
+    t2_estimation : float | None, optional
+        Starting guess for the decay in ns. It only seeds the fit, but a
+        sweep that runs well past the default can otherwise settle on a
+        shallow local minimum. Defaults to `DEFAULT_T2_ESTIMATION`.
 
     Returns
     -------
     dict[str, Any]
         The run payload plus the fit, T2* and the two mirrored resonances.
     """
+    if t2_estimation is None:
+        t2_estimation = DEFAULT_T2_ESTIMATION
+    _validate_t2_estimation(t2_estimation)
+
     target = run_result["target"]
     fit = fitting.fit_ramsey(
         target=target,
@@ -286,6 +313,7 @@ def analyze_ramsey_experiment_based_on_ground(
         data=run_result["normalized"],
         amplitude_est=1.0,
         offset_est=0.0,
+        tau_est=t2_estimation,
         plot=False,
         title="Ground-referenced Ramsey",
     )
@@ -300,6 +328,7 @@ def analyze_ramsey_experiment_based_on_ground(
 
     return {
         **run_result,
+        "t2_estimation": t2_estimation,
         "fit": fit,
         "t2": float(fit["tau"]),
         "t2_err": float(fit["tau_err"]),
@@ -378,8 +407,9 @@ def display_ramsey_experiment_based_on_ground(
     print(f"  Ramsey fit R2       : {data['r2']:.4f}")
     if data["r2"] < RELIABLE_RAMSEY_R2:
         print(
-            "  The Ramsey fit is unreliable; shorten `time_range` towards T2* or "
-            "improve the ladder preparation."
+            "  The Ramsey fit is unreliable; seed it with `t2_estimation` (it "
+            f"started from {data['t2_estimation']:.0f} ns), shorten "
+            "`time_range` towards T2*, or improve the ladder preparation."
         )
     if data["ramsey_frequency"] >= SIGN_RULE_FRINGE_LIMIT * abs(data["detuning"]):
         print(
@@ -401,6 +431,7 @@ def ramsey_experiment_based_on_ground(
     time_range: ArrayLike | None = None,
     detuning: float | None = None,
     frequencies: Mapping[str, float] | float | None = None,
+    t2_estimation: float | None = None,
     n_shots: int | None = None,
     shot_interval: float | None = None,
     plot: bool | None = None,
@@ -433,6 +464,9 @@ def ramsey_experiment_based_on_ground(
         Undetuned carrier frequency in GHz per target, one frequency shared by
         every target, or `None` to use the frequency each transition target is
         registered with.
+    t2_estimation : float | None, optional
+        Starting guess for the decay in ns, shared by every target. Defaults
+        to `DEFAULT_T2_ESTIMATION`.
     n_shots : int | None, optional
         Shots per acquisition. Defaults to `_core.DEFAULT_N_SHOTS`.
     shot_interval : float | None, optional
@@ -473,7 +507,10 @@ def ramsey_experiment_based_on_ground(
     )
 
     def _analyze(run_result: dict[str, Any]) -> dict[str, Any]:
-        return analyze_ramsey_experiment_based_on_ground(run_result=run_result)
+        return analyze_ramsey_experiment_based_on_ground(
+            run_result=run_result,
+            t2_estimation=t2_estimation,
+        )
 
     def _display(result: Result) -> None:
         display_ramsey_experiment_based_on_ground(result, plot)

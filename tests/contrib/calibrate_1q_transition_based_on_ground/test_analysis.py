@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
@@ -1395,3 +1396,72 @@ def test_ramsey_analysis_raises_when_the_fit_fails(
 
     with pytest.raises(ValueError, match="Ramsey fit"):
         analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())
+
+
+def test_ramsey_defaults_the_decay_guess_and_records_it() -> None:
+    """Given no guess, when analyzed, then the module default is used and kept."""
+    module = importlib.import_module(
+        "qubex.contrib.experiment.calibrate_1q_transition_based_on_ground"
+        ".ramsey_experiment_based_on_ground"
+    )
+
+    payload = analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())
+
+    assert payload["t2_estimation"] == module.DEFAULT_T2_ESTIMATION
+    # The default is the one `fitting.fit_ramsey` falls back to on its own.
+    assert module.DEFAULT_T2_ESTIMATION == 10_000.0
+
+
+def test_ramsey_decay_guess_reaches_the_fit() -> None:
+    """Given a guess, when analyzed, then it is what seeds the damping."""
+    seen: dict[str, Any] = {}
+    real_fit_ramsey = fitting.fit_ramsey
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_fit_ramsey(**kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(fitting, "fit_ramsey", _spy)
+        payload = analyze_ramsey_experiment_based_on_ground(
+            run_result=_ramsey_run_result(),
+            t2_estimation=2500.0,
+        )
+
+    assert seen["tau_est"] == 2500.0
+    assert payload["t2_estimation"] == 2500.0
+    # Seeding it does not cost the answer on a trace the fit can already solve.
+    assert payload["t2"] == pytest.approx(RAMSEY_T2, rel=1e-6)
+
+
+def test_ramsey_decay_guess_rescues_a_sweep_far_past_the_default() -> None:
+    """Given a long sweep, when seeded, then the fit leaves its local minimum."""
+    # 60 us of coherence swept out to 100 us: six times the 10 us the fit starts
+    # from, which is where the unseeded fit stalls.
+    times = np.arange(0, 100_001, 1000, dtype=np.float64)
+    run_result = _ramsey_run_result(fringe=0.00012, t2=60_000.0, times=times)
+
+    unseeded = analyze_ramsey_experiment_based_on_ground(run_result=run_result)
+    seeded = analyze_ramsey_experiment_based_on_ground(
+        run_result=run_result,
+        t2_estimation=60_000.0,
+    )
+
+    assert unseeded["r2"] < 0.9
+    assert seeded["r2"] > 0.99
+    assert seeded["t2"] == pytest.approx(60_000.0, rel=1e-3)
+    assert seeded["ramsey_frequency"] == pytest.approx(0.00012, rel=1e-3)
+    # The stalled fit does not just lose precision; it biases the fringe.
+    assert unseeded["ramsey_frequency"] != pytest.approx(0.00012, rel=1e-3)
+
+
+@pytest.mark.parametrize("t2_estimation", [0.0, -100.0, np.nan, np.inf])
+def test_ramsey_rejects_a_decay_guess_that_cannot_seed_the_fit(
+    t2_estimation: float,
+) -> None:
+    """Given an unusable guess, when analyzed, then it raises before fitting."""
+    with pytest.raises(ValueError, match="`t2_estimation` must be a positive"):
+        analyze_ramsey_experiment_based_on_ground(
+            run_result=_ramsey_run_result(),
+            t2_estimation=t2_estimation,
+        )

@@ -1915,3 +1915,23 @@ def test_ramsey_entry_point_keys_by_transition_label_and_stores_nothing(
     assert exp.calib_note.hpi == seeded
     assert exp.calib_note.drag_hpi == seeded_drag
     assert exp.calib_note.rabi == {}
+
+
+def test_ramsey_entry_point_threads_the_decay_guess_to_the_analysis(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a decay guess, when run, then the analysis of every target gets it."""
+    exp = _ramsey_stub(stub_experiment_factory, qubits=[QUBIT, QUBIT_2])
+
+    result = ramsey_experiment_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        time_range=np.arange(0, 401, 8),
+        t2_estimation=750.0,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    for target in (f"{QUBIT}-fh", f"{QUBIT_2}-fh"):
+        assert result.data[target]["t2_estimation"] == 750.0
