@@ -23,7 +23,8 @@ against the ground state at every rung of the ladder.
 - `chevron_pattern_based_on_ground`: `detuning x duration` grid and the
   resonance it implies.
 - `ramsey_experiment_based_on_ground`: Ramsey fringe against a deliberate
-  carrier detuning, for T2* and a sharper resonance.
+  carrier detuning, for T2* and a sharper resonance. Built from the
+  transition's DRAG half-pi, so it comes after that calibration.
 - `calibrate_hpi_pulse_based_on_ground`: FlatTop half-pi amplitude.
 - `calibrate_pi_pulse_based_on_ground`: FlatTop pi amplitude, using a fixed
   `+-pi/2` tipping pulse whose own error cancels exactly.
@@ -99,10 +100,10 @@ Bootstrap order for a new rung::
     calibrate_hpi_pulse_based_on_ground(exp, transition="fh")
     # then amplify: larger n_rotations over a narrower sweep
     calibrate_hpi_pulse_based_on_ground(exp, transition="fh", n_rotations=4)
-    ramsey_experiment_based_on_ground(exp, transition="fh")   # -> sharper resonance
     calibrate_pi_pulse_based_on_ground(exp, transition="fh")
     calibrate_drag_hpi_pulse_based_on_ground(exp, transition="fh")
     calibrate_drag_pi_pulse_based_on_ground(exp, transition="fh")
+    ramsey_experiment_based_on_ground(exp, transition="fh")   # -> T2*, resonance
     exp.save_calib_note()
 
 The DRAG calibrations default to `n_rotations = 4`, as the core

@@ -1662,19 +1662,33 @@ def _ramsey_stub(
     stub_experiment_factory: Callable[..., Any],
     *,
     transition: str = "fh",
+    with_drag_hpi: bool = True,
     **kwargs: Any,
 ) -> Any:
     """Return a stub calibrated for a Ramsey sequence on one transition."""
-    return stub_experiment_factory(
+    exp = stub_experiment_factory(
         transition=transition,
-        envelope="flat_top",
-        duration=DURATION,
-        ramptime=RAMPTIME,
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        beta=DRAG_COEFF,
         true_amplitude=0.3012,
         pulse_type="hpi",
-        hpi_amplitude=0.30,
         **kwargs,
     )
+    # The factory only seeds the FlatTop half-pi, and a Ramsey sequence is built
+    # from the DRAG one, so that is added here on top of it.
+    if with_drag_hpi:
+        for target in exp.ctx.stored_rabi_params:
+            exp.calib_note.update_drag_hpi_param(
+                target,
+                {
+                    "target": target,
+                    "duration": DRAG_HPI_DURATION,
+                    "amplitude": 0.30,
+                    "beta": DRAG_COEFF,
+                },
+            )
+    return exp
 
 
 def _ramsey_body(values: np.ndarray, *, hpi_duration: float, wait: float) -> tuple:
@@ -1725,7 +1739,11 @@ def test_ramsey_run_brackets_every_wait_with_a_half_pi_and_its_negation(
         assert gap.size == round(wait / Waveform.SAMPLING_PERIOD)
         assert not np.any(gap)
         assert not np.any(tail)
-        # `-X90` is the half-pi shifted by pi, so it is the exact negation.
+        # The DRAG half-pi is played, not the FlatTop one: only DRAG carries a
+        # quadrature component, and the FlatTop envelope is purely real.
+        assert np.abs(first.imag).max() > 0
+        # `-X90` is the half-pi shifted by pi, so it is the exact negation of
+        # both components.
         np.testing.assert_allclose(second, -first, atol=1e-12)
 
 
@@ -1763,13 +1781,15 @@ def test_ramsey_run_keeps_the_fringe_inside_a_symmetric_ladder(
         )
 
 
-def test_ramsey_requires_a_calibrated_half_pi_pulse(
+def test_ramsey_requires_a_calibrated_drag_half_pi_pulse(
     stub_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given no stored half-pi, when run, then it names the calibration to run."""
-    exp = _ramsey_stub(stub_experiment_factory, with_hpi=False)
+    """Given no stored DRAG half-pi, when run, then it names the calibration to run."""
+    exp = _ramsey_stub(stub_experiment_factory, with_drag_hpi=False)
+    # The FlatTop half-pi is there and must not be silently substituted for it.
+    assert exp.calib_note.get_hpi_param(f"{QUBIT}-fh") is not None
 
-    with pytest.raises(ValueError, match="calibrate_hpi_pulse_based_on_ground"):
+    with pytest.raises(ValueError, match="calibrate_drag_hpi_pulse_based_on_ground"):
         ramsey_experiment_based_on_ground(
             exp,
             targets=QUBIT,
@@ -1870,6 +1890,9 @@ def test_ramsey_entry_point_keys_by_transition_label_and_stores_nothing(
     """Given two qubits, when run, then each is swept on its own and nothing is saved."""
     exp = _ramsey_stub(stub_experiment_factory, qubits=[QUBIT, QUBIT_2])
     seeded = {target: dict(param) for target, param in exp.calib_note.hpi.items()}
+    seeded_drag = {
+        target: dict(param) for target, param in exp.calib_note.drag_hpi.items()
+    }
 
     result = ramsey_experiment_based_on_ground(
         exp,
@@ -1890,4 +1913,5 @@ def test_ramsey_entry_point_keys_by_transition_label_and_stores_nothing(
         assert f"{target}:ramsey" in result.figures
         assert f"{target}:iq" in result.figures
     assert exp.calib_note.hpi == seeded
+    assert exp.calib_note.drag_hpi == seeded_drag
     assert exp.calib_note.rabi == {}

@@ -16,6 +16,12 @@ out::
 
     X_ge -> X_ef -> ... -> [X90 -> wait(T) -> -X90] -> ... -> X_ef -> X_ge
 
+Both half-pi pulses are the transition's calibrated *DRAG* half-pi. Driving
+`k <-> k+1` leaks into `k-1` and `k+2`, and the two pulses sit on either side
+of a wait that can run into microseconds, so the leakage they seed is what
+the whole fringe decays from. The FlatTop half-pi is not accepted as a
+substitute: it would quietly change what T2* is being measured on.
+
 Ideal un-preparation maps `|k> -> |g>` and leaves `|k+1>` alone, so the readout
 separates |g> from the transition's *upper* level and the normalized signal is
 the lower-level population of the transition's Bloch sphere, exactly as the rest
@@ -33,8 +39,9 @@ their own carriers.
 Assumptions and caveats
 -----------------------
 - Every rung below the transition must have a calibrated pi pulse, the
-  transition must have a calibrated half-pi pulse, and it must have stored Rabi
-  parameters to normalize against.
+  transition must have a calibrated DRAG half-pi pulse, and it must have
+  stored Rabi parameters to normalize against. Run
+  `calibrate_drag_hpi_pulse_based_on_ground` before this experiment.
 - The sequence closes with `-X90` rather than `Y90`, so the fringe is a pure
   cosine and its phase cannot say which side of the drive the resonance sits on.
   The resonance is reported as `drive - sign(detuning) * f_ramsey`, which is
@@ -88,15 +95,17 @@ RELIABLE_RAMSEY_R2 = 0.5
 SIGN_RULE_FRINGE_LIMIT = 2.0
 
 
-def _resolve_hpi_pulse(exp: Experiment, *, target: str) -> Waveform:
-    """Return the stored half-pi pulse of the transition, or raise."""
-    if exp.calib_note.get_hpi_param(target) is None:
+def _resolve_drag_hpi_pulse(exp: Experiment, *, target: str) -> Waveform:
+    """Return the stored DRAG half-pi pulse of the transition, or raise."""
+    if exp.calib_note.get_drag_hpi_param(target) is None:
         raise ValueError(
-            f"A half-pi pulse is not calibrated for {target!r}, and a Ramsey "
-            "sequence is built from two of them. Run "
-            "`calibrate_hpi_pulse_based_on_ground` first."
+            f"A DRAG half-pi pulse is not calibrated for {target!r}, and a "
+            "Ramsey sequence is built from two of them. Run "
+            "`calibrate_drag_hpi_pulse_based_on_ground` first. The FlatTop "
+            "half-pi is deliberately not used instead: it leaks more into the "
+            "neighbouring levels, which is exactly what the fringe decays from."
         )
-    return exp.pulse.get_hpi_pulse(target)
+    return exp.pulse.get_drag_hpi_pulse(target)
 
 
 def _validate_wait_times(time_range: NDArray[np.float64]) -> None:
@@ -180,7 +189,7 @@ def run_ramsey_experiment_based_on_ground(
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
     rabi_param = _core.get_transition_rabi_param(exp, ladder)
-    hpi_pulse = _resolve_hpi_pulse(exp, target=ladder.target)
+    hpi_pulse = _resolve_drag_hpi_pulse(exp, target=ladder.target)
     if frequency is None:
         frequency = _core.resolve_frequencies(
             exp,
@@ -401,9 +410,9 @@ def ramsey_experiment_based_on_ground(
     Measure the ground-referenced Ramsey fringe of one transition.
 
     Every requested target is checked before the first acquisition, so an
-    unregistered target, an uncalibrated lower rung, a missing half-pi pulse or
-    missing Rabi parameters stop the whole batch. The targets are then measured
-    one after another.
+    unregistered target, an uncalibrated lower rung, a missing DRAG half-pi
+    pulse or missing Rabi parameters stop the whole batch. The targets are then
+    measured one after another.
 
     Parameters
     ----------
@@ -456,7 +465,7 @@ def ramsey_experiment_based_on_ground(
         require_rabi_param=True,
     )
     for ladder in ladders:
-        _resolve_hpi_pulse(exp, target=ladder.target)
+        _resolve_drag_hpi_pulse(exp, target=ladder.target)
     resolved_frequencies = _core.resolve_frequencies(
         exp,
         ladders=ladders,
