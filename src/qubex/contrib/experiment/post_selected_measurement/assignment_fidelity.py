@@ -92,6 +92,8 @@ class Classifier:
     def __init__(self):
         self.model = LogisticRegression()
         self.weight = None
+        self.integration_start_idx = 0
+        self.integration_end_idx = None
 
     @staticmethod
     def expand_complex_feature(c_data):
@@ -100,7 +102,9 @@ class Classifier:
     def weighted_signal(self, iq_data):
         return iq_data @ self.weight
 
-    def _update_weight(self, iq_data_g, iq_data_e):
+    def _update_weight(
+        self, iq_data_g, iq_data_e, integration_start_idx=0, integration_end_idx=None
+    ):
         self.weight = np.conj(iq_data_e.mean(axis=0) - iq_data_g.mean(axis=0))
         norm = np.linalg.norm(self.weight)
         if norm == 0:
@@ -108,9 +112,16 @@ class Classifier:
                 "Mean IQ data of |g> and |e> are identical. Cannot compute the weight."
             )
         self.weight = self.weight / norm
+        self.weight[:integration_start_idx] = 0
+        self.integration_start_idx = integration_start_idx
+        self.integration_end_idx = integration_end_idx
+        if integration_end_idx is not None:
+            self.weight[integration_end_idx:] = 0
 
-    def fit(self, iq_data_list):
-        self._update_weight(iq_data_list[0], iq_data_list[1])
+    def fit(self, iq_data_list, integration_start_idx=0, integration_end_idx=None):
+        self._update_weight(
+            iq_data_list[0], iq_data_list[1], integration_start_idx, integration_end_idx
+        )
         train_data = np.concatenate(
             [self.weighted_signal(iq_data) for iq_data in iq_data_list]
         )
@@ -197,7 +208,8 @@ def run_post_selected_assignment_fidelity(
 def plot_post_selected_assignment_fidelity(
     *,
     iq_data,
-    classifier,
+    integration_start_idx,
+    integration_end_idx,
     post_selection,
     posterior_weighted_signal,
     assignment_fidelity,
@@ -208,6 +220,8 @@ def plot_post_selected_assignment_fidelity(
     colors=STATE_TO_COLOR,
     labels=STATE_TO_LABEL,
 ):
+    vspan_color = "gray"
+    vspan_alpha = 0.2
     figures = dict()
     posterior_averaged_iq = dict()
     for w in ["before_post_selection", "after_post_selection"]:
@@ -229,6 +243,13 @@ def plot_post_selected_assignment_fidelity(
         figures["td_iq"][w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
+            ax.axvspan(
+                integration_start_idx * capture_sampling_period,
+                (integration_end_idx - 1) * capture_sampling_period,
+                color=vspan_color,
+                alpha=vspan_alpha,
+                label="Integration Window",
+            )
             for s in ["g", "e"]:
                 ax.scatter(
                     np.arange(len(posterior_averaged_iq[w][s][d]))
@@ -260,6 +281,13 @@ def plot_post_selected_assignment_fidelity(
         figures["td_iq_distance"][w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
+            ax.axvspan(
+                integration_start_idx * capture_sampling_period,
+                (integration_end_idx - 1) * capture_sampling_period,
+                color=vspan_color,
+                alpha=vspan_alpha,
+                label="Integration Window",
+            )
             for s in ["g", "e"]:
                 ax.scatter(
                     np.arange(len(posterior_averaged_iq[w][s][d]))
@@ -283,6 +311,13 @@ def plot_post_selected_assignment_fidelity(
         figures["td_separation"][w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
+            ax.axvspan(
+                integration_start_idx * capture_sampling_period,
+                (integration_end_idx - 1) * capture_sampling_period,
+                color=vspan_color,
+                alpha=vspan_alpha,
+                label="Integration Window",
+            )
             separation = (
                 posterior_averaged_iq[w]["e"][d] - posterior_averaged_iq[w]["g"][d]
             )
@@ -298,6 +333,7 @@ def plot_post_selected_assignment_fidelity(
                 f"Time-domain averaged IQ separation {w.replace('_', ' ')} ({d} set)"
             )
             ax.set_title(title)
+            ax.legend()
             plt.close(fig)
             figures["td_separation"][w][d] = {"figure": fig, "ax": ax}
     # Plot IQ data
@@ -409,7 +445,16 @@ def plot_post_selected_assignment_fidelity(
     }
 
 
-def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True):
+def _build_classifier(
+    *,
+    iq_data,
+    n_train,
+    n_test,
+    integration_start_idx=0,
+    integration_end_idx=None,
+    n_max_epoch=10,
+    verbose=True,
+):
     post_selection = dict()
     post_selection["g"] = dict()
     post_selection["e"] = dict()
@@ -434,7 +479,9 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
             [
                 iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
                 iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-            ]
+            ],
+            integration_start_idx=integration_start_idx,
+            integration_end_idx=integration_end_idx,
         )
         post_selection_prev = {s: post_selection[s]["train"] for s in ["g", "e"]}
         for s in ["g", "e"]:
@@ -460,7 +507,9 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
         [
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
             iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-        ]
+        ],
+        integration_start_idx=integration_start_idx,
+        integration_end_idx=integration_end_idx,
     )
     for s in ["g", "e"]:
         post_selection[s]["test"] = classifier.predict(iq_data[s]["prior"]["test"]) == 0
@@ -573,13 +622,51 @@ def analyze_post_selected_assignment_fidelity(
     *, target, run_result, n_train, n_test, n_max_epoch=10, verbose=True
 ):
     iq_data = _create_iq_data(target=target, run_result=run_result, n_train=n_train)
+    num_samples = len(iq_data["g"]["posterior"]["train"][0])
+    integration_start_idx = 0
+    integration_end_idx = num_samples
+    highest_assignment_fidelity = 0.0
+    for i_start in reversed(range(num_samples)):
+        for i_end in range(i_start + 1, num_samples + 1):
+            try:
+                classifier, post_selection = _build_classifier(
+                    iq_data=iq_data,
+                    n_train=n_train,
+                    n_test=n_test,
+                    integration_start_idx=i_start,
+                    integration_end_idx=i_end,
+                    n_max_epoch=n_max_epoch,
+                    verbose=False,
+                )
+            except Exception:
+                continue
+            assignment_fidelity = _assignment_fidelity(
+                iq_data=iq_data, classifier=classifier, post_selection=post_selection
+            )
+            fidelity_temp = assignment_fidelity["after_post_selection"]["avg"]["test"]
+            if fidelity_temp > highest_assignment_fidelity:
+                highest_assignment_fidelity = fidelity_temp
+                integration_start_idx = i_start
+                integration_end_idx = i_end
     classifier, post_selection = _build_classifier(
         iq_data=iq_data,
         n_train=n_train,
         n_test=n_test,
+        integration_start_idx=integration_start_idx,
+        integration_end_idx=integration_end_idx,
         n_max_epoch=n_max_epoch,
         verbose=verbose,
     )
+    assignment_fidelity = _assignment_fidelity(
+        iq_data=iq_data, classifier=classifier, post_selection=post_selection
+    )
+    posterior_weighted_signal = _posterior_weighted_signal(
+        iq_data=iq_data, classifier=classifier, post_selection=post_selection
+    )
+    weighted_signal_histogram = _weighted_signal_histogram(
+        posterior_weighted_signal=posterior_weighted_signal, n_bins=100
+    )
+    snr = _signal_to_noise_ratio(posterior_weighted_signal=posterior_weighted_signal)
     post_selection_rate = dict()
     for s in ["g", "e"]:
         post_selection_rate[s] = dict()
@@ -587,16 +674,6 @@ def analyze_post_selected_assignment_fidelity(
             post_selection_rate[s][d] = sum(post_selection[s][d]) / len(
                 post_selection[s][d]
             )
-    posterior_weighted_signal = _posterior_weighted_signal(
-        iq_data=iq_data, classifier=classifier, post_selection=post_selection
-    )
-    assignment_fidelity = _assignment_fidelity(
-        iq_data=iq_data, classifier=classifier, post_selection=post_selection
-    )
-    weighted_signal_histogram = _weighted_signal_histogram(
-        posterior_weighted_signal=posterior_weighted_signal, n_bins=100
-    )
-    snr = _signal_to_noise_ratio(posterior_weighted_signal=posterior_weighted_signal)
     return {
         "iq_data": iq_data,
         "classifier": classifier,
@@ -727,6 +804,7 @@ def post_selected_assignment_fidelity_experiment(
         n_shots=n_train + n_test,
         plot_pulse_schedule=plot_pulse_schedule,
     )
+    print("Finished running the experiment. Analyzing the results...")
     analyze_result = analyze_post_selected_assignment_fidelity(
         target=target,
         run_result=run_result,
@@ -745,7 +823,8 @@ def post_selected_assignment_fidelity_experiment(
     snr = analyze_result["snr"]
     plot_result = plot_post_selected_assignment_fidelity(
         iq_data=iq_data,
-        classifier=classifier,
+        integration_start_idx=classifier.integration_start_idx,
+        integration_end_idx=classifier.integration_end_idx,
         post_selection=post_selection,
         posterior_weighted_signal=posterior_weighted_signal,
         assignment_fidelity=assignment_fidelity,
