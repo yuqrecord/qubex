@@ -31,25 +31,41 @@ frequency moves on. The quantity of interest compares levels *at one frequency*,
 so interleaving keeps slow drift common to the traces being compared, and it
 retunes the readout once per group rather than once per level.
 
-For every nested subset `S_m = {|g>, ..., |m>}` the separation at a frequency is
-the smallest pairwise phase distance inside it::
+Two frequencies are reported, because there are two readouts worth tuning. The
+phase distance between two levels is taken as the argument of `z_i conj(z_j)`
+rather than as a difference of two `angle` calls: phase is circular, so that
+needs no unwrapping and lands in [0, pi].
 
-    sep_m(f) = min over i < j in S_m of |arg(z_i(f) conj(z_j(f)))|
+`"ge"` is the plain two-state readout - the frequency where |g> and |e> are
+furthest apart::
 
-and the reported optimum is the frequency where that minimum is largest. Phase
-is a circular quantity, so the distance is taken as the argument of
-`z_i conj(z_j)` rather than as a difference of two `angle` calls, and it lands
-in [0, pi]. The pair that realizes the minimum is reported too, because that
-pair is what limits the readout.
+    sep_ge(f) = |arg(z_g(f) conj(z_e(f)))|
+
+`"geL"` is the leakage-sensitive readout, which has to place a shot in one of
+`{|g>, |e>, L}` where `L` holds every level from |f> up. It therefore needs |g>
+apart from |e>, and both apart from every leakage level - but it never has to
+tell |f> from |h>::
+
+    sep_geL(f) = min( |arg(z_g conj(z_e))|,
+                      min over k in L of |arg(z_g conj(z_k))|,
+                      min over k in L of |arg(z_e conj(z_k))| )
+
+which is the smallest pairwise distance over every pair except the
+leakage-leakage ones. Keeping those pairs would let a frequency that happens to
+spread |f> and |h> apart win over one that actually separates the classes. The
+pair that realizes the minimum is reported too, because that pair is what limits
+the readout.
 
 The same max-min is reported on the Euclidean IQ distance `|z_i - z_j|`, which
 weighs amplitude contrast as well as phase. That is a distance between the
 *centroids* of the levels, not a discrimination fidelity: averaged data carries
 no covariance, so nothing here is noise-aware.
 
-`M` phasors on a circle can be spaced by at most `2 pi / M`, so the achievable
-separation shrinks as levels are added. The ideal bound reported next to each
-measured value is `2 pi / M`, not the two-level bound of `pi`.
+`M` phasors on a circle can be spaced by at most `2 pi / M`, and what has to be
+placed on the circle is one point per *class*, not per level - the leakage
+levels may coincide. So the ideal bound reported next to each measured value is
+`pi` for `"ge"` and `2 pi / 3` for `"geL"`, however many leakage levels the scan
+covered.
 
 Assumptions and caveats
 -----------------------
@@ -94,7 +110,6 @@ Assumptions and caveats
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
@@ -114,6 +129,7 @@ from . import _core
 __all__ = [
     "analyze_measure_dispersive_shift_extended",
     "apply_electrical_delay",
+    "apply_phase_shift",
     "display_measure_dispersive_shift_extended",
     "measure_dispersive_shift_extended",
     "plot_measure_dispersive_shift_extended",
@@ -140,6 +156,11 @@ MIN_AMPLITUDE_FRACTION = 0.1
 #: Below it the levels are coincident to within the noise and the argmax is an
 #: arbitrary grid point rather than a readout frequency worth using.
 MIN_RESOLVED_SEPARATION = 0.05
+
+#: First level that counts as leakage. A leakage-sensitive readout resolves
+#: `{|g>, |e>, L}`, so every level from this one up is one class and the levels
+#: inside it never have to be told apart from each other.
+LEAKAGE_LEVEL = 2
 
 #: Relative tolerance within which two separations count as tied. Ties are
 #: broken deterministically, towards the current readout frequency.
@@ -397,6 +418,42 @@ def _select_optimum(
     return int(closest[np.argmin(frequency_range[closest])])
 
 
+def _resolve_level_index(
+    level: int | str,
+    *,
+    state_labels: Sequence[str],
+) -> int:
+    """
+    Return the index of one level, named or numbered.
+
+    Parameters
+    ----------
+    level : int | str
+        Level index, or a level name such as `"f"`.
+    state_labels : Sequence[str]
+        Level names of the scan, in level order.
+
+    Returns
+    -------
+    int
+        Index into the level axis of the scan.
+    """
+    if isinstance(level, str):
+        if level not in state_labels:
+            raise ValueError(
+                f"The phase-shift config names level {level!r}, which this scan "
+                f"does not hold. It measured {list(state_labels)}."
+            )
+        return state_labels.index(level)
+    index = int(level)
+    if not 0 <= index < len(state_labels):
+        raise ValueError(
+            f"The phase-shift config asks for level {index}, which this scan does "
+            f"not hold. It measured levels 0 to {len(state_labels) - 1}."
+        )
+    return index
+
+
 def _resolve_per_qubit(
     *,
     qubits: Sequence[str],
@@ -650,6 +707,7 @@ def analyze_measure_dispersive_shift_extended(
     run_result: dict[str, Any],
     min_amplitude_fraction: float | None = None,
     min_resolved_separation: float | None = None,
+    phase_shift_config: Mapping[int | str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Locate the readout frequency that best separates each nested set of levels.
@@ -665,6 +723,11 @@ def analyze_measure_dispersive_shift_extended(
     min_resolved_separation : float | None, optional
         Phase separation in rad below which a subset is reported as unresolved.
         Defaults to `MIN_RESOLVED_SEPARATION`.
+    phase_shift_config : Mapping[int | str, Mapping[str, Any]] | None, optional
+        Whole turns to add to the plotted absolute phase, keyed by level index or
+        level name. Each entry takes `"turns"` and an optional
+        `"frequency_range"` of `[low, high]` in GHz, defaulting to the whole
+        sweep. Display only. Defaults to no shift.
 
     Returns
     -------
@@ -700,6 +763,29 @@ def analyze_measure_dispersive_shift_extended(
     # The phase of each level as the de-embedded resonator shows it, made
     # continuous along the frequency axis.
     absolute_phases = np.unwrap(np.angle(corrected_signals), axis=1)
+    # `np.unwrap` anchors each trace at the principal value of its first sample,
+    # so a whole level can land a turn away from the others. Moving it back is a
+    # gauge choice that changes no information, and it is applied here rather
+    # than in `plot_` so that it survives a later re-analysis. The metrics are
+    # computed from the raw `signals` below and cannot see this.
+    if phase_shift_config:
+        absolute_phases = absolute_phases.copy()
+        for level, spec in phase_shift_config.items():
+            index = _resolve_level_index(level, state_labels=state_labels)
+            turns = int(spec["turns"])
+            if not turns:
+                continue
+            window = spec.get("frequency_range")
+            if window is None:
+                inside = np.ones(frequencies.size, dtype=bool)
+            else:
+                low, high = float(window[0]), float(window[1])
+                inside = (frequencies >= low) & (frequencies <= high)
+            absolute_phases[index] = np.where(
+                inside,
+                absolute_phases[index] + turns * 2 * np.pi,
+                absolute_phases[index],
+            )
     # The ground state is the reference, so the common slope drops out either
     # way; unwrapping the relative phase directly is more robust than unwrapping
     # each level and subtracting afterwards.
@@ -713,10 +799,27 @@ def analyze_measure_dispersive_shift_extended(
     amplitude_floor = median_amplitude * min_amplitude_fraction
     valid = np.all(finite & (amplitudes >= amplitude_floor), axis=0)
 
+    # Two criteria, not one per nested subset. `"ge"` is the plain two-state
+    # readout. `"geL"` drops every leakage-leakage pair, because the readout only
+    # has to place a shot in one of `{|g>, |e>, L}` and never has to tell |f>
+    # from |h>; keeping those pairs would let a frequency that happens to spread
+    # the leakage states out win over one that separates the classes.
+    criteria: list[tuple[str, tuple[tuple[int, int], ...], tuple[int, ...], int]] = [
+        ("ge", ((0, 1),), (0, 1), 2)
+    ]
+    if max_level >= LEAKAGE_LEVEL:
+        leakage = tuple(range(LEAKAGE_LEVEL, max_level + 1))
+        criteria.append(
+            (
+                "geL",
+                ((0, 1), *((0, k) for k in leakage), *((1, k) for k in leakage)),
+                tuple(range(max_level + 1)),
+                3,
+            )
+        )
+
     subsets: list[dict[str, Any]] = []
-    for top in range(1, max_level + 1):
-        levels = tuple(range(top + 1))
-        pairs = tuple(itertools.combinations(levels, 2))
+    for name, pairs, levels, n_classes in criteria:
         phase_pairs = np.asarray(
             [_phase_distance(signals[i], signals[j]) for i, j in pairs]
         )
@@ -725,7 +828,6 @@ def analyze_measure_dispersive_shift_extended(
         )
         phase_separation = phase_pairs.min(axis=0)
         distance_separation = distance_pairs.min(axis=0)
-        name = "".join(state_labels[level] for level in levels)
 
         phase_index = _select_optimum(
             separation=phase_separation,
@@ -752,7 +854,10 @@ def analyze_measure_dispersive_shift_extended(
                 "optimal_index": phase_index,
                 "optimal_frequency": float(frequencies[phase_index]),
                 "optimal_phase_separation": optimal_phase_separation,
-                "ideal_separation": 2 * np.pi / len(levels),
+                "n_classes": n_classes,
+                # Leakage levels may sit on one point of the circle, so the bound
+                # counts classes to place, not levels measured.
+                "ideal_separation": 2 * np.pi / n_classes,
                 "limiting_pair": pairs[int(np.argmin(phase_pairs[:, phase_index]))],
                 "resolved": optimal_phase_separation >= min_resolved_separation,
                 "distance_separation": distance_separation,
@@ -779,6 +884,7 @@ def analyze_measure_dispersive_shift_extended(
         "valid_mask": valid,
         "min_amplitude_fraction": min_amplitude_fraction,
         "min_resolved_separation": min_resolved_separation,
+        "phase_shift_config": phase_shift_config,
         "subsets": subsets,
     }
 
@@ -934,7 +1040,7 @@ def display_measure_dispersive_shift_extended(
             f"    {subset['name']:<6}: {subset['optimal_frequency']:.6f} GHz  "
             f"min |dphi| = {separation:.4f} rad ({np.degrees(separation):6.1f} deg)  "
             f"{separation / subset['ideal_separation']:6.1%} of 2pi/"
-            f"{len(subset['levels'])}  "
+            f"{subset['n_classes']}  "
             f"limited by |{state_labels[first]}>-|{state_labels[second]}>"
         )
         if not subset["resolved"]:
@@ -1189,11 +1295,98 @@ def apply_electrical_delay(
                 f"got {delay!r}."
             )
 
+    return _reanalyze(result, electrical_delay=resolved)
+
+
+def apply_phase_shift(
+    result: Result,
+    config: Mapping[str, Mapping[int | str, Mapping[str, Any]]],
+) -> Result:
+    """
+    Move whole turns of the plotted absolute phase over a frequency window.
+
+    `np.unwrap` makes each level's trace continuous but anchors it at the
+    principal value of its first sample, so a trace can end up a full turn away
+    from the rest for no physical reason, and a trace that winds can pick the
+    branch up part way through the sweep. Adding `2 pi` changes no information -
+    the phase of a complex number is defined modulo `2 pi` - so putting it back
+    is a gauge choice, made here for the eye.
+
+    It is a display correction and nothing else. Both reported optima are
+    computed from the raw `"signals"` through the circular distance
+    `|arg(z_i conj(z_j))|`, which never sees the unwrapped traces, so no shift
+    can move an optimum or change a separation curve.
+
+    The window is given in frequency, which is what the figure's own x axis
+    shows, so a range can be read straight off the plot::
+
+        config = {
+            "Q04": {
+                "f": {"frequency_range": [10.6, 10.65], "turns": -1},
+                "h": {"turns": -1},
+            },
+        }
+        result = apply_phase_shift(result, config)
+
+    Parameters
+    ----------
+    result : Result
+        Result returned by `measure_dispersive_shift_extended`. It is not
+        modified.
+    config : Mapping[str, Mapping[int | str, Mapping[str, Any]]]
+        Qubit label to level to specification. A level is named (`"f"`) or
+        numbered, and its specification takes `"turns"`, a signed whole number of
+        turns to add - so `-1` brings a trace down by `2 pi` and `0` does
+        nothing - and an optional `"frequency_range"` of `[low, high]` in GHz,
+        inclusive at both ends, defaulting to the whole sweep.
+
+    Returns
+    -------
+    Result
+        A new `Result` whose absolute-phase traces and figures carry the shift.
+        A target whose analysis had failed is passed through untouched.
+
+    Notes
+    -----
+    Only the qubits named in `config` are changed; a qubit left out keeps the
+    shift it already had, so one target can be adjusted without disturbing the
+    others. Pass an empty mapping for a qubit to clear its shift.
+
+    The shift is stored with the payload and reapplied whenever the analysis runs
+    again, so it composes with `apply_electrical_delay` in either order.
+    """
+    unknown = set(config) - set(result.data)
+    if unknown:
+        raise ValueError(
+            f"`config` names {sorted(unknown)}, which this result does not hold. "
+            f"It covers {sorted(result.data)}."
+        )
+    merged = {
+        qubit: config[qubit]
+        if qubit in config
+        else result.data[qubit].get("phase_shift_config")
+        for qubit in result.data
+    }
+    return _reanalyze(result, phase_shift_config=merged)
+
+
+def _reanalyze(
+    result: Result,
+    *,
+    electrical_delay: Mapping[str, float] | None = None,
+    phase_shift_config: Mapping[str, Any] | None = None,
+) -> Result:
+    """
+    Re-run the analysis and the figures, overriding one display knob per qubit.
+
+    Every knob that is not overridden is read back out of the payload, so the
+    corrections the `apply_` helpers make survive one another whatever order
+    they are called in.
+    """
     original_figures = dict(result.figures or {})
     data: dict[str, Any] = {}
     figures: dict[str, go.Figure] = {}
-    for qubit in qubits:
-        payload = result.data[qubit]
+    for qubit, payload in result.data.items():
         if "error" in payload:
             data[qubit] = payload
             figures.update(
@@ -1205,9 +1398,17 @@ def apply_electrical_delay(
             )
             continue
         analyzed = analyze_measure_dispersive_shift_extended(
-            run_result={**payload, "electrical_delay": resolved[qubit]},
+            run_result={
+                **payload,
+                "electrical_delay": payload["electrical_delay"]
+                if electrical_delay is None
+                else electrical_delay[qubit],
+            },
             min_amplitude_fraction=payload["min_amplitude_fraction"],
             min_resolved_separation=payload["min_resolved_separation"],
+            phase_shift_config=payload.get("phase_shift_config")
+            if phase_shift_config is None
+            else phase_shift_config[qubit],
         )
         data[qubit] = analyzed
         figures.update(

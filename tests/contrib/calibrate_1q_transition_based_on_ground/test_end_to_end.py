@@ -13,6 +13,7 @@ import pytest
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     apply_electrical_delay,
+    apply_phase_shift,
     calibrate_drag_hpi_pulse_based_on_ground,
     calibrate_drag_pi_pulse_based_on_ground,
     calibrate_hpi_pulse_based_on_ground,
@@ -20,9 +21,12 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     chevron_pattern_based_on_ground,
     measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
+    ramsey_experiment_based_on_ground,
     run_chevron_pattern_based_on_ground,
+    run_ramsey_experiment_based_on_ground,
 )
 from qubex.experiment.models import Result
+from qubex.pulse import Waveform
 from qubex.system.transition import TRANSITION_NAMES
 
 from .conftest import CONTROL_AMPLITUDE, DISPERSIVE_SHIFT, READOUT_FREQUENCY
@@ -1213,17 +1217,17 @@ def test_readout_scan_finds_the_frequency_between_two_levels(
     assert abs(subset["optimal_frequency"] - midpoint) <= READOUT_DF
 
 
-def test_readout_scan_reports_one_optimum_per_nested_subset(
+def test_readout_scan_reports_both_readout_criteria(
     readout_scan_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given a three-rung ladder, when scanned, then every subset is reported."""
+    """Given a three-rung ladder, when scanned, then both criteria are reported."""
     exp = readout_scan_experiment_factory(max_level=3)
 
     result = _readout_scan(exp, max_level=3)
 
     payload = result.data[QUBIT]
     assert "error" not in payload
-    assert [subset["name"] for subset in payload["subsets"]] == ["ge", "gef", "gefh"]
+    assert [subset["name"] for subset in payload["subsets"]] == ["ge", "geL"]
     assert payload["signals"].shape == (4, payload["frequency_range"].size)
     assert set(result.figures) == {
         f"{QUBIT}:{name}"
@@ -1509,3 +1513,425 @@ def test_apply_electrical_delay_passes_a_failed_target_through() -> None:
 
     assert updated.data[QUBIT]["error"] is error
     assert "corrected_signals" not in updated.data[QUBIT]
+
+
+def test_apply_phase_shift_moves_only_inside_the_frequency_window(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a window, when a shift is applied, then only that band moves."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    before = np.array(result.data[QUBIT]["absolute_phases"], copy=True)
+    frequencies = result.data[QUBIT]["frequency_range"]
+    low, high = frequencies[10], frequencies[25]
+
+    updated = apply_phase_shift(
+        result, {QUBIT: {"f": {"frequency_range": [low, high], "turns": -1}}}
+    )
+
+    difference = updated.data[QUBIT]["absolute_phases"] - before
+    inside = (frequencies >= low) & (frequencies <= high)
+    assert np.allclose(difference[2][inside], -2 * np.pi)
+    assert np.allclose(difference[2][~inside], 0.0)
+    assert np.allclose(difference[:2], 0.0)
+
+
+def test_apply_phase_shift_leaves_the_original_result_alone(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a result, when a shift is applied, then the input is not modified."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    before = np.array(result.data[QUBIT]["absolute_phases"], copy=True)
+
+    updated = apply_phase_shift(result, {QUBIT: {"f": {"turns": -1}}})
+
+    assert np.array_equal(result.data[QUBIT]["absolute_phases"], before)
+    assert updated.data[QUBIT] is not result.data[QUBIT]
+
+
+def test_apply_phase_shift_does_not_move_the_optimum(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a shift, when applied, then every reported optimum is unchanged."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    updated = apply_phase_shift(result, {QUBIT: {"e": {"turns": 2}}})
+
+    for left, right in zip(
+        result.data[QUBIT]["subsets"],
+        updated.data[QUBIT]["subsets"],
+        strict=True,
+    ):
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["optimal_phase_separation"] == right["optimal_phase_separation"]
+        assert (
+            left["optimal_frequency_by_distance"]
+            == right["optimal_frequency_by_distance"]
+        )
+
+
+def test_apply_phase_shift_composes_with_the_delay_in_either_order(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given both corrections, when applied, then the order does not matter."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+    config = {QUBIT: {"f": {"turns": -1}}}
+
+    delay_first = apply_phase_shift(apply_electrical_delay(result, DELAY), config)
+    shift_first = apply_electrical_delay(apply_phase_shift(result, config), DELAY)
+
+    assert np.allclose(
+        delay_first.data[QUBIT]["absolute_phases"],
+        shift_first.data[QUBIT]["absolute_phases"],
+    )
+    assert delay_first.data[QUBIT]["electrical_delay"] == DELAY
+    assert shift_first.data[QUBIT]["phase_shift_config"] == config[QUBIT]
+
+
+def test_apply_phase_shift_takes_a_config_per_qubit(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two qubits, when a shift is applied, then each gets its own config."""
+    exp = readout_scan_experiment_factory(max_level=2, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=2)
+
+    updated = apply_phase_shift(
+        result,
+        {QUBIT: {"f": {"turns": -1}}, QUBIT_2: {"e": {"turns": -2}}},
+    )
+
+    first = updated.data[QUBIT]["absolute_phases"]
+    second = updated.data[QUBIT_2]["absolute_phases"]
+    assert np.allclose(first[2] - result.data[QUBIT]["absolute_phases"][2], -2 * np.pi)
+    assert np.allclose(
+        second[1] - result.data[QUBIT_2]["absolute_phases"][1], -4 * np.pi
+    )
+
+
+def test_apply_phase_shift_keeps_a_qubit_left_out_of_the_config(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a config naming one qubit, when applied, then the other keeps its shift."""
+    exp = readout_scan_experiment_factory(max_level=2, qubits=[QUBIT, QUBIT_2])
+    result = _readout_scan(exp, max_level=2)
+
+    both = apply_phase_shift(
+        result, {QUBIT: {"f": {"turns": -1}}, QUBIT_2: {"f": {"turns": -1}}}
+    )
+    retuned = apply_phase_shift(both, {QUBIT: {"f": {"turns": -2}}})
+
+    assert retuned.data[QUBIT]["phase_shift_config"] == {"f": {"turns": -2}}
+    assert retuned.data[QUBIT_2]["phase_shift_config"] == {"f": {"turns": -1}}
+    assert np.array_equal(
+        retuned.data[QUBIT_2]["absolute_phases"],
+        both.data[QUBIT_2]["absolute_phases"],
+    )
+
+
+def test_apply_phase_shift_clears_a_qubit_with_an_empty_config(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an empty mapping, when applied, then that qubit's shift is dropped."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    shifted = apply_phase_shift(result, {QUBIT: {"f": {"turns": -1}}})
+    cleared = apply_phase_shift(shifted, {QUBIT: {}})
+
+    assert np.array_equal(
+        cleared.data[QUBIT]["absolute_phases"],
+        result.data[QUBIT]["absolute_phases"],
+    )
+
+
+def test_apply_phase_shift_rejects_an_unknown_qubit(
+    readout_scan_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a qubit the result lacks, when applied, then it says so."""
+    exp = readout_scan_experiment_factory(max_level=2)
+    result = _readout_scan(exp, max_level=2)
+
+    with pytest.raises(ValueError, match="this result does not hold"):
+        apply_phase_shift(result, {QUBIT_2: {"f": {"turns": -1}}})
+
+
+def _ramsey_stub(
+    stub_experiment_factory: Callable[..., Any],
+    *,
+    transition: str = "fh",
+    with_drag_hpi: bool = True,
+    **kwargs: Any,
+) -> Any:
+    """Return a stub calibrated for a Ramsey sequence on one transition."""
+    exp = stub_experiment_factory(
+        transition=transition,
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        beta=DRAG_COEFF,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        **kwargs,
+    )
+    # The factory only seeds the FlatTop half-pi, and a Ramsey sequence is built
+    # from the DRAG one, so that is added here on top of it.
+    if with_drag_hpi:
+        for target in exp.ctx.stored_rabi_params:
+            exp.calib_note.update_drag_hpi_param(
+                target,
+                {
+                    "target": target,
+                    "duration": DRAG_HPI_DURATION,
+                    "amplitude": 0.30,
+                    "beta": DRAG_COEFF,
+                },
+            )
+    return exp
+
+
+def _ramsey_body(values: np.ndarray, *, hpi_duration: float, wait: float) -> tuple:
+    """Split a transition channel into `(first half-pi, wait, second half-pi)`."""
+    period = Waveform.SAMPLING_PERIOD
+    n_hpi = round(hpi_duration / period)
+    n_wait = round(wait / period)
+    start = int(np.flatnonzero(np.abs(values) > 0)[0])
+    first = values[start : start + n_hpi]
+    gap = values[start + n_hpi : start + n_hpi + n_wait]
+    second = values[start + n_hpi + n_wait : start + 2 * n_hpi + n_wait]
+    tail = values[start + 2 * n_hpi + n_wait :]
+    return first, gap, second, tail
+
+
+def test_ramsey_run_brackets_every_wait_with_a_half_pi_and_its_negation(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a wait sweep, when run, then each point plays X90, wait, -X90."""
+    exp = _ramsey_stub(stub_experiment_factory)
+    times = np.arange(0, 41, 8, dtype=np.float64)
+
+    run_result = run_ramsey_experiment_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        time_range=times,
+        detuning=0.002,
+        frequency=7.5,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot_pulse_schedule=False,
+    )
+
+    call = exp.sweep_calls[-1]
+    # Only the transition target is retuned; the lower rungs keep their carriers.
+    assert call["frequencies"] == {f"{QUBIT}-fh": 7.502}
+    assert run_result["drive_frequency"] == pytest.approx(7.502)
+    assert len(call["schedules"]) == times.size
+
+    for wait, schedule in zip(times, call["schedules"], strict=True):
+        values = schedule.get_sampled_sequences()[f"{QUBIT}-fh"]
+        first, gap, second, tail = _ramsey_body(
+            values,
+            hpi_duration=run_result["hpi_duration"],
+            wait=float(wait),
+        )
+        assert gap.size == round(wait / Waveform.SAMPLING_PERIOD)
+        assert not np.any(gap)
+        assert not np.any(tail)
+        # The DRAG half-pi is played, not the FlatTop one: only DRAG carries a
+        # quadrature component, and the FlatTop envelope is purely real.
+        assert np.abs(first.imag).max() > 0
+        # `-X90` is the half-pi shifted by pi, so it is the exact negation of
+        # both components.
+        np.testing.assert_allclose(second, -first, atol=1e-12)
+
+
+def test_ramsey_run_keeps_the_fringe_inside_a_symmetric_ladder(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a high rung, when run, then the ladder brackets the Ramsey body."""
+    exp = _ramsey_stub(stub_experiment_factory)
+
+    run_ramsey_experiment_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        time_range=np.array([16.0]),
+        frequency=7.5,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot_pulse_schedule=False,
+    )
+
+    schedule = exp.sweep_calls[-1]["schedules"][0]
+    assert set(schedule.labels) == {QUBIT, f"{QUBIT}-ef", f"{QUBIT}-fh"}
+    sequences = schedule.get_sampled_sequences()
+    for label in (QUBIT, f"{QUBIT}-ef"):
+        driven = np.flatnonzero(np.abs(sequences[label]) > 0)
+        # Two blocks of equal length: the preparation and its mirror image.
+        breaks = np.flatnonzero(np.diff(driven) > 1)
+        assert breaks.size == 1
+        prep = driven[: breaks[0] + 1]
+        un_prep = driven[breaks[0] + 1 :]
+        assert prep.size == un_prep.size
+        np.testing.assert_allclose(
+            sequences[label][prep],
+            sequences[label][un_prep],
+        )
+
+
+def test_ramsey_requires_a_calibrated_drag_half_pi_pulse(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given no stored DRAG half-pi, when run, then it names the calibration to run."""
+    exp = _ramsey_stub(stub_experiment_factory, with_drag_hpi=False)
+    # The FlatTop half-pi is there and must not be silently substituted for it.
+    assert exp.calib_note.get_hpi_param(f"{QUBIT}-fh") is not None
+
+    with pytest.raises(ValueError, match="calibrate_drag_hpi_pulse_based_on_ground"):
+        ramsey_experiment_based_on_ground(
+            exp,
+            targets=QUBIT,
+            transition="fh",
+            time_range=np.array([16.0]),
+            plot=False,
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_ramsey_requires_stored_rabi_params(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given no stored Rabi arc, when run, then it names the experiment to run."""
+    exp = _ramsey_stub(stub_experiment_factory, transition="ge", calibrated_qubits=[])
+
+    with pytest.raises(ValueError, match="obtain_rabi_params_based_on_ground"):
+        ramsey_experiment_based_on_ground(
+            exp,
+            targets=QUBIT,
+            transition="ge",
+            time_range=np.array([16.0]),
+            plot=False,
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_ramsey_rejects_wait_times_off_the_sampling_grid(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an off-grid wait, when run, then it raises before measuring."""
+    exp = _ramsey_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match="multiples of the sampling period"):
+        run_ramsey_experiment_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            time_range=np.array([0.0, 8.0, 13.0]),
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_ramsey_rejects_a_detuning_that_cannot_produce_a_fringe(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a zero detuning, when run, then it says why a fringe needs one."""
+    exp = _ramsey_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match="`detuning` must be a non-zero"):
+        run_ramsey_experiment_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            time_range=np.array([16.0]),
+            detuning=0.0,
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_ramsey_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when run, then the payload records the defaults."""
+    module = _module("ramsey_experiment_based_on_ground")
+    exp = _ramsey_stub(stub_experiment_factory, transition="ef")
+
+    payload = run_ramsey_experiment_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="ef",
+        plot_pulse_schedule=False,
+    )
+
+    assert payload["detuning"] == module.DEFAULT_DETUNING
+    assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
+    assert payload["shot_interval"] == _core.DEFAULT_SHOT_INTERVAL
+    np.testing.assert_allclose(
+        payload["time_range"],
+        np.asarray(module.DEFAULT_TIME_RANGE, dtype=np.float64),
+    )
+    # The registered target frequency, not the qubit's bare frequency.
+    assert payload["frequency"] == pytest.approx(
+        exp.ctx.targets[f"{QUBIT}-ef"].frequency
+    )
+    assert payload["drive_frequency"] == pytest.approx(
+        payload["frequency"] + module.DEFAULT_DETUNING
+    )
+
+
+def test_ramsey_entry_point_keys_by_transition_label_and_stores_nothing(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two qubits, when run, then each is swept on its own and nothing is saved."""
+    exp = _ramsey_stub(stub_experiment_factory, qubits=[QUBIT, QUBIT_2])
+    seeded = {target: dict(param) for target, param in exp.calib_note.hpi.items()}
+    seeded_drag = {
+        target: dict(param) for target, param in exp.calib_note.drag_hpi.items()
+    }
+
+    result = ramsey_experiment_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        time_range=np.arange(0, 401, 8),
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    targets = [f"{QUBIT}-fh", f"{QUBIT_2}-fh"]
+    assert list(result.data) == targets
+    assert len(exp.sweep_calls) == 2
+    for target in targets:
+        # The stub cannot free-evolve, so the fringe itself is not meaningful
+        # here; what is pinned is that every stage ran and kept its payload.
+        assert "error" not in result.data[target]
+        assert f"{target}:ramsey" in result.figures
+        assert f"{target}:iq" in result.figures
+    assert exp.calib_note.hpi == seeded
+    assert exp.calib_note.drag_hpi == seeded_drag
+    assert exp.calib_note.rabi == {}
+
+
+def test_ramsey_entry_point_threads_the_decay_guess_to_the_analysis(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a decay guess, when run, then the analysis of every target gets it."""
+    exp = _ramsey_stub(stub_experiment_factory, qubits=[QUBIT, QUBIT_2])
+
+    result = ramsey_experiment_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        time_range=np.arange(0, 401, 8),
+        t2_estimation=750.0,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    for target in (f"{QUBIT}-fh", f"{QUBIT_2}-fh"):
+        assert result.data[target]["t2_estimation"] == 750.0

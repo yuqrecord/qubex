@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
@@ -9,10 +10,12 @@ import numpy as np
 import plotly.graph_objects as go
 import pytest
 
+from qubex.analysis import FitStatus, fitting
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
     analyze_measure_dispersive_shift_extended,
+    analyze_ramsey_experiment_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
 from qubex.pulse import Drag, FlatTop
@@ -821,8 +824,8 @@ def test_readout_scan_phase_distance_folds_across_pi() -> None:
     assert subset["optimal_phase_separation"] == pytest.approx(np.pi)
 
 
-def test_readout_scan_subsets_are_named_after_their_levels() -> None:
-    """Given a three-transition ladder, when analyzed, then subsets nest by name."""
+def test_readout_scan_reports_the_two_readout_criteria() -> None:
+    """Given a three-transition ladder, when analyzed, then ge and geL come back."""
     rng = np.random.default_rng(0)
     signals = _phasors(rng.uniform(0, 2 * np.pi, size=(4, 15)))
     run_result = _readout_scan_run_result(signals=signals)
@@ -830,11 +833,74 @@ def test_readout_scan_subsets_are_named_after_their_levels() -> None:
     data = analyze_measure_dispersive_shift_extended(run_result=run_result)
 
     subsets = data["subsets"]
-    assert [subset["name"] for subset in subsets] == ["ge", "gef", "gefh"]
-    assert [len(subset["levels"]) for subset in subsets] == [2, 3, 4]
+    assert [subset["name"] for subset in subsets] == ["ge", "geL"]
+    assert [subset["n_classes"] for subset in subsets] == [2, 3]
+    assert [len(subset["levels"]) for subset in subsets] == [2, 4]
+    # The bound counts classes to place on the circle, not levels measured, so it
+    # does not shrink as leakage levels are added.
     assert [subset["ideal_separation"] for subset in subsets] == pytest.approx(
-        [np.pi, 2 * np.pi / 3, np.pi / 2]
+        [np.pi, 2 * np.pi / 3]
     )
+    # `geL` drops the leakage-leakage pairs; with one leakage level there are
+    # none to drop, so it holds every pair of |g>, |e>, |f> and |h> except (2, 3).
+    assert set(subsets[1]["pairs"]) == {(0, 1), (0, 2), (0, 3), (1, 2), (1, 3)}
+
+
+def test_readout_scan_reports_only_ge_without_leakage_levels() -> None:
+    """Given a ge-only scan, when analyzed, then there is no leakage criterion."""
+    rng = np.random.default_rng(1)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(2, 15)))
+
+    data = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=signals)
+    )
+
+    assert [subset["name"] for subset in data["subsets"]] == ["ge"]
+
+
+def test_readout_scan_geL_ignores_the_leakage_leakage_pair() -> None:
+    """Given two leakage levels side by side, when analyzed, then they do not count."""
+    n_points = 9
+    # |g> and |e> a third of a turn apart, |f> and |h> together a third further
+    # on: every pair that matters is 2 pi / 3, and the only close pair is |f>-|h>.
+    third = 2 * np.pi / 3
+    phases = np.stack(
+        [
+            np.zeros(n_points),
+            np.full(n_points, third),
+            np.full(n_points, 2 * third),
+            np.full(n_points, 2 * third + 0.01),
+        ]
+    )
+    run_result = _readout_scan_run_result(signals=_phasors(phases))
+
+    data = analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+    subset = data["subsets"][1]
+    assert subset["name"] == "geL"
+    # |h> sits 0.01 past |f>, so |g>-|h> is the tightest pair that counts at
+    # `third - 0.01`. Counting |f>-|h> would have made this 0.01 rad instead.
+    assert subset["optimal_phase_separation"] == pytest.approx(third - 0.01)
+    assert subset["limiting_pair"] not in {(2, 3), (3, 2)}
+
+
+def test_readout_scan_ge_ignores_the_leakage_levels_entirely() -> None:
+    """Given moved leakage levels, when analyzed, then the ge optimum is unchanged."""
+    n_points = 15
+    rng = np.random.default_rng(2)
+    base = rng.uniform(0, 2 * np.pi, size=(2, n_points))
+    with_leakage = np.vstack([base, rng.uniform(0, 2 * np.pi, size=(2, n_points))])
+    moved = np.vstack([base, rng.uniform(0, 2 * np.pi, size=(2, n_points))])
+
+    first = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=_phasors(with_leakage))
+    )["subsets"][0]
+    second = analyze_measure_dispersive_shift_extended(
+        run_result=_readout_scan_run_result(signals=_phasors(moved))
+    )["subsets"][0]
+
+    assert first["optimal_frequency"] == second["optimal_frequency"]
+    assert np.array_equal(first["phase_separation"], second["phase_separation"])
 
 
 def test_readout_scan_ignores_points_where_a_level_vanishes() -> None:
@@ -918,9 +984,10 @@ def test_readout_scan_reports_the_pair_that_limits_the_optimum() -> None:
     data = analyze_measure_dispersive_shift_extended(run_result=run_result)
 
     subset = data["subsets"][1]
-    assert subset["name"] == "gef"
+    assert subset["name"] == "geL"
     assert subset["optimal_index"] == peak
-    # |e> and |f> sit 0.5 rad apart, closer than either is to |g>.
+    # |e> and |f> sit 0.5 rad apart, closer than either is to |g>. |f> is the
+    # only leakage level, so no pair is dropped and it still limits the minimum.
     assert subset["limiting_pair"] == (1, 2)
     assert subset["optimal_phase_separation"] == pytest.approx(0.5)
 
@@ -1126,3 +1193,275 @@ def test_readout_scan_requires_the_electrical_delay_to_be_present() -> None:
 
     with pytest.raises(KeyError, match="electrical_delay"):
         analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+
+def _four_level_ramp_run_result() -> dict[str, Any]:
+    """Return a g/e/f/h scan with a distinct constant phase per level."""
+    n_points = 21
+    phases = np.stack([np.full(n_points, 0.1 * (level + 1)) for level in range(4)])
+    return _readout_scan_run_result(signals=_phasors(phases))
+
+
+def test_readout_scan_phase_shift_moves_only_inside_the_frequency_window() -> None:
+    """Given a window, when shifted, then the points outside it do not move."""
+    run_result = _four_level_ramp_run_result()
+    frequencies = run_result["frequency_range"]
+    low, high = frequencies[5], frequencies[12]
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_config={"f": {"frequency_range": [low, high], "turns": -1}},
+    )
+
+    difference = shifted["absolute_phases"] - plain["absolute_phases"]
+    inside = (frequencies >= low) & (frequencies <= high)
+    assert inside.any() and not inside.all()
+    assert np.allclose(difference[2][inside], -2 * np.pi)
+    assert np.allclose(difference[2][~inside], 0.0)
+    assert np.allclose(difference[[0, 1, 3]], 0.0)
+
+
+def test_readout_scan_phase_shift_covers_the_sweep_without_a_window() -> None:
+    """Given no window, when shifted, then the whole trace moves."""
+    run_result = _four_level_ramp_run_result()
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_config={"h": {"turns": -1}},
+    )
+
+    difference = shifted["absolute_phases"] - plain["absolute_phases"]
+    assert np.allclose(difference[3], -2 * np.pi)
+    assert np.allclose(difference[:3], 0.0)
+
+
+def test_readout_scan_phase_shift_takes_a_turn_count_per_level() -> None:
+    """Given two levels, when shifted, then each moves by its own turn count."""
+    run_result = _four_level_ramp_run_result()
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_config={"f": {"turns": -1}, "h": {"turns": -2}},
+    )
+
+    difference = shifted["absolute_phases"] - plain["absolute_phases"]
+    assert np.allclose(difference[0], 0.0)
+    assert np.allclose(difference[1], 0.0)
+    assert np.allclose(difference[2], -2 * np.pi)
+    assert np.allclose(difference[3], -4 * np.pi)
+
+
+def test_readout_scan_phase_shift_of_zero_turns_is_identity() -> None:
+    """Given zero turns, when analyzed, then nothing moves."""
+    run_result = _four_level_ramp_run_result()
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_config={"f": {"turns": 0}},
+    )
+
+    assert np.array_equal(plain["absolute_phases"], shifted["absolute_phases"])
+
+
+def test_readout_scan_phase_shift_takes_a_level_index_or_a_name() -> None:
+    """Given either spelling of a level, when shifted, then the result agrees."""
+    run_result = _four_level_ramp_run_result()
+
+    by_name = analyze_measure_dispersive_shift_extended(
+        run_result=run_result, phase_shift_config={"f": {"turns": -1}}
+    )
+    by_index = analyze_measure_dispersive_shift_extended(
+        run_result=run_result, phase_shift_config={2: {"turns": -1}}
+    )
+
+    assert np.array_equal(by_name["absolute_phases"], by_index["absolute_phases"])
+
+
+def test_readout_scan_phase_shift_does_not_move_the_optimum() -> None:
+    """Given any shift, when analyzed, then neither metric changes at all."""
+    rng = np.random.default_rng(8)
+    signals = _phasors(rng.uniform(0, 2 * np.pi, size=(3, 17)))
+    run_result = _readout_scan_run_result(signals=signals)
+
+    plain = analyze_measure_dispersive_shift_extended(run_result=run_result)
+    shifted = analyze_measure_dispersive_shift_extended(
+        run_result=run_result,
+        phase_shift_config={"e": {"turns": -3}, "f": {"turns": 2}},
+    )
+
+    for left, right in zip(plain["subsets"], shifted["subsets"], strict=True):
+        # The metrics come from the raw signals, so this is exact, not close.
+        assert left["optimal_frequency"] == right["optimal_frequency"]
+        assert left["optimal_phase_separation"] == right["optimal_phase_separation"]
+        assert np.array_equal(left["phase_separation"], right["phase_separation"])
+        assert np.array_equal(left["distance_separation"], right["distance_separation"])
+    assert np.array_equal(plain["relative_phases"], shifted["relative_phases"])
+
+
+@pytest.mark.parametrize("level", ["x", 5, -1])
+def test_readout_scan_phase_shift_rejects_a_level_the_scan_lacks(level: Any) -> None:
+    """Given a level that was not measured, when shifted, then it says so."""
+    with pytest.raises(ValueError, match="this scan does not hold"):
+        analyze_measure_dispersive_shift_extended(
+            run_result=_four_level_ramp_run_result(),
+            phase_shift_config={level: {"turns": -1}},
+        )
+
+
+#: True fringe frequency of the synthetic Ramsey traces, in GHz.
+RAMSEY_FRINGE = 0.0012
+
+#: True coherence time of the synthetic Ramsey traces, in ns.
+RAMSEY_T2 = 4000.0
+
+#: Carrier of the synthetic Ramsey traces, in GHz.
+RAMSEY_CARRIER = 7.5
+
+
+def _ramsey_run_result(
+    *,
+    detuning: float = 0.001,
+    fringe: float = RAMSEY_FRINGE,
+    t2: float = RAMSEY_T2,
+    times: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Return a run payload carrying an ideal `-X90` Ramsey trace."""
+    if times is None:
+        times = np.arange(0, 10001, 100, dtype=np.float64)
+    # Closing with -X90 puts the fringe at an extremum at T = 0, so the trace is
+    # a cosine with no phase offset at all.
+    normalized = np.exp(-times / t2) * np.cos(2 * np.pi * fringe * times)
+    return {
+        "qubit": QUBIT,
+        "transition": "fh",
+        "target": f"{QUBIT}-fh",
+        "lower_labels": (QUBIT, f"{QUBIT}-ef"),
+        "time_range": times,
+        "detuning": detuning,
+        "frequency": RAMSEY_CARRIER,
+        "drive_frequency": RAMSEY_CARRIER + detuning,
+        "raw": normalized.astype(np.complex128),
+        "normalized": normalized,
+    }
+
+
+def test_ramsey_fit_recovers_the_fringe_frequency_and_the_coherence_time() -> None:
+    """Given an ideal fringe, when analyzed, then the fit returns its parameters."""
+    payload = analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())
+
+    assert payload["ramsey_frequency"] == pytest.approx(RAMSEY_FRINGE, rel=1e-6)
+    assert payload["t2"] == pytest.approx(RAMSEY_T2, rel=1e-6)
+    assert payload["r2"] == pytest.approx(1.0)
+    # -X90 closes the sequence, so the fringe is a cosine anchored at T = 0.
+    assert payload["phi"] == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("detuning", [0.001, -0.001])
+def test_ramsey_resonance_sits_on_the_carrier_side_of_the_drive(
+    detuning: float,
+) -> None:
+    """Given either sign of detuning, when analyzed, then the branch follows it."""
+    payload = analyze_ramsey_experiment_based_on_ground(
+        run_result=_ramsey_run_result(detuning=detuning)
+    )
+
+    drive = RAMSEY_CARRIER + detuning
+    fringe = payload["ramsey_frequency"]
+    sign = np.sign(detuning)
+    assert payload["resonant_frequency"] == pytest.approx(drive - sign * fringe)
+    assert payload["mirror_frequency"] == pytest.approx(drive + sign * fringe)
+    # The reported branch is the one that moves back towards the carrier.
+    assert abs(payload["resonant_frequency"] - RAMSEY_CARRIER) < abs(
+        payload["mirror_frequency"] - RAMSEY_CARRIER
+    )
+    assert payload["detuning_from_carrier"] == pytest.approx(
+        payload["resonant_frequency"] - RAMSEY_CARRIER
+    )
+
+
+def test_ramsey_analysis_raises_when_the_fit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a failed fit, when analyzed, then it raises instead of indexing it."""
+
+    class _FailedFit:
+        status = FitStatus.ERROR
+        message = "Failed to fit the data."
+
+    monkeypatch.setattr(fitting, "fit_ramsey", lambda **_: _FailedFit())
+
+    with pytest.raises(ValueError, match="Ramsey fit"):
+        analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())
+
+
+def test_ramsey_defaults_the_decay_guess_and_records_it() -> None:
+    """Given no guess, when analyzed, then the module default is used and kept."""
+    module = importlib.import_module(
+        "qubex.contrib.experiment.calibrate_1q_transition_based_on_ground"
+        ".ramsey_experiment_based_on_ground"
+    )
+
+    payload = analyze_ramsey_experiment_based_on_ground(run_result=_ramsey_run_result())
+
+    assert payload["t2_estimation"] == module.DEFAULT_T2_ESTIMATION
+    # The default is the one `fitting.fit_ramsey` falls back to on its own.
+    assert module.DEFAULT_T2_ESTIMATION == 10_000.0
+
+
+def test_ramsey_decay_guess_reaches_the_fit() -> None:
+    """Given a guess, when analyzed, then it is what seeds the damping."""
+    seen: dict[str, Any] = {}
+    real_fit_ramsey = fitting.fit_ramsey
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_fit_ramsey(**kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(fitting, "fit_ramsey", _spy)
+        payload = analyze_ramsey_experiment_based_on_ground(
+            run_result=_ramsey_run_result(),
+            t2_estimation=2500.0,
+        )
+
+    assert seen["tau_est"] == 2500.0
+    assert payload["t2_estimation"] == 2500.0
+    # Seeding it does not cost the answer on a trace the fit can already solve.
+    assert payload["t2"] == pytest.approx(RAMSEY_T2, rel=1e-6)
+
+
+def test_ramsey_decay_guess_rescues_a_sweep_far_past_the_default() -> None:
+    """Given a long sweep, when seeded, then the fit leaves its local minimum."""
+    # 60 us of coherence swept out to 100 us: six times the 10 us the fit starts
+    # from, which is where the unseeded fit stalls.
+    times = np.arange(0, 100_001, 1000, dtype=np.float64)
+    run_result = _ramsey_run_result(fringe=0.00012, t2=60_000.0, times=times)
+
+    unseeded = analyze_ramsey_experiment_based_on_ground(run_result=run_result)
+    seeded = analyze_ramsey_experiment_based_on_ground(
+        run_result=run_result,
+        t2_estimation=60_000.0,
+    )
+
+    assert unseeded["r2"] < 0.9
+    assert seeded["r2"] > 0.99
+    assert seeded["t2"] == pytest.approx(60_000.0, rel=1e-3)
+    assert seeded["ramsey_frequency"] == pytest.approx(0.00012, rel=1e-3)
+    # The stalled fit does not just lose precision; it biases the fringe.
+    assert unseeded["ramsey_frequency"] != pytest.approx(0.00012, rel=1e-3)
+
+
+@pytest.mark.parametrize("t2_estimation", [0.0, -100.0, np.nan, np.inf])
+def test_ramsey_rejects_a_decay_guess_that_cannot_seed_the_fit(
+    t2_estimation: float,
+) -> None:
+    """Given an unusable guess, when analyzed, then it raises before fitting."""
+    with pytest.raises(ValueError, match="`t2_estimation` must be a positive"):
+        analyze_ramsey_experiment_based_on_ground(
+            run_result=_ramsey_run_result(),
+            t2_estimation=t2_estimation,
+        )

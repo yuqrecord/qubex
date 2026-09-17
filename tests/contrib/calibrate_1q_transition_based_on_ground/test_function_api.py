@@ -14,13 +14,14 @@ ENTRY_POINTS = (
     "chevron_pattern_based_on_ground",
     "measure_dispersive_shift_extended",
     "obtain_rabi_params_based_on_ground",
+    "ramsey_experiment_based_on_ground",
 )
 
 STAGE_PREFIXES = ("run_", "analyze_", "plot_", "display_")
 
 #: Public names that are not an entry point and not a stage of one. They are
 #: declared here so the export surface stays pinned rather than open-ended.
-EXTRA_EXPORTS = ("apply_electrical_delay",)
+EXTRA_EXPORTS = ("apply_electrical_delay", "apply_phase_shift")
 
 
 def test_entry_points_are_exported_from_contrib() -> None:
