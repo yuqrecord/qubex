@@ -358,10 +358,6 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         for s in iq_data.keys()
     }
     leakage_sensitive_classifier = Classifier()
-    leakage_sensitive_classifier.update_weight(
-        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-    )
     leakage_sensitive_classifier.fit(
         [
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],

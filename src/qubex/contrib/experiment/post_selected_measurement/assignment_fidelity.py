@@ -100,7 +100,7 @@ class Classifier:
     def weighted_signal(self, iq_data):
         return iq_data @ self.weight
 
-    def update_weight(self, iq_data_g, iq_data_e):
+    def _update_weight(self, iq_data_g, iq_data_e):
         self.weight = np.conj(iq_data_e.mean(axis=0) - iq_data_g.mean(axis=0))
         norm = np.linalg.norm(self.weight)
         if norm == 0:
@@ -110,6 +110,7 @@ class Classifier:
         self.weight = self.weight / norm
 
     def fit(self, iq_data_list):
+        self._update_weight(iq_data_list[0], iq_data_list[1])
         train_data = np.concatenate(
             [self.weighted_signal(iq_data) for iq_data in iq_data_list]
         )
@@ -429,10 +430,6 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
                 "# of post-selected shots (e train): ",
                 sum(post_selection["e"]["train"]),
             )
-        classifier.update_weight(
-            iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-            iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-        )
         classifier.fit(
             [
                 iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
@@ -459,10 +456,6 @@ def _build_classifier(*, iq_data, n_train, n_test, n_max_epoch=10, verbose=True)
             break
     if not converged:
         print(f"Post-selection did not converge within {n_max_epoch} epochs.")
-    classifier.update_weight(
-        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-    )
     classifier.fit(
         [
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
