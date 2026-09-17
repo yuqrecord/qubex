@@ -293,7 +293,7 @@ def plot_qnd_fidelity(*, qnd_matrix, labels={"g": "|g>", "e": "|e>"}):
                 ax.text(
                     j,
                     i,
-                    f"{matrix[i, j]:.4f}",
+                    f"{matrix[i, j]:.6f}",
                     ha="center",
                     va="center",
                     color="black" if matrix[i, j] < 0.5 else "white",
@@ -326,20 +326,20 @@ def display_qnd_fidelity(result: Result, plot: bool = True):
         print(f"{sequence} sequence:")
         print("QND fidelity")
         for s in STATES:
-            print(f"  |{s}>: {result.data['qnd_fidelity'][sequence][s]:.4f}")
-        print(f"  avg: {result.data['qnd_fidelity'][sequence]['avg']:.4f}")
+            print(f"  |{s}>: {result.data['qnd_fidelity'][sequence][s]:.6f}")
+        print(f"  avg: {result.data['qnd_fidelity'][sequence]['avg']:.6f}")
         print("Conditioning on the first readout")
         for s in STATES:
             print(
-                f"  rate |{s}>: {result.data['conditioning_rate'][sequence][s]:.4f} "
+                f"  rate |{s}>: {result.data['conditioning_rate'][sequence][s]:.6f} "
                 f"({result.data['conditioned_shots'][sequence][s]} shots)"
             )
         print("Joint probabilities P(first=a, second=b | prepared)")
         for s in STATES:
             joint = result.data["joint_probabilities"][sequence][s]
             print(
-                f"  |{s}>: gg={joint[0, 0]:.4f}, ge={joint[0, 1]:.4f}, "
-                f"eg={joint[1, 0]:.4f}, ee={joint[1, 1]:.4f}"
+                f"  |{s}>: gg={joint[0, 0]:.6f}, ge={joint[0, 1]:.6f}, "
+                f"eg={joint[1, 0]:.6f}, ee={joint[1, 1]:.6f}"
             )
 
 

@@ -387,7 +387,7 @@ def plot_post_selected_assignment_fidelity(
                     ax.text(
                         j,
                         i,
-                        f"{matrix[i, j]:.4f}",
+                        f"{matrix[i, j]:.6f}",
                         ha="center",
                         va="center",
                         color="black" if matrix[i, j] < 0.5 else "white",
@@ -662,17 +662,17 @@ def display_post_selected_assignment_fidelity(result: Result, plot: bool = True)
             print(f"{w.replace('_', ' ')} ({d} set):")
             print("Assignment fidelity")
             for s in ["g", "e"]:
-                print(f"  |{s}>: {result.data['assignment_fidelity'][w][s][d]:.4f}")
-            print(f"  avg: {result.data['assignment_fidelity'][w]['avg'][d]:.4f}")
+                print(f"  |{s}>: {result.data['assignment_fidelity'][w][s][d]:.6f}")
+            print(f"  avg: {result.data['assignment_fidelity'][w]['avg'][d]:.6f}")
             if w == "after_post_selection":
                 for s in ["g", "e"]:
                     print(
-                        f"Post-selection rate |{s}>: {result.data['post_selection_rate'][s][d]:.4f}"
+                        f"Post-selection rate |{s}>: {result.data['post_selection_rate'][s][d]:.6f}"
                     )
             snr = result.data["snr"][w][d]
-            print(f"SNR: {snr:.4f}")
+            print(f"SNR: {snr:.6f}")
             print(
-                f"1-erfc(SNR/(2*sqrt(2)))/2: {1 - erfc(snr / (2 * np.sqrt(2))) / 2:.4f} "
+                f"1-erfc(SNR/(2*sqrt(2)))/2: {1 - erfc(snr / (2 * np.sqrt(2))) / 2:.6f} "
                 "(equal-variance Gaussian, midpoint threshold)"
             )
             gaussian_fit_snr = result.data["weighted_signal_histogram"][
@@ -682,10 +682,10 @@ def display_post_selected_assignment_fidelity(result: Result, plot: bool = True)
                 print("Gaussian fit SNR: N/A (fit failed)")
                 print("1-erfc(Gaussian fit SNR/(2*sqrt(2)))/2: N/A (fit failed)")
             else:
-                print(f"Gaussian fit SNR: {gaussian_fit_snr:.4f}")
+                print(f"Gaussian fit SNR: {gaussian_fit_snr:.6f}")
                 print(
                     "1-erfc(Gaussian fit SNR/(2*sqrt(2)))/2: "
-                    f"{1 - erfc(gaussian_fit_snr / (2 * np.sqrt(2))) / 2:.4f}"
+                    f"{1 - erfc(gaussian_fit_snr / (2 * np.sqrt(2))) / 2:.6f}"
                 )
 
 

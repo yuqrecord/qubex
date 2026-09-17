@@ -264,7 +264,7 @@ def plot_post_selected_leakage_sensitive_assignment_fidelity(
                     ax.text(
                         j,
                         i,
-                        f"{matrix[i, j]:.4f}",
+                        f"{matrix[i, j]:.6f}",
                         ha="center",
                         va="center",
                         color="black" if matrix[i, j] < 0.5 else "white",
@@ -463,7 +463,7 @@ def display_post_selected_leakage_sensitive_assignment_fidelity(
             print("  prepared |" + "".join(f"{o:>9}" for o in OBSERVED_LABELS))
             for s_prepared in population_matrix[w].keys():
                 row = "".join(
-                    f"{population_matrix[w][s_prepared][s_observed][d]:9.4f}"
+                    f"{population_matrix[w][s_prepared][s_observed][d]:9.6f}"
                     for s_observed in OBSERVED_STATES
                 )
                 print(f"  {STATE_TO_LABEL[s_prepared]:>8} |" + row)
@@ -471,7 +471,7 @@ def display_post_selected_leakage_sensitive_assignment_fidelity(
                 for s in post_selection_rate.keys():
                     print(
                         f"Post-selection rate {STATE_TO_LABEL[s]}: "
-                        f"{post_selection_rate[s][d]:.4f}"
+                        f"{post_selection_rate[s][d]:.6f}"
                     )
 
 
