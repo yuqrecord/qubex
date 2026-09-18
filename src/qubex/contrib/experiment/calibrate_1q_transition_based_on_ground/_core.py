@@ -106,7 +106,7 @@ from qubex.experiment.experiment_constants import (
     PI_RAMPTIME,
 )
 from qubex.experiment.models import RabiParam, Result
-from qubex.pulse import PulseArray, PulseSchedule, Waveform
+from qubex.pulse import PulseArray, PulseSchedule, RampType, Waveform
 from qubex.system.transition import (
     TRANSITION_NAMES,
     TransitionName,
@@ -166,6 +166,20 @@ DEFAULT_PI_RAMPTIME = PI_RAMPTIME
 DEFAULT_DRAG_HPI_DURATION = DRAG_HPI_DURATION
 DEFAULT_DRAG_PI_DURATION = DRAG_PI_DURATION
 DEFAULT_DRAG_COEFF = DRAG_COEFF
+
+#: Envelopes `Drag` can build. `RampType` also lists "Squad", which `Drag.func`
+#: does not implement.
+DRAG_TYPES: tuple[RampType, ...] = (
+    "Gaussian",
+    "RaisedCosine",
+    "Sintegral",
+    "Bump",
+    "Blackman",
+)
+
+#: Envelope a DRAG calibration uses when none is requested. It is also what a
+#: stored calibration without a `"type"` was measured with.
+DEFAULT_DRAG_TYPE: RampType = "Gaussian"
 
 #: Whether the Rabi oscillation is fitted with a damped cosine.
 DEFAULT_IS_DAMPED = True
@@ -255,6 +269,15 @@ def validate_transition(transition: str) -> None:
         raise ValueError(
             f"`transition` {transition!r} is not a supported transition. "
             f"Supported transitions: {list(TRANSITION_NAMES)}."
+        )
+
+
+def validate_drag_type(type: RampType) -> None:
+    """Raise when the envelope is not one `Drag` can build."""
+    if type not in DRAG_TYPES:
+        raise ValueError(
+            f"`type` {type!r} is not a supported DRAG envelope. "
+            f"Supported envelopes: {list(DRAG_TYPES)}."
         )
 
 

@@ -2,7 +2,16 @@
 
 import numpy as np
 import pytest
-from qxpulse import Bump, Drag, FlatTop, Gaussian, RaisedCosine, Rect, Sintegral
+from qxpulse import (
+    Blackman,
+    Bump,
+    Drag,
+    FlatTop,
+    Gaussian,
+    RaisedCosine,
+    Rect,
+    Sintegral,
+)
 from qxpulse.library.flat_top import MultiDerivativeFlatTop
 from qxpulse.library.multi_derivative import MultiDerivative
 from qxpulse.library.sintegral import MultiDerivativeSintegral
@@ -13,6 +22,7 @@ import qubex as qx
 dt = qx.pulse.get_sampling_period()
 
 PULSE_CASES = [
+    (Blackman, {"amplitude": 1.0}),
     (Bump, {"amplitude": 1.0}),
     (Drag, {"amplitude": 1.0, "beta": 0.1}),
     (FlatTop, {"amplitude": 1.0, "tau": 2 * dt}),

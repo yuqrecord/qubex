@@ -5,7 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
+
+from qxpulse import RampType
+from typing_extensions import NotRequired, TypedDict
 
 from qubex.experiment.experiment_constants import (
     CALIBRATION_DIR,
@@ -68,6 +71,7 @@ class DragParam(Parameter):
     amplitude: float
     duration: float
     beta: float
+    type: NotRequired[RampType]
 
 
 class CrossResonanceParam(Parameter):

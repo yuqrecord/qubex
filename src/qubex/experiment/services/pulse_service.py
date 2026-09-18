@@ -372,6 +372,7 @@ class PulseService:
                 duration=param["duration"],
                 amplitude=param["amplitude"],
                 beta=param["beta"],
+                type=param.get("type"),
             )
         else:
             raise CalibrationMissingError(
@@ -395,6 +396,7 @@ class PulseService:
                 duration=param["duration"],
                 amplitude=param["amplitude"],
                 beta=param["beta"],
+                type=param.get("type"),
             )
         else:
             raise CalibrationMissingError(
@@ -850,6 +852,7 @@ class PulseService:
                     duration=param["duration"],
                     amplitude=param["amplitude"],
                     beta=param["beta"],
+                    type=param.get("type"),
                 )
         return result
 
@@ -867,6 +870,7 @@ class PulseService:
                     duration=param["duration"],
                     amplitude=param["amplitude"],
                     beta=param["beta"],
+                    type=param.get("type"),
                 )
         return result
 

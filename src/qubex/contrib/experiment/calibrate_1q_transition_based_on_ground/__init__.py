@@ -111,6 +111,16 @@ The DRAG calibrations default to `n_rotations = 4`, as the core
 FlatTop calibrations first, or pass a smaller `n_rotations`, when starting from
 a coarse estimate.
 
+The DRAG calibrations also take `type` to choose the envelope from `RampType`,
+defaulting to `"Gaussian"`. It is stored beside the amplitude and beta, so
+`Experiment.get_drag_hpi_pulse` rebuilds the calibrated pulse with it::
+
+    calibrate_drag_hpi_pulse_based_on_ground(
+        exp, transition="fh", type="Blackman")
+
+A stored amplitude seeds the sweep only when it was measured with the same
+envelope, since the rotation angle follows the area under it.
+
 The DRAG calibrations also take `beta` as the starting value of the correction
 coefficient, which otherwise comes from the stored calibration or, failing that,
 from the level ladder. Passing it turns off the correction outright::
@@ -119,7 +129,7 @@ from the level ladder. Passing it turns off the correction outright::
         exp, transition="fh", beta=0, calibrate_beta=False)
 
 At `beta = 0` the pulse has no quadrature component left, so this calibrates the
-amplitude of the plain Gaussian envelope. That is worth having above ge: driving
+amplitude of the bare envelope. That is worth having above ge: driving
 `k <-> k+1` has two leakage channels rather than one, at roughly `-alpha` and
 `+alpha`, and a single first-derivative correction cannot null both - the beta
 that cancels one doubles the other. The compromise the ladder estimate settles

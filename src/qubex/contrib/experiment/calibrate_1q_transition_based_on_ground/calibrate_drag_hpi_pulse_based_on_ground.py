@@ -45,7 +45,10 @@ Starting point
 --------------
 The amplitude and beta the sweep starts from are the calibration stored under the
 transition label when its `duration` matches, and otherwise a Rabi-rate estimate
-for the amplitude and `_core.estimate_drag_beta` for beta. For a transition
+for the amplitude and `_core.estimate_drag_beta` for beta. The stored amplitude
+additionally has to have been measured with the requested `type`: the rotation
+angle follows the area under the envelope, so an amplitude from another envelope
+lands far outside the sweep. A stored beta carries over either way. For a transition
 `k -> k+1` there are two leakage channels rather than one, with opposite-sign
 detunings, so the ge formula `-drag_coeff / alpha` does not carry over; see
 `_core.estimate_drag_beta`. It is only a seed — the beta pass measures the real
@@ -83,7 +86,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from qubex.experiment import Experiment
 from qubex.experiment.models import Result
-from qubex.pulse import Drag, Waveform
+from qubex.pulse import Drag, RampType, Waveform
 from qubex.system.transition import TransitionName
 
 from . import _core
@@ -106,6 +109,7 @@ def _resolve_initial_pulse(
     duration: float,
     drag_coeff: float,
     beta: float | None,
+    type: RampType,
 ) -> tuple[float, float, str, str]:
     """
     Return the starting amplitude, the beta to use, and where each came from.
@@ -114,6 +118,13 @@ def _resolve_initial_pulse(
     the rotation angle is set by the real part of the envelope and `beta` only
     enters the imaginary part, so an amplitude measured at some other beta is
     still the best seed available.
+
+    The amplitude, on the other hand, is reused only when the stored
+    calibration was measured with the same envelope, because the rotation angle
+    follows the area under it: the same peak amplitude spans a range of about
+    -11 % to +27 % of a rotation across the envelopes `Drag` can build, far
+    outside the amplitude sweep this calibration then runs. A stored beta
+    survives a change of envelope; a stored amplitude does not.
 
     Parameters
     ----------
@@ -127,6 +138,8 @@ def _resolve_initial_pulse(
         DRAG coefficient used to seed beta from the level ladder.
     beta : float | None
         Beta to use, or `None` to take the stored or the derived one.
+    type : RampType
+        Envelope of the pulse under test, already resolved and validated.
 
     Returns
     -------
@@ -139,6 +152,12 @@ def _resolve_initial_pulse(
         and stored.get("amplitude") is not None
         and stored.get("beta") is not None
         and np.isclose(stored["duration"], duration)
+    )
+    # A stored calibration without a `"type"` was measured with a Gaussian.
+    has_stored_type = (
+        has_stored
+        and stored is not None
+        and (stored.get("type") or _core.DEFAULT_DRAG_TYPE) == type
     )
 
     if beta is not None:
@@ -154,10 +173,10 @@ def _resolve_initial_pulse(
         )
         beta_source = "ladder_estimate"
 
-    if has_stored:
+    if has_stored_type:
         return float(stored["amplitude"]), beta, "calib_note", beta_source  # type: ignore[index]
 
-    unit_pulse = Drag(duration=duration, amplitude=1, beta=beta)
+    unit_pulse = Drag(duration=duration, amplitude=1, beta=beta, type=type)
     amplitude = _core.estimate_amplitude(
         exp,
         target=ladder.target,
@@ -178,11 +197,16 @@ def _resolve_analyzer(exp: Experiment, *, target: str) -> Waveform:
     return exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
 
 
-def _make_pulse(*, duration: float, beta: float) -> Callable[[float], Waveform]:
+def _make_pulse(
+    *,
+    duration: float,
+    beta: float,
+    type: RampType,
+) -> Callable[[float], Waveform]:
     """Return a builder of the pulse under test at a given amplitude."""
 
     def make_pulse(amplitude: float) -> Waveform:
-        return Drag(duration=duration, amplitude=amplitude, beta=beta)
+        return Drag(duration=duration, amplitude=amplitude, beta=beta, type=type)
 
     return make_pulse
 
@@ -195,6 +219,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
     duration: float | None = None,
     drag_coeff: float | None = None,
     beta: float | None = None,
+    type: RampType | None = None,
     n_rotations: int | None = None,
     amplitude_diff_range: ArrayLike | None = None,
     n_shots: int | None = None,
@@ -225,6 +250,10 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         when one matches, and otherwise to the estimate derived from the level
         ladder. Pass `0` together with `calibrate_beta=False` to run the
         calibration with the correction turned off.
+    type : RampType | None, optional
+        Envelope of the pulse under test. Defaults to
+        `_core.DEFAULT_DRAG_TYPE`. `"Squad"` is part of `RampType` but `Drag`
+        cannot build it, so it is rejected.
     n_rotations : int | None, optional
         Number of full rotations `n`; both branches use a signed leading pulse
         followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
@@ -252,6 +281,8 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         duration = _core.DEFAULT_DRAG_HPI_DURATION
     if drag_coeff is None:
         drag_coeff = _core.DEFAULT_DRAG_COEFF
+    if type is None:
+        type = _core.DEFAULT_DRAG_TYPE
     if n_rotations is None:
         n_rotations = _core.DEFAULT_DRAG_N_ROTATIONS
     if n_shots is None:
@@ -261,6 +292,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
     if plot_pulse_schedule is None:
         plot_pulse_schedule = True
 
+    _core.validate_drag_type(type)
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
     _core.validate_duration(duration)
@@ -277,6 +309,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         duration=duration,
         drag_coeff=drag_coeff,
         beta=beta,
+        type=type,
     )
     _core.validate_initial_amplitude(initial_amplitude)
 
@@ -294,7 +327,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
 
     prep_pulses = _core.resolve_prep_pulses(exp, ladder)
     repetitions = 4 * n_rotations
-    make_pulse = _make_pulse(duration=duration, beta=beta)
+    make_pulse = _make_pulse(duration=duration, beta=beta, type=type)
     acquisition_diffs, acquisition_branches = _core.build_acquisition_plan(diffs)
     sequence = _core.build_branch_sequence(
         ladder=ladder,
@@ -346,6 +379,7 @@ def run_calibrate_drag_hpi_pulse_based_on_ground(
         "drag_coeff": drag_coeff,
         "beta": beta,
         "beta_source": beta_source,
+        "type": type,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
         "amplitude_diff_range": diffs,
@@ -491,6 +525,7 @@ def display_calibrate_drag_hpi_pulse_based_on_ground(
             prefix=f"calibrate_drag_hpi_pulse_based_on_ground_{data['target']}",
         )
     _core.print_summary(data)
+    print(f"  type                : {data['type']}")
     beta_source = _core.describe_beta_source(data["beta_source"])
     print(f"  beta                : {data['beta']:.9g}  [{beta_source}]")
     iterations = data.get("iterations")
@@ -511,6 +546,7 @@ def _calibrate_one_drag_hpi(
     duration: float | None,
     drag_coeff: float | None,
     beta: float | None,
+    type: RampType | None,
     n_rotations: int | None,
     amplitude_diff_range: ArrayLike | None,
     n_iterations: int,
@@ -532,7 +568,7 @@ def _calibrate_one_drag_hpi(
         Experiment to measure with.
     ladder : _core.TransitionLadder
         Ladder returned by `_core.preflight_ladders`.
-    duration, drag_coeff, beta, n_rotations, amplitude_diff_range : optional
+    duration, drag_coeff, beta, type, n_rotations, amplitude_diff_range : optional
         Forwarded to `run_calibrate_drag_hpi_pulse_based_on_ground`, which
         resolves any of them that is `None`.
     n_iterations : int
@@ -574,6 +610,7 @@ def _calibrate_one_drag_hpi(
             duration=duration,
             drag_coeff=drag_coeff,
             beta=seed_beta if i == 0 else None,
+            type=type,
             n_rotations=n_rotations,
             amplitude_diff_range=amplitude_diff_range,
             n_shots=n_shots,
@@ -589,6 +626,7 @@ def _calibrate_one_drag_hpi(
 
             # The run stage owns the defaults, so read what it actually played.
             resolved_duration = float(data["duration"])
+            resolved_type: RampType = data["type"]
             resolved_n_shots = int(data["n_shots"])
             resolved_shot_interval = float(data["shot_interval"])
             beta = float(data["beta"])
@@ -600,6 +638,7 @@ def _calibrate_one_drag_hpi(
                     "duration": resolved_duration,
                     "amplitude": amplitude,
                     "beta": beta,
+                    "type": resolved_type,
                 },
             )
 
@@ -612,10 +651,13 @@ def _calibrate_one_drag_hpi(
                         prep_pulses=data["prep_pulses"],
                         rabi_param=data["rabi_param"],
                         pulse_type="hpi",
-                        make_drive=lambda value, amplitude=amplitude: Drag(
-                            duration=resolved_duration,
-                            amplitude=amplitude,
-                            beta=float(value),
+                        make_drive=lambda value, amplitude=amplitude, type=resolved_type: (
+                            Drag(
+                                duration=resolved_duration,
+                                amplitude=amplitude,
+                                beta=float(value),
+                                type=type,
+                            )
                         ),
                         analyzer=analyzer,
                         beta_range=beta + betas,
@@ -633,6 +675,7 @@ def _calibrate_one_drag_hpi(
                         "duration": resolved_duration,
                         "amplitude": amplitude,
                         "beta": beta,
+                        "type": resolved_type,
                     },
                 )
 
@@ -693,6 +736,7 @@ def calibrate_drag_hpi_pulse_based_on_ground(
     duration: float | None = None,
     drag_coeff: float | None = None,
     beta: float | None = None,
+    type: RampType | None = None,
     n_rotations: int | None = None,
     amplitude_diff_range: ArrayLike | None = None,
     n_iterations: int | None = None,
@@ -737,6 +781,13 @@ def calibrate_drag_hpi_pulse_based_on_ground(
         estimate derived from the level ladder. Pass `0` together with
         `calibrate_beta=False` to calibrate the amplitude with the correction
         turned off.
+    type : RampType | None, optional
+        Envelope of the pulse under test, shared by every target, and stored
+        alongside the amplitude and beta so the calibrated pulse is rebuilt with
+        it. Defaults to `_core.DEFAULT_DRAG_TYPE`. A stored amplitude is reused
+        as the starting point only when it was measured with this same
+        envelope. `"Squad"` is part of `RampType` but `Drag` cannot build it, so
+        it is rejected.
     n_rotations : int | None, optional
         Number of full rotations `n`. Defaults to
         `_core.DEFAULT_DRAG_N_ROTATIONS`, which assumes the amplitude is already
@@ -819,6 +870,7 @@ def calibrate_drag_hpi_pulse_based_on_ground(
             duration=duration,
             drag_coeff=drag_coeff,
             beta=beta,
+            type=type,
             n_rotations=n_rotations,
             amplitude_diff_range=amplitude_diff_range,
             n_iterations=n_iterations,
