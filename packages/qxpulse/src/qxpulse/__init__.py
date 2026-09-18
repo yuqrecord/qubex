@@ -4,6 +4,7 @@ from .blank import Blank
 from .library import (
     CPMG,
     XY4,
+    Blackman,
     Bump,
     CrossResonance,
     Drag,
@@ -25,6 +26,7 @@ __all__ = [
     "CPMG",
     "XY4",
     "Arbitrary",
+    "Blackman",
     "Blank",
     "Bump",
     "CrossResonance",

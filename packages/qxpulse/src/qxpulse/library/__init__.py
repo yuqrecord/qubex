@@ -1,5 +1,6 @@
 """Pulse library factory functions and shapes."""
 
+from .blackman import Blackman
 from .bump import Bump
 from .cpmg import CPMG
 from .cross_resonance import CrossResonance, MultiDerivativeCrossResonance
@@ -14,6 +15,7 @@ from .xy4 import XY4
 __all__ = [
     "CPMG",
     "XY4",
+    "Blackman",
     "Bump",
     "CrossResonance",
     "Drag",
