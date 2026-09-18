@@ -731,10 +731,13 @@ def test_drag_defaults_are_resolved_when_every_argument_is_omitted(
     payload = result.data[f"{QUBIT}-fh"]
     assert payload["duration"] == _core.DEFAULT_DRAG_HPI_DURATION
     assert payload["drag_coeff"] == _core.DEFAULT_DRAG_COEFF
+    assert payload["type"] == _core.DEFAULT_DRAG_TYPE
     assert payload["n_rotations"] == _core.DEFAULT_DRAG_N_ROTATIONS
     assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
     assert len(payload["iterations"]) == _core.DEFAULT_N_ITERATIONS
     assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+    # The envelope is stored, so `get_drag_hpi_pulse` rebuilds the same pulse.
+    assert exp.calib_note.drag_hpi[f"{QUBIT}-fh"]["type"] == _core.DEFAULT_DRAG_TYPE
 
 
 def test_calibration_figures_are_plotted_against_the_amplitude_itself(
@@ -940,7 +943,11 @@ def test_a_failing_measurement_is_raised(
         )
 
 
-def _drag_stub(stub_experiment_factory: Callable[..., Any]) -> Any:
+def _drag_stub(
+    stub_experiment_factory: Callable[..., Any],
+    *,
+    stored_type: str | None = None,
+) -> Any:
     """Return a DRAG stub seeded so that the amplitude pass converges."""
     exp = stub_experiment_factory(
         transition="hi",
@@ -950,15 +957,15 @@ def _drag_stub(stub_experiment_factory: Callable[..., Any]) -> Any:
         pulse_type="hpi",
     )
     target = f"{QUBIT}-hi"
-    exp.calib_note.update_drag_hpi_param(
-        target,
-        {
-            "target": target,
-            "duration": DRAG_HPI_DURATION,
-            "amplitude": 0.30,
-            "beta": 0.0,
-        },
-    )
+    stored: dict[str, Any] = {
+        "target": target,
+        "duration": DRAG_HPI_DURATION,
+        "amplitude": 0.30,
+        "beta": 0.0,
+    }
+    if stored_type is not None:
+        stored["type"] = stored_type
+    exp.calib_note.update_drag_hpi_param(target, stored)
     return exp
 
 
@@ -1509,3 +1516,133 @@ def test_apply_electrical_delay_passes_a_failed_target_through() -> None:
 
     assert updated.data[QUBIT]["error"] is error
     assert "corrected_signals" not in updated.data[QUBIT]
+
+
+@pytest.mark.parametrize(
+    ("stored_type", "expected_source"),
+    [
+        pytest.param(None, "calib_note", id="untyped_note_is_a_gaussian"),
+        pytest.param("Gaussian", "calib_note", id="same_envelope"),
+        pytest.param("Blackman", "rabi_estimate", id="other_envelope"),
+    ],
+)
+def test_a_stored_amplitude_seeds_the_sweep_only_for_the_same_envelope(
+    stub_experiment_factory: Callable[..., Any],
+    stored_type: str | None,
+    expected_source: str,
+) -> None:
+    """Given a stored envelope, when it differs, then the amplitude is re-estimated."""
+    exp = _drag_stub(stub_experiment_factory, stored_type=stored_type)
+    target = f"{QUBIT}-hi"
+
+    payload = _run_drag(exp).data[target]
+
+    # The rotation angle follows the area under the envelope, so an amplitude
+    # measured with another one lands far outside the sweep this then runs.
+    # Only the first pass sees the seeded note: it stores its own result under
+    # the requested envelope, which every later pass then reuses.
+    iterations = payload["iterations"]
+    assert iterations[0]["data"]["initial_amplitude_source"] == expected_source
+    assert iterations[1]["data"]["initial_amplitude_source"] == "calib_note"
+    # Beta is resolved independently: it survives a change of envelope.
+    assert payload["beta_source"] == "calib_note"
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+
+
+def test_the_requested_envelope_is_played_and_stored(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an envelope, when calibrated, then it drives the qubit and is stored."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        type="Blackman",
+    )
+    target = f"{QUBIT}-hi"
+
+    payload = calibrate_drag_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_HPI_DURATION,
+        drag_coeff=DRAG_COEFF,
+        beta=0.0,
+        type="Blackman",
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_iterations=1,
+        calibrate_beta=False,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[target]
+
+    assert payload["type"] == "Blackman"
+    assert exp.calib_note.drag_hpi[target]["type"] == "Blackman"
+    # The stub's Rabi rate is derived from the area under a *Blackman* unit
+    # pulse, so converging on its true amplitude is only possible if the
+    # calibration really played that envelope: a Gaussian of the same peak
+    # amplitude covers about 27 % more area.
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+
+
+def test_the_pi_calibration_stores_the_requested_envelope(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an envelope, when the pi pulse is calibrated, then it is stored too."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+        type="RaisedCosine",
+    )
+    target = f"{QUBIT}-hi"
+
+    payload = calibrate_drag_pi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_PI_DURATION,
+        drag_coeff=DRAG_COEFF,
+        beta=0.0,
+        type="RaisedCosine",
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_iterations=1,
+        calibrate_beta=False,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[target]
+
+    assert payload["type"] == "RaisedCosine"
+    assert exp.calib_note.drag_pi[target]["type"] == "RaisedCosine"
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+
+
+@pytest.mark.parametrize("type", ["Squad", "Gauss"])
+def test_an_unsupported_envelope_is_rejected_before_measuring(
+    stub_experiment_factory: Callable[..., Any],
+    type: str,
+) -> None:
+    """Given an envelope `Drag` cannot build, when requested, then nothing is measured."""
+    exp = _drag_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match="is not a supported DRAG envelope"):
+        calibrate_drag_hpi_pulse_based_on_ground(
+            exp,
+            targets=QUBIT,
+            transition="hi",
+            type=type,  # type: ignore[arg-type]
+            plot=False,
+            plot_pulse_schedule=False,
+        )
+
+    assert exp.sweep_calls == []
