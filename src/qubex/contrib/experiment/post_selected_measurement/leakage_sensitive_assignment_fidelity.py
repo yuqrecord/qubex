@@ -142,6 +142,8 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
 def plot_post_selected_leakage_sensitive_assignment_fidelity(
     *,
     iq_data,
+    integration_start_idx,
+    integration_end_idx,
     post_selection,
     posterior_weighted_signal,
     population_matrix,
@@ -150,6 +152,8 @@ def plot_post_selected_leakage_sensitive_assignment_fidelity(
     colors=STATE_TO_COLOR,
     labels=STATE_TO_LABEL,
 ):
+    vspan_color = "gray"
+    vspan_alpha = 0.2
     figures = dict()
     posterior_averaged_iq = dict()
     for w in ["before_post_selection", "after_post_selection"]:
@@ -171,6 +175,13 @@ def plot_post_selected_leakage_sensitive_assignment_fidelity(
         figures["td_iq"][w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
+            ax.axvspan(
+                integration_start_idx * capture_sampling_period,
+                (integration_end_idx - 1) * capture_sampling_period,
+                color=vspan_color,
+                alpha=vspan_alpha,
+                label="Integration window",
+            )
             for s in iq_data.keys():
                 ax.scatter(
                     np.arange(len(posterior_averaged_iq[w][s][d]))
@@ -202,6 +213,13 @@ def plot_post_selected_leakage_sensitive_assignment_fidelity(
         figures["td_iq_distance"][w] = dict()
         for d in ["train", "test"]:
             fig, ax = plt.subplots()
+            ax.axvspan(
+                integration_start_idx * capture_sampling_period,
+                (integration_end_idx - 1) * capture_sampling_period,
+                color=vspan_color,
+                alpha=vspan_alpha,
+                label="Integration window",
+            )
             for s in iq_data.keys():
                 ax.scatter(
                     np.arange(len(posterior_averaged_iq[w][s][d]))
@@ -264,7 +282,7 @@ def plot_post_selected_leakage_sensitive_assignment_fidelity(
                     ax.text(
                         j,
                         i,
-                        f"{matrix[i, j]:.4f}",
+                        f"{matrix[i, j]:.6f}",
                         ha="center",
                         va="center",
                         color="black" if matrix[i, j] < 0.5 else "white",
@@ -316,6 +334,36 @@ def _population_matrix(*, iq_data, classifier, post_selection):
     return population_matrix
 
 
+def _leakage_sensitive_assignment_fidelity(*, population_matrix):
+    leakage_state_keys = [
+        k
+        for k in population_matrix["before_post_selection"].keys()
+        if k not in ["g", "e"]
+    ]
+    p_LL = {
+        w: {
+            d: sum(population_matrix[w][s]["L"][d] for s in leakage_state_keys)
+            / len(leakage_state_keys)
+            for d in ["train", "test"]
+        }
+        for w in ["before_post_selection", "after_post_selection"]
+    }
+    return {
+        w: {
+            d: (
+                sum(
+                    population_matrix[w][s_prepared][s_prepared][d]
+                    for s_prepared in ["g", "e"]
+                )
+                + p_LL[w][d]
+            )
+            / 3
+            for d in ["train", "test"]
+        }
+        for w in ["before_post_selection", "after_post_selection"]
+    }
+
+
 def analyze_post_selected_leakage_sensitive_assignment_fidelity(
     *,
     target,
@@ -357,11 +405,48 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         }
         for s in iq_data.keys()
     }
+    num_samples = len(iq_data["g"]["posterior"]["train"][0])
+    integration_start_idx = 0
+    integration_end_idx = num_samples
+    highest_assignment_fidelity = 0.0
+    for i_start in reversed(range(num_samples)):
+        for i_end in range(i_start + 1, num_samples + 1):
+            leakage_sensitive_classifier = Classifier()
+            leakage_sensitive_classifier.fit(
+                [
+                    iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
+                    iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
+                    np.concatenate(
+                        [
+                            iq_data[s]["posterior"]["train"][
+                                post_selection[s]["train"], :
+                            ]
+                            for s in iq_data.keys()
+                            if s not in ["g", "e"]
+                        ]
+                    ),
+                ],
+                integration_start_idx=i_start,
+                integration_end_idx=i_end,
+            )
+            population_matrix = _population_matrix(
+                iq_data=iq_data,
+                classifier=leakage_sensitive_classifier,
+                post_selection=post_selection,
+            )
+            leakage_sensitive_assignment_fidelity = (
+                _leakage_sensitive_assignment_fidelity(
+                    population_matrix=population_matrix
+                )
+            )
+            fidelity_temp = leakage_sensitive_assignment_fidelity[
+                "after_post_selection"
+            ]["test"]
+            if fidelity_temp > highest_assignment_fidelity:
+                highest_assignment_fidelity = fidelity_temp
+                integration_start_idx = i_start
+                integration_end_idx = i_end
     leakage_sensitive_classifier = Classifier()
-    leakage_sensitive_classifier.update_weight(
-        iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
-        iq_data["e"]["posterior"]["train"][post_selection["e"]["train"], :],
-    )
     leakage_sensitive_classifier.fit(
         [
             iq_data["g"]["posterior"]["train"][post_selection["g"]["train"], :],
@@ -373,7 +458,17 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
                     if s not in ["g", "e"]
                 ]
             ),
-        ]
+        ],
+        integration_start_idx=integration_start_idx,
+        integration_end_idx=integration_end_idx,
+    )
+    population_matrix = _population_matrix(
+        iq_data=iq_data,
+        classifier=leakage_sensitive_classifier,
+        post_selection=post_selection,
+    )
+    leakage_sensitive_assignment_fidelity = _leakage_sensitive_assignment_fidelity(
+        population_matrix=population_matrix
     )
     post_selection_rate = {
         s: {
@@ -398,14 +493,10 @@ def analyze_post_selected_leakage_sensitive_assignment_fidelity(
         }
         for w in ["before_post_selection", "after_post_selection"]
     }
-    population_matrix = _population_matrix(
-        iq_data=iq_data,
-        classifier=leakage_sensitive_classifier,
-        post_selection=post_selection,
-    )
     return {
         "iq_data": iq_data,
         "leakage_sensitive_classifier": leakage_sensitive_classifier,
+        "leakage_sensitive_assignment_fidelity": leakage_sensitive_assignment_fidelity,
         "post_selection": post_selection,
         "post_selection_rate": post_selection_rate,
         "posterior_weighted_signal": posterior_weighted_signal,
@@ -459,11 +550,15 @@ def display_post_selected_leakage_sensitive_assignment_fidelity(
                 except ImportError:
                     simple_display(figures_to_display)
             print(f"{w.replace('_', ' ')} ({d} set):")
+            print(
+                f"Leakage-sensitive assignment fidelity: "
+                f"{result.data['leakage_sensitive_assignment_fidelity'][w][d]:.6f}"
+            )
             print("Assignment matrix P(observed | prepared)")
             print("  prepared |" + "".join(f"{o:>9}" for o in OBSERVED_LABELS))
             for s_prepared in population_matrix[w].keys():
                 row = "".join(
-                    f"{population_matrix[w][s_prepared][s_observed][d]:9.4f}"
+                    f"{population_matrix[w][s_prepared][s_observed][d]:9.6f}"
                     for s_observed in OBSERVED_STATES
                 )
                 print(f"  {STATE_TO_LABEL[s_prepared]:>8} |" + row)
@@ -471,7 +566,7 @@ def display_post_selected_leakage_sensitive_assignment_fidelity(
                 for s in post_selection_rate.keys():
                     print(
                         f"Post-selection rate {STATE_TO_LABEL[s]}: "
-                        f"{post_selection_rate[s][d]:.4f}"
+                        f"{post_selection_rate[s][d]:.6f}"
                     )
 
 
@@ -556,12 +651,17 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
     )
     iq_data = analyze_result["iq_data"]
     leakage_sensitive_classifier = analyze_result["leakage_sensitive_classifier"]
+    leakage_sensitive_assignment_fidelity = analyze_result[
+        "leakage_sensitive_assignment_fidelity"
+    ]
     post_selection = analyze_result["post_selection"]
     post_selection_rate = analyze_result["post_selection_rate"]
     posterior_weighted_signal = analyze_result["posterior_weighted_signal"]
     population_matrix = analyze_result["population_matrix"]
     plot_result = plot_post_selected_leakage_sensitive_assignment_fidelity(
         iq_data=iq_data,
+        integration_start_idx=leakage_sensitive_classifier.integration_start_idx,
+        integration_end_idx=leakage_sensitive_classifier.integration_end_idx,
         post_selection=post_selection,
         posterior_weighted_signal=posterior_weighted_signal,
         population_matrix=population_matrix,
@@ -577,6 +677,7 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
             "raw": run_result,
             "leakage_sensitive_readout_pulse": leakage_sensitive_readout_pulse,
             "leakage_sensitive_classifier": leakage_sensitive_classifier,
+            "leakage_sensitive_assignment_fidelity": leakage_sensitive_assignment_fidelity,
             "leakage_sensitive_readout_frequency": leakage_sensitive_readout_frequency,
             "leakage_sensitive_readout_detuning": leakage_sensitive_readout_detuning,
             "ge_readout_pulse": ge_readout_pulse,

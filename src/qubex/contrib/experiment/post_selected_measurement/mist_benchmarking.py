@@ -478,7 +478,7 @@ def display_mist_benchmarking(result: Result, plot: bool = True):
             for m in n_repeats_list
         ]
         print(
-            f"  Post-selection rate: {min(rates):.4f} - {max(rates):.4f} "
+            f"  Post-selection rate: {min(rates):.6f} - {max(rates):.6f} "
             f"over {len(n_repeats_list)} repetition counts"
         )
 
