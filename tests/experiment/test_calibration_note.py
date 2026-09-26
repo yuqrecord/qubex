@@ -149,6 +149,52 @@ def test_update_drag_pi_param(tmp_path):
     assert param["beta"] == 0.5
 
 
+@pytest.mark.parametrize("pulse_type", ["hpi", "pi"])
+def test_a_drag_param_carries_its_envelope_through_a_save_and_load(
+    tmp_path, pulse_type
+):
+    """CalibrationNote should round-trip the DRAG envelope through the file."""
+    chip_id = "CHIP_ID"
+    calibration_dir = tmp_path / ".calibration"
+    note = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    getattr(note, f"update_drag_{pulse_type}_param")(
+        "Q00",
+        {
+            "target": "Q00",
+            "amplitude": 0.5,
+            "duration": 0.5,
+            "beta": 0.5,
+            "type": "Blackman",
+        },
+    )
+    note.save()
+
+    reloaded = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    param = getattr(reloaded, f"get_drag_{pulse_type}_param")("Q00") or {}
+    assert param["type"] == "Blackman"
+
+
+@pytest.mark.parametrize("pulse_type", ["hpi", "pi"])
+def test_a_drag_param_without_an_envelope_reads_back_as_none(tmp_path, pulse_type):
+    """CalibrationNote should leave `type` absent for a calibration that omits it."""
+    chip_id = "CHIP_ID"
+    calibration_dir = tmp_path / ".calibration"
+    note = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    getattr(note, f"update_drag_{pulse_type}_param")(
+        "Q00",
+        {
+            "target": "Q00",
+            "amplitude": 0.5,
+            "duration": 0.5,
+            "beta": 0.5,
+        },
+    )
+
+    param = getattr(note, f"get_drag_{pulse_type}_param")("Q00") or {}
+    # `PulseService` reads it with `.get`, so an old note means a Gaussian.
+    assert param.get("type") is None
+
+
 def test_update_state_param(tmp_path):
     """CalibrationNote should update the state_param."""
     chip_id = "CHIP_ID"

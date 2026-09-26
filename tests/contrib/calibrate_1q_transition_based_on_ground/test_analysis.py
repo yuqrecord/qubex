@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 
 import numpy as np
 import plotly.graph_objects as go
@@ -18,7 +18,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     analyze_ramsey_experiment_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
-from qubex.pulse import Drag, FlatTop
+from qubex.pulse import Drag, FlatTop, RampType
 from qubex.system.transition import (
     LEVEL_NAMES,
     TRANSITION_NAMES,
@@ -590,6 +590,8 @@ def test_defaults_are_taken_from_the_core_experiment_constants() -> None:
     assert _core.DEFAULT_DRAG_HPI_DURATION is constants.DRAG_HPI_DURATION
     assert _core.DEFAULT_DRAG_PI_DURATION is constants.DRAG_PI_DURATION
     assert _core.DEFAULT_DRAG_COEFF is constants.DRAG_COEFF
+    # Not an `Experiment` constant: `Drag` itself falls back to a Gaussian.
+    assert _core.DEFAULT_DRAG_TYPE == "Gaussian"
     # `MeasurementService.obtain_rabi_params` derives its ramp the same way.
     assert (
         _core.DEFAULT_RABI_RAMPTIME == constants.HPI_DURATION - constants.HPI_RAMPTIME
@@ -738,6 +740,28 @@ def test_validate_beta_rejects_a_non_finite_value(beta: float) -> None:
     """Given a non-finite beta, when validated, then it raises."""
     with pytest.raises(ValueError, match="must be a finite number"):
         _core.validate_beta(beta)
+
+
+@pytest.mark.parametrize("type", _core.DRAG_TYPES)
+def test_validate_drag_type_accepts_every_envelope_drag_can_build(
+    type: RampType,
+) -> None:
+    """Given a supported envelope, when validated, then it passes."""
+    assert _core.validate_drag_type(type) is None
+    # The allowlist is only trustworthy if `Drag` really builds each of them.
+    assert Drag(duration=16, amplitude=0.1, beta=0.0, type=type).length > 0
+
+
+@pytest.mark.parametrize("type", ["Squad", "Blackmann", ""])
+def test_validate_drag_type_rejects_an_envelope_drag_cannot_build(type: str) -> None:
+    """Given an unsupported envelope, when validated, then it raises."""
+    with pytest.raises(ValueError, match="is not a supported DRAG envelope"):
+        _core.validate_drag_type(cast(RampType, type))
+
+
+def test_every_ramp_type_is_either_supported_or_deliberately_left_out() -> None:
+    """Given `RampType`, when a member is added, then this test must be revisited."""
+    assert set(get_args(RampType)) - set(_core.DRAG_TYPES) == {"Squad"}
 
 
 def _readout_scan_run_result(

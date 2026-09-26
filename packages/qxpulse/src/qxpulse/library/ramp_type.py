@@ -9,5 +9,6 @@ RampType: TypeAlias = Literal[
     "RaisedCosine",
     "Sintegral",
     "Bump",
+    "Blackman",
     "Squad",
 ]

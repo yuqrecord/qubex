@@ -11,6 +11,7 @@ from typing_extensions import override
 from qxpulse.pulse import Pulse
 from qxpulse.waveform import floor_to_sampling_period
 
+from .blackman import Blackman
 from .bump import Bump
 from .gaussian import Gaussian
 from .multi_derivative import MultiDerivative
@@ -255,6 +256,12 @@ def _ramp_func(
         )
     elif type == "Bump":
         return Bump.func(
+            t=t,
+            duration=duration,
+            amplitude=amplitude,
+        )
+    elif type == "Blackman":
+        return Blackman.func(
             t=t,
             duration=duration,
             amplitude=amplitude,

@@ -806,7 +806,13 @@ class CalibrationService:
                 area = pulse.real.sum() * sampling_period_ns
                 rabi_rate = 0.25 / area
 
-                if hpi_param is not None and use_stored_amplitude:
+                if (
+                    hpi_param is not None
+                    and use_stored_amplitude
+                    # The pulse built above is a Gaussian, so an amplitude
+                    # measured with another envelope is not a usable seed.
+                    and (hpi_param.get("type") or "Gaussian") == "Gaussian"
+                ):
                     ampl = hpi_param["amplitude"]
                 else:
                     ampl = self.pulse.calc_control_amplitude(target, rabi_rate)
@@ -826,7 +832,13 @@ class CalibrationService:
                 area = pulse.real.sum() * sampling_period_ns
                 rabi_rate = 0.5 / area
 
-                if pi_param is not None and use_stored_amplitude:
+                if (
+                    pi_param is not None
+                    and use_stored_amplitude
+                    # The pulse built above is a Gaussian, so an amplitude
+                    # measured with another envelope is not a usable seed.
+                    and (pi_param.get("type") or "Gaussian") == "Gaussian"
+                ):
                     ampl = pi_param["amplitude"]
                 else:
                     ampl = self.pulse.calc_control_amplitude(target, rabi_rate)
@@ -892,6 +904,7 @@ class CalibrationService:
                             "duration": pulse.duration,
                             "amplitude": fit_result["amplitude"],
                             "beta": beta,
+                            "type": "Gaussian",
                         },
                     )
                 elif pulse_type == "pi":
@@ -902,6 +915,7 @@ class CalibrationService:
                             "duration": pulse.duration,
                             "amplitude": fit_result["amplitude"],
                             "beta": beta,
+                            "type": "Gaussian",
                         },
                     )
             else:
@@ -968,6 +982,9 @@ class CalibrationService:
             drag_duration = duration or param["duration"]
             drag_amplitude = param["amplitude"]
             drag_beta = param["beta"]
+            # The stored amplitude belongs to the stored envelope; a missing
+            # `"type"` means the calibration predates the envelope being stored.
+            drag_type: RampType = param.get("type") or "Gaussian"
 
             sweep_range = np.array(beta_range) + drag_beta
 
@@ -992,6 +1009,7 @@ class CalibrationService:
                             duration=drag_duration,
                             amplitude=drag_amplitude,
                             beta=beta,
+                            type=drag_type,
                         )
                         x90m = x90p.scaled(-1)
                         y90m = self.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
@@ -1010,6 +1028,7 @@ class CalibrationService:
                             duration=drag_duration,
                             amplitude=drag_amplitude,
                             beta=beta,
+                            type=drag_type,
                         )
                         x180m = x180p.scaled(-1)
                         y90m = self.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
@@ -1056,6 +1075,7 @@ class CalibrationService:
                         "duration": drag_duration,
                         "amplitude": drag_amplitude,
                         "beta": beta,
+                        "type": drag_type,
                     },
                 )
             elif pulse_type == "pi":
@@ -1066,6 +1086,7 @@ class CalibrationService:
                         "duration": drag_duration,
                         "amplitude": drag_amplitude,
                         "beta": beta,
+                        "type": drag_type,
                     },
                 )
 

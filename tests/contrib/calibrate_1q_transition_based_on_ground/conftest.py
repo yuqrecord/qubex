@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from qubex.experiment.models.rabi_param import RabiParam
-from qubex.pulse import Drag, FlatTop, PulseSchedule
+from qubex.pulse import Drag, FlatTop, PulseSchedule, RampType
 from qubex.system.transition import (
     TRANSITION_NAMES,
     TransitionName,
@@ -244,6 +244,7 @@ class _Pulse:
                 duration=param["duration"],
                 amplitude=param["amplitude"],
                 beta=param["beta"],
+                type=param.get("type"),
             )
         param = self._calib_note.get_pi_param(target)
         if param is not None:
@@ -274,6 +275,7 @@ class _Pulse:
             duration=param["duration"],
             amplitude=param["amplitude"],
             beta=param["beta"],
+            type=param.get("type"),
         )
 
 
@@ -450,6 +452,7 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
         pulse_type: str,
         ramptime: float = 12.0,
         beta: float = 0.0,
+        type: RampType | None = None,
         with_hpi: bool = True,
         hpi_amplitude: float | None = None,
         qubits: Sequence[str] | None = None,
@@ -460,7 +463,7 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
         if envelope == "flat_top":
             unit = FlatTop(duration=duration, amplitude=1, tau=ramptime)
         else:
-            unit = Drag(duration=duration, amplitude=1, beta=beta)
+            unit = Drag(duration=duration, amplitude=1, beta=beta, type=type)
         unit_area = float(unit.real.sum()) * SAMPLING_PERIOD
         turns = 0.25 if pulse_type == "hpi" else 0.5
 

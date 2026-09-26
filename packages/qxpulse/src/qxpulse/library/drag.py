@@ -10,6 +10,7 @@ from typing_extensions import override
 
 from qxpulse.pulse import Pulse
 
+from .blackman import Blackman
 from .bump import Bump
 from .gaussian import Gaussian
 from .raised_cosine import RaisedCosine
@@ -128,6 +129,13 @@ class Drag(Pulse):
             )
         elif type == "Bump":
             return Bump.func(
+                t=t,
+                duration=duration,
+                amplitude=amplitude,
+                beta=beta,
+            )
+        elif type == "Blackman":
+            return Blackman.func(
                 t=t,
                 duration=duration,
                 amplitude=amplitude,
