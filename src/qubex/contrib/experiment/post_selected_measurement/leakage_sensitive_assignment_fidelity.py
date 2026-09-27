@@ -54,7 +54,9 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
     target: str,
     max_level: int,
     ge_readout_pulse: Waveform | None = None,
+    ge_readout_post_margin: float | None = None,
     leakage_sensitive_readout_pulse: Waveform | None = None,
+    leakage_sensitive_readout_post_margin: float | None = None,
     leakage_sensitive_readout_detuning: float = 0.0,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
@@ -72,12 +74,18 @@ def run_post_selected_leakage_sensitive_assignment_fidelity(
         ge_readout_pulse = exp.readout(target)
     if leakage_sensitive_readout_pulse is None:
         leakage_sensitive_readout_pulse = exp.readout(target)
+    if ge_readout_post_margin is None:
+        ge_readout_post_margin = exp.readout_post_margin
+    if leakage_sensitive_readout_post_margin is None:
+        leakage_sensitive_readout_post_margin = exp.readout_post_margin
     padded_ge_readout_pulse = ge_readout_pulse.padded(
-        ge_readout_pulse.duration + exp.readout_post_margin
+        ge_readout_pulse.duration + ge_readout_post_margin
     )
     padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.detuned(
         leakage_sensitive_readout_detuning
-    ).padded(leakage_sensitive_readout_pulse.duration + exp.readout_post_margin)
+    ).padded(
+        leakage_sensitive_readout_pulse.duration + leakage_sensitive_readout_post_margin
+    )
     ladder_labels, ladder_pulses = _resolve_ladder(
         exp, qubit=qubit, max_level=max_level
     )
@@ -576,6 +584,7 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
     target: str,
     max_level: int,
     leakage_sensitive_readout_pulse: Waveform | None = None,
+    leakage_sensitive_readout_post_margin: float | None = None,
     leakage_sensitive_readout_frequency: float | None = None,
     ge_readout_classifier: dict,
     waittime_after_readout_pulse: float,
@@ -589,10 +598,12 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ) -> Result:
-    missing_keys = {"readout_pulse", "classifier"} - set(ge_readout_classifier)
+    missing_keys = {"readout_pulse", "readout_post_margin", "classifier"} - set(
+        ge_readout_classifier
+    )
     if missing_keys:
         raise ValueError(
-            "`readout_classifier` must contain the keys 'readout_pulse' and "
+            "`readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin', and "
             f"'classifier' (missing: {sorted(missing_keys)})."
         )
     if max_level < 2:
@@ -601,9 +612,12 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
             f"(got {max_level})."
         )
     ge_readout_pulse = ge_readout_classifier["readout_pulse"]
+    ge_readout_post_margin = ge_readout_classifier["readout_post_margin"]
     ge_classifier = ge_readout_classifier["classifier"]
     if leakage_sensitive_readout_pulse is None:
         leakage_sensitive_readout_pulse = exp.readout(target)
+    if leakage_sensitive_readout_post_margin is None:
+        leakage_sensitive_readout_post_margin = exp.readout_post_margin
     capture_sampling_period = (
         exp.backend_controller.sampling_period_ns
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
@@ -629,7 +643,9 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
         target=target,
         max_level=max_level,
         ge_readout_pulse=ge_readout_pulse,
+        ge_readout_post_margin=ge_readout_post_margin,
         leakage_sensitive_readout_pulse=leakage_sensitive_readout_pulse,
+        leakage_sensitive_readout_post_margin=leakage_sensitive_readout_post_margin,
         leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
@@ -676,11 +692,13 @@ def post_selected_leakage_sensitive_assignment_fidelity_experiment(
             "target": target,
             "raw": run_result,
             "leakage_sensitive_readout_pulse": leakage_sensitive_readout_pulse,
+            "leakage_sensitive_readout_post_margin": leakage_sensitive_readout_post_margin,
             "leakage_sensitive_classifier": leakage_sensitive_classifier,
             "leakage_sensitive_assignment_fidelity": leakage_sensitive_assignment_fidelity,
             "leakage_sensitive_readout_frequency": leakage_sensitive_readout_frequency,
             "leakage_sensitive_readout_detuning": leakage_sensitive_readout_detuning,
             "ge_readout_pulse": ge_readout_pulse,
+            "ge_readout_post_margin": ge_readout_post_margin,
             "ge_classifier": ge_classifier,
             "iq_data": iq_data,
             "post_selection": post_selection,
