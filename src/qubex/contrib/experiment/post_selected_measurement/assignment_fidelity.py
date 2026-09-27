@@ -143,6 +143,7 @@ def run_post_selected_assignment_fidelity(
     *,
     target: str,
     readout_pulse: Waveform | None = None,
+    readout_post_margin: float | None = None,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
     pump_buffer_time: float,
@@ -157,8 +158,10 @@ def run_post_selected_assignment_fidelity(
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
+    if readout_post_margin is None:
+        readout_post_margin = exp.readout_post_margin
     padded_readout_pulse = readout_pulse.padded(
-        readout_pulse.duration + exp.readout_post_margin
+        readout_pulse.duration + readout_post_margin
     )
     barrier_labels = [qubit, resonator]
     pump_duration = (
@@ -764,6 +767,7 @@ def post_selected_assignment_fidelity_experiment(
     *,
     target: str,
     readout_pulse: Waveform | None = None,
+    readout_post_margin: float | None = None,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
     pump_buffer_time: float,
@@ -779,6 +783,8 @@ def post_selected_assignment_fidelity_experiment(
 ) -> Result:
     if readout_pulse is None:
         readout_pulse = exp.readout(target)
+    if readout_post_margin is None:
+        readout_post_margin = exp.readout_post_margin
     capture_sampling_period = (
         exp.backend_controller.sampling_period_ns
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
@@ -795,6 +801,7 @@ def post_selected_assignment_fidelity_experiment(
         exp,
         target=target,
         readout_pulse=readout_pulse,
+        readout_post_margin=readout_post_margin,
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
         pump_buffer_time=pump_buffer_time,
@@ -841,6 +848,7 @@ def post_selected_assignment_fidelity_experiment(
             "target": target,
             "raw": run_result,
             "readout_pulse": readout_pulse,
+            "readout_post_margin": readout_post_margin,
             "iq_data": iq_data,
             "classifier": classifier,
             "post_selection": post_selection,

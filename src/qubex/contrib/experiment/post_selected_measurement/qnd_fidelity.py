@@ -99,6 +99,7 @@ def run_qnd_fidelity(
     *,
     target: str,
     readout_pulse: Waveform,
+    readout_post_margin: float,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
     pump_buffer_time: float,
@@ -112,13 +113,18 @@ def run_qnd_fidelity(
     resonator = exp.ctx.resonators[target].label
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     drag_pi_pulse = exp.drag_pi_pulse[qubit]
-    if waittime_after_readout_pulse + drag_pi_pulse.duration < exp.readout_post_margin:
+    if (
+        waittime_after_readout_pulse
+        + drag_pi_pulse.duration
+        + waittime_after_ctrl_pulse
+        < readout_post_margin
+    ):
         raise ValueError(
-            f"`waittime_after_readout_pulse` ({waittime_after_readout_pulse} ns) + `drag_pi_pulse.duration` ({drag_pi_pulse.duration} ns) must "
-            f"be >= `exp.readout_post_margin` ({exp.readout_post_margin} ns)."
+            f"`waittime_after_readout_pulse` ({waittime_after_readout_pulse} ns) + `drag_pi_pulse.duration` ({drag_pi_pulse.duration} ns) + `waittime_after_ctrl_pulse` ({waittime_after_ctrl_pulse} ns) must "
+            f"be >= `readout_post_margin` ({readout_post_margin} ns)."
         )
     padded_readout_pulse = readout_pulse.padded(
-        readout_pulse.duration + exp.readout_post_margin
+        readout_pulse.duration + readout_post_margin
     )
     barrier_labels = [qubit, resonator]
     result = dict()
@@ -358,13 +364,16 @@ def qnd_fidelity_experiment(
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ) -> Result:
-    missing_keys = {"readout_pulse", "classifier"} - set(readout_classifier)
+    missing_keys = {"readout_pulse", "readout_post_margin", "classifier"} - set(
+        readout_classifier
+    )
     if missing_keys:
         raise ValueError(
-            "`readout_classifier` must contain the keys 'readout_pulse' and "
+            "`readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin', and "
             f"'classifier' (missing: {sorted(missing_keys)})."
         )
     readout_pulse = readout_classifier["readout_pulse"]
+    readout_post_margin = readout_classifier["readout_post_margin"]
     classifier = readout_classifier["classifier"]
     capture_sampling_period = (
         exp.backend_controller.sampling_period_ns
@@ -383,6 +392,7 @@ def qnd_fidelity_experiment(
         exp,
         target=target,
         readout_pulse=readout_pulse,
+        readout_post_margin=readout_post_margin,
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
         pump_buffer_time=pump_buffer_time,
@@ -412,6 +422,7 @@ def qnd_fidelity_experiment(
             "target": target,
             "raw": run_result,
             "readout_pulse": readout_pulse,
+            "readout_post_margin": readout_post_margin,
             "classifier": classifier,
             "labels": analyze_result["labels"],
             "qnd_matrix": analyze_result["qnd_matrix"],

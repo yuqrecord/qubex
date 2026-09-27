@@ -7,7 +7,7 @@ from qubex.measurement import (
     MeasurementScheduleRunner,
     Quel1MeasurementBackendAdapter,
 )
-from qubex.measurement.models.capture_schedule import CaptureSchedule
+from qubex.measurement.models.capture_schedule import CaptureSchedule, Capture
 from qxpulse import Waveform
 from scipy.optimize import minimize
 
@@ -102,7 +102,9 @@ def run_mist_benchmarking(
     *,
     target: str,
     ge_readout_pulse: Waveform,
+    ge_readout_post_margin: float,
     leakage_sensitive_readout_pulse: Waveform,
+    leakage_sensitive_readout_post_margin: float,
     leakage_sensitive_readout_detuning: float,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
@@ -118,28 +120,28 @@ def run_mist_benchmarking(
     resonator = exp.ctx.resonators[target].label
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     drag_pi_pulse = exp.drag_pi_pulse[qubit]
-    padded_ge_readout_pulse = ge_readout_pulse.padded(
-        ge_readout_pulse.duration + exp.readout_post_margin
-    )
     padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.detuned(
         leakage_sensitive_readout_detuning
-    ).padded(leakage_sensitive_readout_pulse.duration + exp.readout_post_margin)
+    ).padded(
+        leakage_sensitive_readout_pulse.duration + leakage_sensitive_readout_post_margin
+    )
     # The off block is a zero-amplitude pulse rather than a Blank so that it still
     # opens its capture window. That keeps the window layout identical between the
     # two sequences and leaves the first block readable as the assignment
     # measurement in both.
     block_pulse = {
-        "on": padded_ge_readout_pulse,
-        "off": padded_ge_readout_pulse.scaled(0),
+        "on": ge_readout_pulse,
+        "off": ge_readout_pulse.scaled(0),
     }
-    block_duration = padded_ge_readout_pulse.duration + waittime_after_readout_pulse
+    block_duration = ge_readout_pulse.duration + waittime_after_readout_pulse
     barrier_labels = [qubit, resonator]
     result = dict()
     for n_repeats in n_repeats_list:
         result[n_repeats] = dict()
         pump_duration = (
             2 * pump_buffer_time
-            + padded_ge_readout_pulse.duration
+            + ge_readout_pulse.duration
+            + ge_readout_post_margin
             + waittime_after_readout_pulse
             + drag_pi_pulse.duration
             + waittime_after_ctrl_pulse
@@ -161,7 +163,7 @@ def run_mist_benchmarking(
                     )
                     s.add(resonator, qx.pulse.Blank(pump_buffer_time))
                     s.barrier(labels=barrier_labels)
-                    s.add(resonator, padded_ge_readout_pulse)
+                    s.add(resonator, ge_readout_pulse)
                     s.add(
                         qubit,
                         qx.pulse.Blank(
@@ -208,6 +210,14 @@ def run_mist_benchmarking(
                     real_captures[1],  # First repeated readout
                     real_captures[-1],  # Final readout
                 ]
+                for i in [1, 2]:
+                    selected_captures[i]
+                    selected_captures[i] = Capture(
+                        channels=[resonator],
+                        start_time=selected_captures[i].start_time,
+                        duration=selected_captures[i].duration + ge_readout_post_margin,
+                        is_workaround=False,
+                    )
                 capture_schedule = CaptureSchedule(
                     captures=selected_captures,
                 )
@@ -501,24 +511,30 @@ def mist_benchmarking_experiment(
     plot: bool = True,
     plot_pulse_schedule: bool = True,
 ) -> Result:
-    missing_keys = {"readout_pulse", "classifier"} - set(
+    missing_keys = {"readout_pulse", "readout_post_margin", "classifier"} - set(
         leakage_sensitive_readout_classifier
     )
     if missing_keys:
         raise ValueError(
-            "`leakage_sensitive_readout_classifier` must contain the keys 'readout_pulse' and "
+            "`leakage_sensitive_readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin' and "
             f"'classifier' (missing: {sorted(missing_keys)})."
         )
-    missing_keys = {"readout_pulse", "classifier"} - set(ge_readout_classifier)
+    missing_keys = {"readout_pulse", "readout_post_margin", "classifier"} - set(
+        ge_readout_classifier
+    )
     if missing_keys:
         raise ValueError(
-            "`readout_classifier` must contain the keys 'readout_pulse' and "
+            "`readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin', and "
             f"'classifier' (missing: {sorted(missing_keys)})."
         )
     ge_readout_pulse = ge_readout_classifier["readout_pulse"]
+    ge_readout_post_margin = ge_readout_classifier["readout_post_margin"]
     ge_classifier = ge_readout_classifier["classifier"]
     leakage_sensitive_readout_pulse = leakage_sensitive_readout_classifier[
         "readout_pulse"
+    ]
+    leakage_sensitive_readout_post_margin = leakage_sensitive_readout_classifier[
+        "readout_post_margin"
     ]
     leakage_sensitive_classifier = leakage_sensitive_readout_classifier["classifier"]
     resonator = exp.ctx.resonators[target].label
@@ -541,7 +557,9 @@ def mist_benchmarking_experiment(
         exp,
         target=target,
         ge_readout_pulse=ge_readout_pulse,
+        ge_readout_post_margin=ge_readout_post_margin,
         leakage_sensitive_readout_pulse=leakage_sensitive_readout_pulse,
+        leakage_sensitive_readout_post_margin=leakage_sensitive_readout_post_margin,
         leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
         waittime_after_readout_pulse=waittime_after_readout_pulse,
         waittime_after_ctrl_pulse=waittime_after_ctrl_pulse,
@@ -576,8 +594,10 @@ def mist_benchmarking_experiment(
             "target": target,
             "raw": run_result,
             "ge_readout_pulse": ge_readout_pulse,
+            "ge_readout_post_margin": ge_readout_post_margin,
             "ge_classifier": ge_classifier,
             "leakage_sensitive_readout_pulse": leakage_sensitive_readout_pulse,
+            "leakage_sensitive_readout_post_margin": leakage_sensitive_readout_post_margin,
             "leakage_sensitive_classifier": leakage_sensitive_classifier,
             "leakage_sensitive_readout_frequency": leakage_sensitive_readout_frequency,
             "leakage_sensitive_readout_detuning": leakage_sensitive_readout_detuning,
