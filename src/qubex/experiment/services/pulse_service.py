@@ -26,6 +26,7 @@ from qubex.experiment.experiment_constants import (
 )
 from qubex.experiment.experiment_context import ExperimentContext
 from qubex.experiment.experiment_exceptions import CalibrationMissingError
+from qubex.experiment.models.calibration_note import FlatTopParam
 from qubex.experiment.models.rabi_param import RabiParam
 from qubex.system.target_type import TRANSITION_BY_TARGET_TYPE, TargetType
 from qubex.system.transition import TransitionName
@@ -286,6 +287,62 @@ class PulseService:
 
         return rabi_rates
 
+    @staticmethod
+    def _build_hpi_or_pi_pulse(param: FlatTopParam) -> Waveform:
+        """
+        Rebuild a stored half-pi or pi pulse in the family it was measured in.
+
+        A `tau` is what a `FlatTop` needs and a `Drag` envelope has no use for,
+        so a null one marks the entry as the latter and `type` names its shape.
+
+        Parameters
+        ----------
+        param : FlatTopParam
+            Stored parameter entry.
+
+        Returns
+        -------
+        Waveform
+            The calibrated pulse.
+        """
+        tau = param.get("tau")
+        if tau is None:
+            return Drag(
+                duration=param["duration"],
+                amplitude=param["amplitude"],
+                beta=param.get("beta") or 0.0,
+                type=param.get("type"),
+            )
+        return FlatTop(
+            duration=param["duration"],
+            amplitude=param["amplitude"],
+            tau=tau,
+        )
+
+    @staticmethod
+    def _is_rebuildable(param: FlatTopParam) -> bool:
+        """
+        Return whether a stored half-pi or pi entry can be rebuilt.
+
+        Only the values the entry's own family needs are required. A `Drag`
+        envelope is marked by a null `tau`, so that one null does not mean the
+        calibration is missing.
+
+        Parameters
+        ----------
+        param : FlatTopParam
+            Stored parameter entry.
+
+        Returns
+        -------
+        bool
+            Whether the entry carries every value its family needs.
+        """
+        required = ["duration", "amplitude"]
+        if param.get("tau") is not None:
+            required.append("tau")
+        return all(param.get(key) is not None for key in required)
+
     def get_hpi_pulse(
         self,
         target: str,
@@ -298,11 +355,7 @@ class PulseService:
             valid_days=valid_days or self.ctx.calibration_valid_days,
         )
         if param is not None:
-            return FlatTop(
-                duration=param["duration"],
-                amplitude=param["amplitude"],
-                tau=param["tau"],
-            )
+            return self._build_hpi_or_pi_pulse(param)
         else:
             return FlatTop(
                 duration=HPI_DURATION,
@@ -345,11 +398,7 @@ class PulseService:
             valid_days=valid_days or self.ctx.calibration_valid_days,
         )
         if param is not None:
-            return FlatTop(
-                duration=param["duration"],
-                amplitude=param["amplitude"],
-                tau=param["tau"],
-            )
+            return self._build_hpi_or_pi_pulse(param)
         else:
             raise CalibrationMissingError(
                 message="π pulse parameters are not stored.",
@@ -781,12 +830,8 @@ class PulseService:
                 target,
                 valid_days=self.ctx.calibration_valid_days,
             )
-            if param is not None and None not in param.values():
-                result[target] = FlatTop(
-                    duration=param["duration"],
-                    amplitude=param["amplitude"],
-                    tau=param["tau"],
-                )
+            if param is not None and self._is_rebuildable(param):
+                result[target] = self._build_hpi_or_pi_pulse(param)
         return result
 
     @property
@@ -798,12 +843,8 @@ class PulseService:
                 target,
                 valid_days=self.ctx.calibration_valid_days,
             )
-            if param is not None and None not in param.values():
-                result[target] = FlatTop(
-                    duration=param["duration"],
-                    amplitude=param["amplitude"],
-                    tau=param["tau"],
-                )
+            if param is not None and self._is_rebuildable(param):
+                result[target] = self._build_hpi_or_pi_pulse(param)
         return result
 
     @property
@@ -883,12 +924,8 @@ class PulseService:
                 target,
                 valid_days=self.ctx.calibration_valid_days,
             )
-            if param is not None and None not in param.values():
-                result[target] = FlatTop(
-                    duration=param["duration"],
-                    amplitude=param["amplitude"],
-                    tau=param["tau"],
-                )
+            if param is not None and self._is_rebuildable(param):
+                result[target] = self._build_hpi_or_pi_pulse(param)
         return result
 
     @property
@@ -900,10 +937,6 @@ class PulseService:
                 target,
                 valid_days=self.ctx.calibration_valid_days,
             )
-            if param is not None and None not in param.values():
-                result[target] = FlatTop(
-                    duration=param["duration"],
-                    amplitude=param["amplitude"],
-                    tau=param["tau"],
-                )
+            if param is not None and self._is_rebuildable(param):
+                result[target] = self._build_hpi_or_pi_pulse(param)
         return result

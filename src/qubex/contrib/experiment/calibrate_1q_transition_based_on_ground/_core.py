@@ -102,8 +102,6 @@ from qubex.experiment.experiment_constants import (
     DRAG_PI_DURATION,
     HPI_DURATION,
     HPI_RAMPTIME,
-    PI_DURATION,
-    PI_RAMPTIME,
 )
 from qubex.experiment.models import RabiParam, Result
 from qubex.pulse import PulseArray, PulseSchedule, RampType, Waveform
@@ -153,14 +151,6 @@ DEFAULT_TIME_RANGE = DEFAULT_RABI_TIME_RANGE
 #: `FlatTop` ramp time of the Rabi and chevron drive, in ns. This is the pi/2
 #: ramp that `MeasurementService.obtain_rabi_params` derives the same way.
 DEFAULT_RABI_RAMPTIME = HPI_DURATION - HPI_RAMPTIME
-
-#: FlatTop half-pi shape, as `CalibrationService.calibrate_default_pulse` builds it.
-DEFAULT_HPI_DURATION = HPI_DURATION
-DEFAULT_HPI_RAMPTIME = HPI_RAMPTIME
-
-#: FlatTop pi shape, as `CalibrationService.calibrate_default_pulse` builds it.
-DEFAULT_PI_DURATION = PI_DURATION
-DEFAULT_PI_RAMPTIME = PI_RAMPTIME
 
 #: DRAG pulse shape and coefficient.
 DEFAULT_DRAG_HPI_DURATION = DRAG_HPI_DURATION

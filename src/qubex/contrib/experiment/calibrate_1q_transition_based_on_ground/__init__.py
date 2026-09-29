@@ -22,9 +22,9 @@ against the ground state at every rung of the ladder.
   measured |g> point, stored under the transition label.
 - `chevron_pattern_based_on_ground`: `detuning x duration` grid and the
   resonance it implies.
-- `calibrate_hpi_pulse_based_on_ground`: FlatTop half-pi amplitude.
-- `calibrate_pi_pulse_based_on_ground`: FlatTop pi amplitude, using a fixed
-  `+-pi/2` tipping pulse whose own error cancels exactly.
+- `calibrate_hpi_pulse_based_on_ground`: half-pi amplitude, no correction.
+- `calibrate_pi_pulse_based_on_ground`: pi amplitude, no correction, using a
+  fixed `+-pi/2` tipping pulse whose own error cancels exactly.
 - `calibrate_drag_hpi_pulse_based_on_ground`: DRAG half-pi amplitude and beta.
 - `calibrate_drag_pi_pulse_based_on_ground`: DRAG pi amplitude and beta.
 - `measure_dispersive_shift_extended`: readout phase of every level against
@@ -103,14 +103,30 @@ Bootstrap order for a new rung::
 
 The DRAG calibrations default to `n_rotations = 4`, as the core
 `CalibrationService` does, which assumes the amplitude is already close. Run the
-FlatTop calibrations first, or pass a smaller `n_rotations`, when starting from
-a coarse estimate.
+uncorrected calibrations first, or pass a smaller `n_rotations`, when starting
+from a coarse estimate.
 
-The DRAG calibrations also take `type` to choose the envelope from `RampType`,
-defaulting to `"Gaussian"`. It is stored beside the amplitude and beta, so
-`Experiment.get_drag_hpi_pulse` rebuilds the calibrated pulse with it::
+All four amplitude calibrations build a `Drag` envelope and take `type` to
+choose it from `RampType`, defaulting to `"Gaussian"`. None of them builds a
+`FlatTop`. The two plain ones hold beta at zero, which leaves the envelope
+exactly as it is, and the two DRAG ones calibrate it:
 
-    calibrate_drag_hpi_pulse_based_on_ground(
+=========================  ==========  =====================  ====================
+script                     correction  stored in              rebuilt by
+=========================  ==========  =====================  ====================
+`calibrate_hpi_...`        none        `hpi_params`           `get_hpi_pulse`
+`calibrate_pi_...`         none        `pi_params`            `get_pi_pulse`
+`calibrate_drag_hpi_...`   beta        `drag_hpi_params`      `get_drag_hpi_pulse`
+`calibrate_drag_pi_...`    beta        `drag_pi_params`       `get_drag_pi_pulse`
+=========================  ==========  =====================  ====================
+
+`x90` and `x180` prefer the DRAG entry, so a target can carry both at once and
+the corrected one wins. An uncorrected entry is marked by a `tau` of `None`,
+which is what a `FlatTop` would have carried; `PulseService` reads that as "this
+is an envelope, and `type` names it". The envelope is stored beside the
+amplitude, so the getter rebuilds the pulse that was actually measured::
+
+    calibrate_hpi_pulse_based_on_ground(
         exp, transition="fh", type="Blackman")
 
 A stored amplitude seeds the sweep only when it was measured with the same
