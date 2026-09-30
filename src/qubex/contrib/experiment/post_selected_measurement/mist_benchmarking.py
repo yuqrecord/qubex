@@ -34,6 +34,14 @@ ASSIGNMENT_SEQUENCE = "on"
 POST_SELECTIONS = ["before_post_selection", "after_post_selection"]
 OBSERVED_STATES = ["g", "e", "L"]
 OBSERVED_LABELS = ["|g>", "|e>", "L"]
+# Keyed by the observed (predicted) class, unlike the sibling scatters which colour by the
+# prepared state. "L" is the pooled leakage class, not specifically |f>, and STATE_TO_COLOR
+# has no entry for it.
+OBSERVED_STATE_TO_COLOR = {
+    "g": STATE_TO_COLOR["g"],
+    "e": STATE_TO_COLOR["e"],
+    "L": "orange",
+}
 SEQUENCE_TO_LINESTYLE = {"off": "--", "on": "-"}
 RATE_NAMES = ["P01", "P0L", "P10", "P1L", "PL0", "PL1"]
 INITIAL_RATES = [1e-4, 1e-5, 5e-3, 1e-5, 1e-6, 1e-6]
@@ -304,6 +312,9 @@ def analyze_mist_benchmarking(
         }
         for n_repeats in n_repeats_list
     }
+    # Only the largest repetition count is kept: the whole sweep would be tens of MB of
+    # single-shot traces, and the endpoint is the longest exposure to the readout.
+    leakage_sensitive_iq = dict()
     for sequence in SEQUENCES:
         counts[sequence] = dict()
         populations[sequence] = dict()
@@ -355,6 +366,17 @@ def analyze_mist_benchmarking(
                 prediction = leakage_sensitive_classifier.predict(
                     leakage_sensitive[selected] * derotation
                 )
+                if sequence == ASSIGNMENT_SEQUENCE and n_repeats == n_repeats_list[-1]:
+                    # The weight is the |g>-|e> difference direction and the three-class
+                    # model is fitted on (Re, Im) of this projection, so this complex
+                    # plane is the classifier's own decision space. The same `selected`
+                    # mask orders these points and `prediction` identically.
+                    leakage_sensitive_iq[state] = {
+                        "weighted_signal": leakage_sensitive_classifier.weighted_signal(
+                            leakage_sensitive[selected] * derotation
+                        ),
+                        "prediction": prediction,
+                    }
                 count = np.array(
                     [np.sum(prediction == i) for i in range(len(OBSERVED_STATES))]
                 )
@@ -434,6 +456,18 @@ def analyze_mist_benchmarking(
         "assignment_histogram": assignment_histogram,
         "assignment_fidelity": assignment_fidelity,
         "assignment_fidelity_by_n_repeats": assignment_fidelity_by_n_repeats,
+        "leakage_sensitive_iq_scatter": {
+            "n_repeats": n_repeats_list[-1],
+            "sequence": ASSIGNMENT_SEQUENCE,
+            "selection": "herald_g",
+            "weighted_signal": {
+                state: leakage_sensitive_iq[state]["weighted_signal"]
+                for state in STATES
+            },
+            "prediction": {
+                state: leakage_sensitive_iq[state]["prediction"] for state in STATES
+            },
+        },
         "fit": fit,
         "model_population": model_population,
         "block_duration": block_duration,
@@ -448,8 +482,10 @@ def plot_mist_benchmarking(
     assignment_signal,
     assignment_histogram,
     assignment_fidelity,
+    leakage_sensitive_iq_scatter,
     n_bins=100,
     alpha_histogram=0.5,
+    alpha_scatter=0.15,
     colors=STATE_TO_COLOR,
     labels=STATE_TO_LABEL,
 ):
@@ -516,6 +552,44 @@ def plot_mist_benchmarking(
     plt.close(fig)
     figures["assignment_fidelity"] = {"figure": fig, "ax": ax}
 
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharex=True, sharey=True)
+    for ax, state in zip(axes, STATES, strict=True):
+        signal = leakage_sensitive_iq_scatter["weighted_signal"][state]
+        prediction = leakage_sensitive_iq_scatter["prediction"][state]
+        # Drawn in OBSERVED_STATES order so the rare L class lands on top. It is given a
+        # larger, opaque marker to stay visible, which means the ink density no longer
+        # reflects the populations: the legend carries the counts instead.
+        for i, observed in enumerate(OBSERVED_STATES):
+            mask = prediction == i
+            leakage = observed == "L"
+            ax.scatter(
+                np.real(signal[mask]),
+                np.imag(signal[mask]),
+                color=OBSERVED_STATE_TO_COLOR[observed],
+                label=f"{OBSERVED_LABELS[i]} (n={int(mask.sum())})",
+                s=12 if leakage else 6,
+                alpha=0.8 if leakage else alpha_scatter,
+                edgecolors="none",
+            )
+        ax.set_xlabel("Weighted I (a.u.)")
+        ax.grid()
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_title(f"Prepared {labels[state]}")
+        legend = ax.legend(title="Observed class (predicted)")
+        # The legend is what keeps the counts honest against the deliberate alpha and
+        # size asymmetry, so its markers must be legible whatever the points look like.
+        for handle in legend.legend_handles:
+            handle.set_alpha(1.0)
+            handle.set_sizes([24])
+    axes[0].set_ylabel("Weighted Q (a.u.)")
+    fig.suptitle(
+        "Leakage-sensitive weighted IQ "
+        f"({leakage_sensitive_iq_scatter['sequence']} sequence, final readout, "
+        f"m={leakage_sensitive_iq_scatter['n_repeats']}, herald-selected)"
+    )
+    plt.close(fig)
+    figures["leakage_sensitive_iq_scatter"] = {"figure": fig, "ax": axes}
+
     for name, index, ylabel in [
         ("population_1", 1, "|e> class population"),
         ("population_L", 2, "L class population"),
@@ -581,6 +655,7 @@ def display_mist_benchmarking(result: Result, plot: bool = True):
         figures_to_display = [
             result.figures["assignment_histogram"]["figure"],
             result.figures["assignment_fidelity"]["figure"],
+            result.figures["leakage_sensitive_iq_scatter"]["figure"],
             result.figures["population_1"]["figure"],
             result.figures["population_L"]["figure"],
         ]
@@ -744,6 +819,7 @@ def mist_benchmarking_experiment(
         assignment_signal=analyze_result["assignment_signal"],
         assignment_histogram=analyze_result["assignment_histogram"],
         assignment_fidelity=analyze_result["assignment_fidelity"],
+        leakage_sensitive_iq_scatter=analyze_result["leakage_sensitive_iq_scatter"],
         colors=STATE_TO_COLOR,
         labels=STATE_TO_LABEL,
     )
@@ -768,6 +844,9 @@ def mist_benchmarking_experiment(
             "assignment_fidelity": analyze_result["assignment_fidelity"],
             "assignment_fidelity_by_n_repeats": analyze_result[
                 "assignment_fidelity_by_n_repeats"
+            ],
+            "leakage_sensitive_iq_scatter": analyze_result[
+                "leakage_sensitive_iq_scatter"
             ],
             "fit": analyze_result["fit"],
             "model_population": analyze_result["model_population"],
