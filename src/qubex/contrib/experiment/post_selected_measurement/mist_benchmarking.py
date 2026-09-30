@@ -28,8 +28,20 @@ __all__ = [
 
 SEQUENCES = ["off", "on"]
 STATES = ["g", "e"]
+# The off block is zero-amplitude, so its capture window holds no readout signal:
+# classifying it would measure the background, not an assignment.
+ASSIGNMENT_SEQUENCE = "on"
+POST_SELECTIONS = ["before_post_selection", "after_post_selection"]
 OBSERVED_STATES = ["g", "e", "L"]
 OBSERVED_LABELS = ["|g>", "|e>", "L"]
+# Keyed by the observed (predicted) class, unlike the sibling scatters which colour by the
+# prepared state. "L" is the pooled leakage class, not specifically |f>, and STATE_TO_COLOR
+# has no entry for it.
+OBSERVED_STATE_TO_COLOR = {
+    "g": STATE_TO_COLOR["g"],
+    "e": STATE_TO_COLOR["e"],
+    "L": "orange",
+}
 SEQUENCE_TO_LINESTYLE = {"off": "--", "on": "-"}
 RATE_NAMES = ["P01", "P0L", "P10", "P1L", "PL0", "PL1"]
 INITIAL_RATES = [1e-4, 1e-5, 5e-3, 1e-5, 1e-6, 1e-6]
@@ -65,6 +77,23 @@ def _histogram_fit(signal, n_bins):
     return gaussian_fit(bin_centers, counts)
 
 
+def _assignment_summary(*, counts):
+    counts = np.asarray(counts, dtype=int)
+    shots = counts.sum(axis=1)
+    # A row with no retained shots leaves its fidelity undefined rather than aborting:
+    # one sparse repetition count must not destroy the whole analysis.
+    matrix = np.full(counts.shape, np.nan)
+    np.divide(counts, shots[:, None], out=matrix, where=shots[:, None] > 0)
+    fidelity = {state: float(matrix[i, i]) for i, state in enumerate(STATES)}
+    fidelity["avg"] = float(np.mean([fidelity[state] for state in STATES]))
+    return {
+        "counts": counts,
+        "matrix": matrix,
+        "shots": {state: int(shots[i]) for i, state in enumerate(STATES)},
+        "fidelity": fidelity,
+    }
+
+
 def _fit_three_class_model(*, counts, n_repeats_list, block_duration):
     # Multinomial likelihood rather than least squares: the leakage class holds
     # only a handful of counts per point, where Gaussian weights break down.
@@ -90,7 +119,15 @@ def _fit_three_class_model(*, counts, n_repeats_list, block_duration):
     p10 = rates["P10"]
     return {
         "rates": rates,
+        # The exact discrete-to-continuous inversion: |1> survives one block with
+        # probability 1 - P10, so matching (1 - P10)**m to exp(-m * t_meas / T1) puts
+        # a logarithm here.
         "t1_meas": -block_duration / np.log(1 - p10) if 0 < p10 < 1 else np.nan,
+        # arXiv:2608.25484 Sec. V reads the rate off linearly instead,
+        # T1_meas = t_meas / P10, which is the first-order form of the above. Both are
+        # reported so the number can be compared with the paper directly: they are
+        # 0.38 % apart at the paper's own P10(on) = 7.55e-3.
+        "t1_meas_arxiv2608.25484": block_duration / p10 if 0 < p10 < 1 else np.nan,
         "leakage_per_measurement": (rates["P0L"] + rates["P1L"]) / 2,
         "negative_log_likelihood": float(fit.fun),
         "success": bool(fit.success),
@@ -269,6 +306,15 @@ def analyze_mist_benchmarking(
     populations = dict()
     post_selection_rate = dict()
     assignment_signal = dict()
+    assignment_counts = {
+        n_repeats: {
+            w: np.zeros((len(STATES), len(STATES)), dtype=int) for w in POST_SELECTIONS
+        }
+        for n_repeats in n_repeats_list
+    }
+    # Only the largest repetition count is kept: the whole sweep would be tens of MB of
+    # single-shot traces, and the endpoint is the longest exposure to the readout.
+    leakage_sensitive_iq = dict()
     for sequence in SEQUENCES:
         counts[sequence] = dict()
         populations[sequence] = dict()
@@ -285,6 +331,29 @@ def analyze_mist_benchmarking(
                 assignment = readouts[1].data
                 leakage_sensitive = readouts[-1].data
                 selected = ge_classifier.predict(herald) == 0
+                if sequence == ASSIGNMENT_SEQUENCE:
+                    # The first repeated readout sits at the same position in every
+                    # schedule, so its shots pool across the whole `n_repeats_list`.
+                    # What this yields is
+                    # P(assigned = s | nominal preparation s, herald classified |g>):
+                    # it folds in herald misclassification, preparation error and any
+                    # transition between the two windows, so it is not an isolated
+                    # detector fidelity.
+                    assignment_prediction = ge_classifier.predict(assignment)
+                    if int(assignment_prediction.max()) >= len(STATES):
+                        raise ValueError(
+                            f"`ge_classifier` must classify into the {len(STATES)} "
+                            f"states {STATES}, but it returned the label "
+                            f"{int(assignment_prediction.max())}."
+                        )
+                    row = STATES.index(state)
+                    for w, predicted in [
+                        ("before_post_selection", assignment_prediction),
+                        ("after_post_selection", assignment_prediction[selected]),
+                    ]:
+                        assignment_counts[n_repeats][w][row] = np.bincount(
+                            predicted, minlength=len(STATES)
+                        )
                 # The leakage classifier was trained on de-rotated traces, so the
                 # same rotation has to come off here before it is applied.
                 derotation = np.exp(
@@ -297,6 +366,17 @@ def analyze_mist_benchmarking(
                 prediction = leakage_sensitive_classifier.predict(
                     leakage_sensitive[selected] * derotation
                 )
+                if sequence == ASSIGNMENT_SEQUENCE and n_repeats == n_repeats_list[-1]:
+                    # The weight is the |g>-|e> difference direction and the three-class
+                    # model is fitted on (Re, Im) of this projection, so this complex
+                    # plane is the classifier's own decision space. The same `selected`
+                    # mask orders these points and `prediction` identically.
+                    leakage_sensitive_iq[state] = {
+                        "weighted_signal": leakage_sensitive_classifier.weighted_signal(
+                            leakage_sensitive[selected] * derotation
+                        ),
+                        "prediction": prediction,
+                    }
                 count = np.array(
                     [np.sum(prediction == i) for i in range(len(OBSERVED_STATES))]
                 )
@@ -336,6 +416,37 @@ def analyze_mist_benchmarking(
         }
         for sequence in SEQUENCES
     }
+    # Integer counts are summed before they are normalised, so the pooled matrix is
+    # shot-weighted: averaging the per-m matrices would misweight unequal retention.
+    pooled_assignment_counts = {
+        w: np.sum(
+            [assignment_counts[n_repeats][w] for n_repeats in n_repeats_list], axis=0
+        )
+        for w in POST_SELECTIONS
+    }
+    for w in POST_SELECTIONS:
+        empty = [
+            state
+            for i, state in enumerate(STATES)
+            if pooled_assignment_counts[w][i].sum() == 0
+        ]
+        if empty:
+            raise ValueError(
+                f"No shots are left to compute the assignment fidelity "
+                f"({w.replace('_', ' ')}) for the prepared state(s) {empty}. "
+                "Check the herald classifier and `n_shots`."
+            )
+    assignment_fidelity = {
+        w: _assignment_summary(counts=pooled_assignment_counts[w])
+        for w in POST_SELECTIONS
+    }
+    assignment_fidelity_by_n_repeats = {
+        n_repeats: {
+            w: _assignment_summary(counts=assignment_counts[n_repeats][w])
+            for w in POST_SELECTIONS
+        }
+        for n_repeats in n_repeats_list
+    }
     return {
         "n_repeats_list": n_repeats_list,
         "counts": counts,
@@ -343,6 +454,20 @@ def analyze_mist_benchmarking(
         "post_selection_rate": post_selection_rate,
         "assignment_signal": assignment_signal,
         "assignment_histogram": assignment_histogram,
+        "assignment_fidelity": assignment_fidelity,
+        "assignment_fidelity_by_n_repeats": assignment_fidelity_by_n_repeats,
+        "leakage_sensitive_iq_scatter": {
+            "n_repeats": n_repeats_list[-1],
+            "sequence": ASSIGNMENT_SEQUENCE,
+            "selection": "herald_g",
+            "weighted_signal": {
+                state: leakage_sensitive_iq[state]["weighted_signal"]
+                for state in STATES
+            },
+            "prediction": {
+                state: leakage_sensitive_iq[state]["prediction"] for state in STATES
+            },
+        },
         "fit": fit,
         "model_population": model_population,
         "block_duration": block_duration,
@@ -356,8 +481,11 @@ def plot_mist_benchmarking(
     model_population,
     assignment_signal,
     assignment_histogram,
+    assignment_fidelity,
+    leakage_sensitive_iq_scatter,
     n_bins=100,
     alpha_histogram=0.5,
+    alpha_scatter=0.15,
     colors=STATE_TO_COLOR,
     labels=STATE_TO_LABEL,
 ):
@@ -396,6 +524,71 @@ def plot_mist_benchmarking(
     axes[0].set_ylabel("Counts")
     plt.close(fig)
     figures["assignment_histogram"] = {"figure": fig, "ax": axes}
+
+    matrix = assignment_fidelity["after_post_selection"]["matrix"]
+    fig, ax = plt.subplots()
+    im = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=1)
+    for i in range(len(STATES)):
+        for j in range(len(STATES)):
+            ax.text(
+                j,
+                i,
+                f"{matrix[i, j]:.6f}",
+                ha="center",
+                va="center",
+                color="black" if matrix[i, j] < 0.5 else "white",
+            )
+    ax.set_xticks(range(len(STATES)))
+    ax.set_yticks(range(len(STATES)))
+    ax.set_xticklabels([labels[state] for state in STATES])
+    ax.set_yticklabels([labels[state] for state in STATES])
+    ax.set_xlabel("Observed State")
+    ax.set_ylabel("Prepared State")
+    ax.set_title(
+        "Assignment Fidelity Matrix after post selection\n"
+        f"({ASSIGNMENT_SEQUENCE} sequence, first readout, all m pooled)"
+    )
+    fig.colorbar(im, ax=ax)
+    plt.close(fig)
+    figures["assignment_fidelity"] = {"figure": fig, "ax": ax}
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharex=True, sharey=True)
+    for ax, state in zip(axes, STATES, strict=True):
+        signal = leakage_sensitive_iq_scatter["weighted_signal"][state]
+        prediction = leakage_sensitive_iq_scatter["prediction"][state]
+        # Drawn in OBSERVED_STATES order so the rare L class lands on top. It is given a
+        # larger, opaque marker to stay visible, which means the ink density no longer
+        # reflects the populations: the legend carries the counts instead.
+        for i, observed in enumerate(OBSERVED_STATES):
+            mask = prediction == i
+            leakage = observed == "L"
+            ax.scatter(
+                np.real(signal[mask]),
+                np.imag(signal[mask]),
+                color=OBSERVED_STATE_TO_COLOR[observed],
+                label=f"{OBSERVED_LABELS[i]} (n={int(mask.sum())})",
+                s=12 if leakage else 6,
+                alpha=0.8 if leakage else alpha_scatter,
+                edgecolors="none",
+            )
+        ax.set_xlabel("Weighted I (a.u.)")
+        ax.grid()
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_title(f"Prepared {labels[state]}")
+        legend = ax.legend(title="Observed class (predicted)")
+        # The legend is what keeps the counts honest against the deliberate alpha and
+        # size asymmetry, so its markers must be legible whatever the points look like.
+        for handle in legend.legend_handles:
+            handle.set_alpha(1.0)
+            handle.set_sizes([24])
+    axes[0].set_ylabel("Weighted Q (a.u.)")
+    fig.suptitle(
+        "Leakage-sensitive weighted IQ "
+        f"({leakage_sensitive_iq_scatter['sequence']} sequence, final readout, "
+        f"m={leakage_sensitive_iq_scatter['n_repeats']}, herald-selected)"
+    )
+    plt.close(fig)
+    figures["leakage_sensitive_iq_scatter"] = {"figure": fig, "ax": axes}
 
     for name, index, ylabel in [
         ("population_1", 1, "|e> class population"),
@@ -461,6 +654,8 @@ def display_mist_benchmarking(result: Result, plot: bool = True):
     if plot:
         figures_to_display = [
             result.figures["assignment_histogram"]["figure"],
+            result.figures["assignment_fidelity"]["figure"],
+            result.figures["leakage_sensitive_iq_scatter"]["figure"],
             result.figures["population_1"]["figure"],
             result.figures["population_L"]["figure"],
         ]
@@ -479,6 +674,10 @@ def display_mist_benchmarking(result: Result, plot: bool = True):
         for name in RATE_NAMES:
             print(f"  {name}: {fit[sequence]['rates'][name]:.3e}")
         print(f"  T1_meas: {fit[sequence]['t1_meas'] * 1e-3:.2f} us")
+        print(
+            "  T1_meas (arXiv:2608.25484): "
+            f"{fit[sequence]['t1_meas_arxiv2608.25484'] * 1e-3:.2f} us"
+        )
         print(f"  P_L: {fit[sequence]['leakage_per_measurement']:.3e}")
         if not fit[sequence]["success"]:
             print("  The fit did not converge.")
@@ -490,6 +689,43 @@ def display_mist_benchmarking(result: Result, plot: bool = True):
         print(
             f"  Post-selection rate: {min(rates):.6f} - {max(rates):.6f} "
             f"over {len(n_repeats_list)} repetition counts"
+        )
+
+    assignment_fidelity = result.data["assignment_fidelity"]
+    assignment_fidelity_by_n_repeats = result.data["assignment_fidelity_by_n_repeats"]
+    print(
+        f"Assignment measurement ({ASSIGNMENT_SEQUENCE} sequence, first readout, "
+        f"{len(n_repeats_list)} repetition counts pooled):"
+    )
+    for w in POST_SELECTIONS:
+        summary = assignment_fidelity[w]
+        print(f"  {w.replace('_', ' ')}:")
+        print("    Assignment fidelity")
+        for state in STATES:
+            print(
+                f"      {STATE_TO_LABEL[state]}: {summary['fidelity'][state]:.6f} "
+                f"({summary['shots'][state]} shots)"
+            )
+        print(f"      avg: {summary['fidelity']['avg']:.6f}")
+        print("    P(observed | prepared)")
+        print(
+            "      prepared |"
+            + "".join(f"{STATE_TO_LABEL[state]:>9}" for state in STATES)
+        )
+        for i, state in enumerate(STATES):
+            row = "".join(f"{summary['matrix'][i, j]:9.6f}" for j in range(len(STATES)))
+            print(f"      {STATE_TO_LABEL[state]:>8} |" + row)
+    # The pump tone grows with m, so the pooled number is only trustworthy if the
+    # per-repetition-count fidelities do not drift.
+    print("  after post selection, per repetition count:")
+    print("         m |      F_g      F_e      avg |   N_g   N_e")
+    for n_repeats in n_repeats_list:
+        summary = assignment_fidelity_by_n_repeats[n_repeats]["after_post_selection"]
+        print(
+            f"      {n_repeats:>4} |"
+            f" {summary['fidelity']['g']:8.6f} {summary['fidelity']['e']:8.6f}"
+            f" {summary['fidelity']['avg']:8.6f} |"
+            f" {summary['shots']['g']:>5} {summary['shots']['e']:>5}"
         )
 
 
@@ -548,11 +784,7 @@ def mist_benchmarking_experiment(
         exp.backend_controller.sampling_period_ns
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
     )
-    block_duration = (
-        ge_readout_pulse.duration
-        + exp.readout_post_margin
-        + waittime_after_readout_pulse
-    )
+    block_duration = ge_readout_pulse.duration + waittime_after_readout_pulse
     run_result = run_mist_benchmarking(
         exp,
         target=target,
@@ -586,6 +818,8 @@ def mist_benchmarking_experiment(
         model_population=analyze_result["model_population"],
         assignment_signal=analyze_result["assignment_signal"],
         assignment_histogram=analyze_result["assignment_histogram"],
+        assignment_fidelity=analyze_result["assignment_fidelity"],
+        leakage_sensitive_iq_scatter=analyze_result["leakage_sensitive_iq_scatter"],
         colors=STATE_TO_COLOR,
         labels=STATE_TO_LABEL,
     )
@@ -607,6 +841,13 @@ def mist_benchmarking_experiment(
             "post_selection_rate": analyze_result["post_selection_rate"],
             "assignment_signal": analyze_result["assignment_signal"],
             "assignment_histogram": analyze_result["assignment_histogram"],
+            "assignment_fidelity": analyze_result["assignment_fidelity"],
+            "assignment_fidelity_by_n_repeats": analyze_result[
+                "assignment_fidelity_by_n_repeats"
+            ],
+            "leakage_sensitive_iq_scatter": analyze_result[
+                "leakage_sensitive_iq_scatter"
+            ],
             "fit": analyze_result["fit"],
             "model_population": analyze_result["model_population"],
             "block_duration": block_duration,
