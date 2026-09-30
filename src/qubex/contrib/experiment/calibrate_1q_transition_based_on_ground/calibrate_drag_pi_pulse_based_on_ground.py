@@ -35,10 +35,18 @@ tipping pulse.
 
     [X180+ , X180-] * n_turns , Y90-
 
-The closing `Y90-` analyzer is the transition's stored *FlatTop* half-pi, so it
-does not depend on the beta being swept. The normalized signal is fitted with a
-polynomial and its root is the calibrated beta; a non-finite root, or one outside
-the swept range, raises rather than defaulting to zero.
+The closing `Y90-` analyzer is the transition's stored DRAG half-pi when there is
+one, and otherwise its uncorrected half-pi. It is resolved once per pass, before
+the sweep, so it does not depend on the beta being swept. The normalized signal
+is fitted with a polynomial and its root is the calibrated beta; a non-finite
+root, or one outside the swept range, raises rather than defaulting to zero.
+
+The analyzer's own error does not merely cost contrast: it offsets the signal,
+and the fit takes that signal's root, so the offset lands in the calibrated
+beta. This sequence arrives at the analyzer near the pole, so it is the
+analyzer's rotation *angle* that leads, biasing the result by `eps / (4n k)`.
+Nothing here updates the half-pi, so there is no feedback: the analyzer is an
+independently calibrated pulse.
 
 Starting point
 --------------
@@ -50,15 +58,16 @@ have been measured with the requested `type`: the rotation angle follows the are
 under the envelope, so an amplitude from another envelope lands far outside the
 sweep. A stored beta carries over either way.
 
-The tipping pulse is the transition's stored DRAG half-pi when there is one, and
-otherwise its stored FlatTop half-pi. Either is fine — its error cancels — but
-one of them must exist.
+The tipping pulse is resolved the same way as the analyzer: the stored DRAG
+half-pi when there is one, otherwise the uncorrected one. Either is fine for the
+tipping pulse — its error cancels — but one of them must exist.
 
 Assumptions and caveats
 -----------------------
 - Every rung below the transition must have a calibrated pi pulse, and the
-  transition must have stored Rabi parameters and a stored FlatTop half-pi pulse
-  (the beta analyzer). Run `calibrate_hpi_pulse_based_on_ground` first.
+  transition must have stored Rabi parameters and some stored half-pi pulse,
+  corrected or not, to analyze the beta pass with. Run
+  `calibrate_hpi_pulse_based_on_ground` first.
 - `amplitude_diff_range` must stay inside `A0 / (4 n)`, beyond which the
   difference signal grows extra zero crossings. This is validated, not clipped.
 - `beta_range` is a set of offsets *from the current beta*, matching
@@ -197,14 +206,31 @@ def _resolve_tipping_pulse(exp: Experiment, *, target: str) -> Waveform:
 
 
 def _resolve_analyzer(exp: Experiment, *, target: str) -> Waveform:
-    """Return the fixed `Y90-` analyzer of the beta pass."""
-    if exp.calib_note.get_hpi_param(target) is None:
-        raise ValueError(
-            f"A FlatTop half-pi pulse is not calibrated for {target!r}, and the "
-            "DRAG beta calibration needs it as the closing Y90- analyzer. Run "
-            "`calibrate_hpi_pulse_based_on_ground` first."
-        )
-    return exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
+    """
+    Return the fixed `Y90-` analyzer of the beta pass.
+
+    The corrected half-pi is preferred where one is stored. The analyzer's own
+    axis error offsets the signal, and the fit takes the *root* of that signal,
+    so the offset lands in the calibrated beta rather than washing out: to first
+    order the half-pi sequence is biased by `(phi - a) / ((2n + 1) k)` for an
+    in-plane phase error `phi` and an out-of-plane tilt `a`. An uncorrected
+    half-pi carries `beta = 0`, which is the largest beta error available.
+
+    It is resolved once per pass, before the sweep, so it stays fixed while beta
+    is swept - which is what the amplification sequence needs of it.
+
+    The closing `raise` is defensive: `_resolve_tipping_pulse` runs first, in the
+    run stage, and refuses the same way, so this flow never reaches it.
+    """
+    if exp.calib_note.get_drag_hpi_param(target) is not None:
+        return exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
+    if exp.calib_note.get_hpi_param(target) is not None:
+        return exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
+    raise ValueError(
+        f"No half-pi pulse is calibrated for {target!r}, and the DRAG beta "
+        "calibration needs one as the closing Y90- analyzer. Run "
+        "`calibrate_hpi_pulse_based_on_ground` first."
+    )
 
 
 def _make_pulse(

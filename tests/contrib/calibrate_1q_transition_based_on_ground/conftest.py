@@ -230,6 +230,23 @@ class _Context:
                 self.calib_note.update_rabi_param(label, {"target": label})
 
 
+def _rebuild_hpi_or_pi_pulse(param: dict[str, Any]) -> Any:
+    """Rebuild a stored half-pi or pi pulse the way `PulseService` does."""
+    tau = param.get("tau")
+    if tau is None:
+        return Drag(
+            duration=param["duration"],
+            amplitude=param["amplitude"],
+            beta=param.get("beta") or 0.0,
+            type=param.get("type"),
+        )
+    return FlatTop(
+        duration=param["duration"],
+        amplitude=param["amplitude"],
+        tau=tau,
+    )
+
+
 class _Pulse:
     """Minimal stand-in for `PulseService`."""
 
@@ -248,23 +265,15 @@ class _Pulse:
             )
         param = self._calib_note.get_pi_param(target)
         if param is not None:
-            return FlatTop(
-                duration=param["duration"],
-                amplitude=param["amplitude"],
-                tau=param["tau"],
-            )
+            return _rebuild_hpi_or_pi_pulse(param)
         return PREP_PI.scaled(2)
 
     def get_hpi_pulse(self, target: str) -> Any:
-        """Return the stored FlatTop half-pi pulse, or a nominal one."""
+        """Return the stored half-pi pulse, or a nominal one."""
         param = self._calib_note.get_hpi_param(target)
         if param is None:
             return FlatTop(duration=32, amplitude=0.3, tau=12)
-        return FlatTop(
-            duration=param["duration"],
-            amplitude=param["amplitude"],
-            tau=param["tau"],
-        )
+        return _rebuild_hpi_or_pi_pulse(param)
 
     def get_drag_hpi_pulse(self, target: str) -> Any:
         """Return the stored DRAG half-pi pulse."""
@@ -482,8 +491,20 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
         )
 
         calibrated = labels if calibrated_qubits is None else list(calibrated_qubits)
-        flat_top_hpi = FlatTop(duration=32, amplitude=1, tau=12)
-        hpi_area = float(flat_top_hpi.real.sum()) * SAMPLING_PERIOD
+        # Seed the half-pi in the same family as the pulse under test, so that
+        # a calibration of that family can reuse it as its starting amplitude.
+        if envelope == "flat_top":
+            hpi_unit = FlatTop(duration=32, amplitude=1, tau=12)
+            hpi_shape: dict[str, Any] = {"duration": 32, "tau": 12}
+        else:
+            hpi_unit = Drag(duration=duration, amplitude=1, beta=0.0, type=type)
+            hpi_shape = {
+                "duration": duration,
+                "tau": None,
+                "beta": 0.0,
+                "type": type,
+            }
+        hpi_area = float(hpi_unit.real.sum()) * SAMPLING_PERIOD
         for qubit in calibrated:
             target = experiment.targets_by_qubit[qubit]
             for label in experiment.lower_labels_by_qubit[qubit]:
@@ -502,13 +523,12 @@ def stub_experiment_factory() -> Callable[..., StubExperiment]:
                     target,
                     {
                         "target": target,
-                        "duration": 32,
                         "amplitude": (
                             hpi_amplitude
                             if hpi_amplitude is not None
                             else 0.25 / (hpi_area * experiment.rabi_rates[qubit])
                         ),
-                        "tau": 12,
+                        **hpi_shape,
                     },
                 )
         return experiment

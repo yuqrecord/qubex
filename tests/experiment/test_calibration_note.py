@@ -359,3 +359,66 @@ def test_higher_transition_labels_round_trip(tmp_path):
     assert pi_param["target"] == "Q00-mn"
     assert pi_param["amplitude"] == 0.125
     assert reloaded.get_hpi_param("Q00") is None
+
+
+@pytest.mark.parametrize("pulse_type", ["hpi", "pi"])
+def test_a_flat_top_param_round_trips_a_null_tau(tmp_path, pulse_type):
+    """CalibrationNote should keep a `tau` of None through the file."""
+    chip_id = "CHIP_ID"
+    calibration_dir = tmp_path / ".calibration"
+    note = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    getattr(note, f"update_{pulse_type}_param")(
+        "Q00",
+        {
+            "target": "Q00",
+            "amplitude": 0.5,
+            "duration": 16.0,
+            "tau": None,
+            "beta": 0.0,
+            "type": "Blackman",
+        },
+    )
+    note.save()
+
+    reloaded = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    param = getattr(reloaded, f"get_{pulse_type}_param")("Q00") or {}
+    # `PulseService` reads a null `tau` as "this entry is a Drag envelope".
+    assert param["tau"] is None
+    assert param["type"] == "Blackman"
+
+
+@pytest.mark.parametrize("pulse_type", ["hpi", "pi"])
+def test_an_omitted_key_survives_an_update(tmp_path, pulse_type):
+    """CalibrationNote should keep a key the newer entry leaves out."""
+    chip_id = "CHIP_ID"
+    calibration_dir = tmp_path / ".calibration"
+    note = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    getattr(note, f"update_{pulse_type}_param")(
+        "Q00",
+        {
+            "target": "Q00",
+            "amplitude": 0.3,
+            "duration": 32.0,
+            "tau": 12.0,
+            "timestamp": "2026-01-01 00:00:00",
+        },
+    )
+    note.save()
+
+    # Entries merge key by key, and saving merges into the file as well, so a
+    # writer that wants `tau` gone has to write it as None rather than omit it.
+    reloaded = CalibrationNote(chip_id=chip_id, calibration_dir=calibration_dir)
+    getattr(reloaded, f"update_{pulse_type}_param")(
+        "Q00",
+        {
+            "target": "Q00",
+            "amplitude": 0.22,
+            "duration": 16.0,
+            "timestamp": "2026-06-01 00:00:00",
+        },
+    )
+    reloaded.save()
+
+    param = getattr(reloaded, f"get_{pulse_type}_param")("Q00") or {}
+    assert param["amplitude"] == 0.22
+    assert param["tau"] == 12.0
