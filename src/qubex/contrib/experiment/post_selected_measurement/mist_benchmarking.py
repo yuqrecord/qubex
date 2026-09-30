@@ -111,7 +111,15 @@ def _fit_three_class_model(*, counts, n_repeats_list, block_duration):
     p10 = rates["P10"]
     return {
         "rates": rates,
+        # The exact discrete-to-continuous inversion: |1> survives one block with
+        # probability 1 - P10, so matching (1 - P10)**m to exp(-m * t_meas / T1) puts
+        # a logarithm here.
         "t1_meas": -block_duration / np.log(1 - p10) if 0 < p10 < 1 else np.nan,
+        # arXiv:2608.25484 Sec. V reads the rate off linearly instead,
+        # T1_meas = t_meas / P10, which is the first-order form of the above. Both are
+        # reported so the number can be compared with the paper directly: they are
+        # 0.38 % apart at the paper's own P10(on) = 7.55e-3.
+        "t1_meas_arxiv2608.25484": block_duration / p10 if 0 < p10 < 1 else np.nan,
         "leakage_per_measurement": (rates["P0L"] + rates["P1L"]) / 2,
         "negative_log_likelihood": float(fit.fun),
         "success": bool(fit.success),
@@ -591,6 +599,10 @@ def display_mist_benchmarking(result: Result, plot: bool = True):
         for name in RATE_NAMES:
             print(f"  {name}: {fit[sequence]['rates'][name]:.3e}")
         print(f"  T1_meas: {fit[sequence]['t1_meas'] * 1e-3:.2f} us")
+        print(
+            "  T1_meas (arXiv:2608.25484): "
+            f"{fit[sequence]['t1_meas_arxiv2608.25484'] * 1e-3:.2f} us"
+        )
         print(f"  P_L: {fit[sequence]['leakage_per_measurement']:.3e}")
         if not fit[sequence]["success"]:
             print("  The fit did not converge.")
