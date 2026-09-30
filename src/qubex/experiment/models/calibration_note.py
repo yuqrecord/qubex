@@ -56,12 +56,22 @@ class StateParam(Parameter):
 
 
 class FlatTopParam(Parameter):
-    """Flat-top pulse calibration parameters for a target."""
+    """
+    Half-pi or pi pulse calibration parameters for a target.
+
+    `tau` is the flat-top rise and fall time, and carrying it is what marks the
+    entry as a `FlatTop`. It is `None` when the pulse is a `Drag` envelope
+    instead, which is then the one `type` names. Write it as `None` rather than
+    leaving it out: entries merge key by key, so an omitted `tau` leaves an
+    earlier one in place and the envelope would be rebuilt as a flat top.
+    """
 
     target: str
     amplitude: float
     duration: float
-    tau: float
+    tau: float | None
+    beta: NotRequired[float]
+    type: NotRequired[RampType]
 
 
 class DragParam(Parameter):

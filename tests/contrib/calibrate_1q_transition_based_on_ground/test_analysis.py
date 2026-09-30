@@ -583,10 +583,6 @@ def test_defaults_are_taken_from_the_core_experiment_constants() -> None:
     assert _core.DEFAULT_N_SHOTS is constants.CALIBRATION_SHOTS
     assert _core.DEFAULT_SHOT_INTERVAL is constants.DEFAULT_INTERVAL
     assert _core.DEFAULT_TIME_RANGE is constants.DEFAULT_RABI_TIME_RANGE
-    assert _core.DEFAULT_HPI_DURATION is constants.HPI_DURATION
-    assert _core.DEFAULT_HPI_RAMPTIME is constants.HPI_RAMPTIME
-    assert _core.DEFAULT_PI_DURATION is constants.PI_DURATION
-    assert _core.DEFAULT_PI_RAMPTIME is constants.PI_RAMPTIME
     assert _core.DEFAULT_DRAG_HPI_DURATION is constants.DRAG_HPI_DURATION
     assert _core.DEFAULT_DRAG_PI_DURATION is constants.DRAG_PI_DURATION
     assert _core.DEFAULT_DRAG_COEFF is constants.DRAG_COEFF

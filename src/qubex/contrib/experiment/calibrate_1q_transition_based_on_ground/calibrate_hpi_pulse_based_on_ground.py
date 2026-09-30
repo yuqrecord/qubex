@@ -1,5 +1,5 @@
 """
-Ground-referenced half-pi (FlatTop) amplitude calibration for any transition.
+Ground-referenced half-pi amplitude calibration for any transition.
 
 `Experiment.calibrate_hpi_pulse` locates the amplitude at the *extremum* of a
 fitted cosine, which is flat and therefore imprecise, and it drives the target
@@ -74,7 +74,7 @@ from numpy.typing import ArrayLike
 
 from qubex.experiment import Experiment
 from qubex.experiment.models import Result
-from qubex.pulse import FlatTop, Waveform
+from qubex.pulse import Drag, RampType, Waveform
 from qubex.system.transition import TransitionName
 
 from . import _core
@@ -95,18 +95,28 @@ def _resolve_initial_amplitude(
     *,
     target: str,
     duration: float,
-    ramptime: float,
+    type: RampType,
 ) -> tuple[float, str]:
-    """Return the starting amplitude and where it came from."""
+    """
+    Return the starting amplitude and where it came from.
+
+    A stored amplitude is reused only when it was measured with the same
+    envelope, because the rotation angle follows the area under it: the same
+    peak amplitude spans about -16 % to +21 % of a rotation across the
+    envelopes `Drag` can build, while the amplitude sweep that follows is only
+    about +-10 % / n_rotations wide.
+    """
     stored = exp.calib_note.get_hpi_param(target)
     if (
         stored is not None
         and stored.get("amplitude") is not None
+        # A stored flat top carries a `tau`; this calibration never builds one.
+        and stored.get("tau") is None
         and np.isclose(stored["duration"], duration)
-        and np.isclose(stored["tau"], ramptime)
+        and (stored.get("type") or _core.DEFAULT_DRAG_TYPE) == type
     ):
         return float(stored["amplitude"]), "calib_note"
-    unit_pulse = FlatTop(duration=duration, amplitude=1, tau=ramptime)
+    unit_pulse = Drag(duration=duration, amplitude=1, beta=0.0, type=type)
     amplitude = _core.estimate_amplitude(
         exp,
         target=target,
@@ -116,11 +126,13 @@ def _resolve_initial_amplitude(
     return amplitude, "rabi_estimate"
 
 
-def _make_pulse(*, duration: float, ramptime: float) -> Callable[[float], Waveform]:
+def _make_pulse(*, duration: float, type: RampType) -> Callable[[float], Waveform]:
     """Return a builder of the pulse under test at a given amplitude."""
 
     def make_pulse(amplitude: float) -> Waveform:
-        return FlatTop(duration=duration, amplitude=amplitude, tau=ramptime)
+        # `beta=0` leaves the envelope exactly as it is: the DRAG quadrature is
+        # what `calibrate_drag_*_pulse_based_on_ground` is for.
+        return Drag(duration=duration, amplitude=amplitude, beta=0.0, type=type)
 
     return make_pulse
 
@@ -131,7 +143,7 @@ def run_calibrate_hpi_pulse_based_on_ground(
     target: str,
     transition: TransitionName,
     duration: float | None = None,
-    ramptime: float | None = None,
+    type: RampType | None = None,
     n_rotations: int | None = None,
     amplitude_diff_range: ArrayLike | None = None,
     n_shots: int | None = None,
@@ -150,9 +162,11 @@ def run_calibrate_hpi_pulse_based_on_ground(
     transition : TransitionName
         Transition to calibrate, `"ge"` through `"mn"`.
     duration : float | None, optional
-        Pulse duration in ns. Defaults to `_core.DEFAULT_HPI_DURATION`.
-    ramptime : float | None, optional
-        `FlatTop` ramp time in ns. Defaults to `_core.DEFAULT_HPI_RAMPTIME`.
+        Pulse duration in ns. Defaults to `_core.DEFAULT_DRAG_HPI_DURATION`.
+    type : RampType | None, optional
+        Envelope to calibrate. Defaults to `_core.DEFAULT_DRAG_TYPE`. The pulse
+        carries no DRAG correction; use
+        `calibrate_drag_hpi_pulse_based_on_ground` for that.
     n_rotations : int | None, optional
         Number of full rotations `n`; both branches use a signed leading pulse
         followed by `4n` more, realizing `4n - 1` and `4n + 1` rotations.
@@ -179,9 +193,9 @@ def run_calibrate_hpi_pulse_based_on_ground(
         step may have updated.
     """
     if duration is None:
-        duration = _core.DEFAULT_HPI_DURATION
-    if ramptime is None:
-        ramptime = _core.DEFAULT_HPI_RAMPTIME
+        duration = _core.DEFAULT_DRAG_HPI_DURATION
+    if type is None:
+        type = _core.DEFAULT_DRAG_TYPE
     if n_rotations is None:
         n_rotations = _core.DEFAULT_N_ROTATIONS
     if n_shots is None:
@@ -193,7 +207,8 @@ def run_calibrate_hpi_pulse_based_on_ground(
 
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
-    _core.validate_duration(duration, ramptime=ramptime)
+    _core.validate_duration(duration)
+    _core.validate_drag_type(type)
     _core.validate_n_rotations(n_rotations)
     _core.validate_n_shots(n_shots)
     _core.validate_shot_interval(shot_interval)
@@ -203,7 +218,7 @@ def run_calibrate_hpi_pulse_based_on_ground(
         exp,
         target=ladder.target,
         duration=duration,
-        ramptime=ramptime,
+        type=type,
     )
     _core.validate_initial_amplitude(initial_amplitude)
 
@@ -221,7 +236,7 @@ def run_calibrate_hpi_pulse_based_on_ground(
 
     prep_pulses = _core.resolve_prep_pulses(exp, ladder)
     repetitions = 4 * n_rotations
-    make_pulse = _make_pulse(duration=duration, ramptime=ramptime)
+    make_pulse = _make_pulse(duration=duration, type=type)
     acquisition_diffs, acquisition_branches = _core.build_acquisition_plan(diffs)
     sequence = _core.build_branch_sequence(
         ladder=ladder,
@@ -268,7 +283,7 @@ def run_calibrate_hpi_pulse_based_on_ground(
         "target": ladder.target,
         "lower_labels": ladder.lower_labels,
         "duration": duration,
-        "ramptime": ramptime,
+        "type": type,
         "n_rotations": n_rotations,
         "repetitions": repetitions,
         "amplitude_diff_range": diffs,
@@ -399,7 +414,7 @@ def display_calibrate_hpi_pulse_based_on_ground(
             prefix=f"calibrate_hpi_pulse_based_on_ground_{data['target']}",
         )
     _core.print_summary(data)
-    print(f"  ramptime            : {data['ramptime']} ns")
+    print(f"  type                : {data['type']}")
 
 
 def calibrate_hpi_pulse_based_on_ground(
@@ -408,7 +423,7 @@ def calibrate_hpi_pulse_based_on_ground(
     targets: Collection[str] | str | None = None,
     transition: TransitionName,
     duration: float | None = None,
-    ramptime: float | None = None,
+    type: RampType | None = None,
     n_rotations: int | None = None,
     amplitude_diff_range: ArrayLike | None = None,
     n_shots: int | None = None,
@@ -434,9 +449,11 @@ def calibrate_hpi_pulse_based_on_ground(
     transition : TransitionName
         Transition to calibrate, `"ge"` through `"mn"`.
     duration : float | None, optional
-        Pulse duration in ns. Defaults to `_core.DEFAULT_HPI_DURATION`.
-    ramptime : float | None, optional
-        `FlatTop` ramp time in ns. Defaults to `_core.DEFAULT_HPI_RAMPTIME`.
+        Pulse duration in ns. Defaults to `_core.DEFAULT_DRAG_HPI_DURATION`.
+    type : RampType | None, optional
+        Envelope to calibrate. Defaults to `_core.DEFAULT_DRAG_TYPE`. The pulse
+        carries no DRAG correction; use
+        `calibrate_drag_hpi_pulse_based_on_ground` for that.
     n_rotations : int | None, optional
         Number of full rotations `n`. Defaults to `_core.DEFAULT_N_ROTATIONS`.
     amplitude_diff_range : ArrayLike | None, optional
@@ -486,7 +503,13 @@ def calibrate_hpi_pulse_based_on_ground(
                 "target": payload["target"],
                 "duration": payload["duration"],
                 "amplitude": payload["amplitude"],
-                "tau": payload["ramptime"],
+                # A null `tau` is what marks the entry as an envelope rather
+                # than a flat top. It has to be written, not left out: entries
+                # merge key by key, so an omitted one leaves an earlier
+                # `tau` in place and the pulse comes back as a `FlatTop`.
+                "tau": None,
+                "beta": 0.0,
+                "type": payload["type"],
             },
         )
 
@@ -501,7 +524,7 @@ def calibrate_hpi_pulse_based_on_ground(
             target=ladder.qubit,
             transition=transition,
             duration=duration,
-            ramptime=ramptime,
+            type=type,
             n_rotations=n_rotations,
             amplitude_diff_range=amplitude_diff_range,
             n_shots=n_shots,

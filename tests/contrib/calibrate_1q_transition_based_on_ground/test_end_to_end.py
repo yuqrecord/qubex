@@ -27,6 +27,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
 )
 from qubex.experiment.models import Result
 from qubex.pulse import Waveform
+from qubex.pulse import Drag
 from qubex.system.transition import TRANSITION_NAMES
 
 from .conftest import CONTROL_AMPLITUDE, DISPERSIVE_SHIFT, READOUT_FREQUENCY
@@ -93,9 +94,8 @@ def test_hpi_calibration_finds_the_simulated_amplitude(
     true_amplitude = 0.3012
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=true_amplitude,
         pulse_type="hpi",
         hpi_amplitude=stored_amplitude,
@@ -106,7 +106,6 @@ def test_hpi_calibration_finds_the_simulated_amplitude(
         targets=QUBIT,
         transition="fh",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -123,7 +122,10 @@ def test_hpi_calibration_finds_the_simulated_amplitude(
         result.data[target]["amplitude"]
     )
     assert exp.calib_note.hpi[target]["duration"] == DURATION
-    assert exp.calib_note.hpi[target]["tau"] == RAMPTIME
+    # A null `tau` is what tells `PulseService` to rebuild this as an envelope.
+    assert exp.calib_note.hpi[target]["tau"] is None
+    assert exp.calib_note.hpi[target]["beta"] == 0.0
+    assert exp.calib_note.hpi[target]["type"] == _core.DEFAULT_DRAG_TYPE
 
 
 def test_hpi_branches_are_matched(
@@ -133,9 +135,8 @@ def test_hpi_branches_are_matched(
     n_rotations = 2
     exp = stub_experiment_factory(
         transition="ef",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -146,7 +147,6 @@ def test_hpi_branches_are_matched(
         targets=QUBIT,
         transition="ef",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=n_rotations,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -177,9 +177,8 @@ def test_pi_calibration_finds_the_simulated_amplitude(
     true_amplitude = 0.6018
     exp = stub_experiment_factory(
         transition="ef",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=true_amplitude,
         pulse_type="pi",
     )
@@ -190,7 +189,8 @@ def test_pi_calibration_finds_the_simulated_amplitude(
             "target": target,
             "duration": DURATION,
             "amplitude": stored_amplitude,
-            "tau": RAMPTIME,
+            "tau": None,
+            "beta": 0.0,
         },
     )
 
@@ -199,7 +199,6 @@ def test_pi_calibration_finds_the_simulated_amplitude(
         targets=QUBIT,
         transition="ef",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.006, 0.006, 11),
         n_shots=N_SHOTS,
@@ -222,9 +221,8 @@ def test_pi_calibration_requires_a_half_pi_pulse(
     """Given no stored half-pi, when calibrated, then it raises before measuring."""
     exp = stub_experiment_factory(
         transition="ef",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.6,
         pulse_type="pi",
         with_hpi=False,
@@ -236,7 +234,6 @@ def test_pi_calibration_requires_a_half_pi_pulse(
             targets=QUBIT,
             transition="ef",
             duration=DURATION,
-            ramptime=RAMPTIME,
             n_rotations=3,
             amplitude_diff_range=np.linspace(-0.006, 0.006, 11),
             n_shots=N_SHOTS,
@@ -358,9 +355,8 @@ def test_missing_rabi_params_raise_before_measuring(
     """Given no transition Rabi params, when calibrated, then nothing is measured."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3,
         pulse_type="hpi",
         hpi_amplitude=0.3,
@@ -374,7 +370,6 @@ def test_missing_rabi_params_raise_before_measuring(
             targets=QUBIT,
             transition="fh",
             duration=DURATION,
-            ramptime=RAMPTIME,
             n_rotations=3,
             amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
             n_shots=N_SHOTS,
@@ -393,9 +388,8 @@ def test_ge_calibration_needs_no_ladder(
     """Given the ge transition, when calibrated, then only the qubit is driven."""
     exp = stub_experiment_factory(
         transition="ge",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -406,7 +400,6 @@ def test_ge_calibration_needs_no_ladder(
         targets=QUBIT,
         transition="ge",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -469,9 +462,8 @@ def test_two_targets_are_calibrated_one_after_another(
     true_amplitudes = {QUBIT: 0.3012, QUBIT_2: 0.2988}
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.30,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -484,7 +476,6 @@ def test_two_targets_are_calibrated_one_after_another(
         targets=[QUBIT, QUBIT_2],
         transition="fh",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -517,9 +508,8 @@ def test_defaults_are_resolved_when_every_argument_is_omitted(
     """Given only a transition, when run, then the payload records the defaults."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
-        duration=_core.DEFAULT_HPI_DURATION,
-        ramptime=_core.DEFAULT_HPI_RAMPTIME,
+        envelope="drag",
+        duration=_core.DEFAULT_DRAG_HPI_DURATION,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -528,8 +518,8 @@ def test_defaults_are_resolved_when_every_argument_is_omitted(
     result = calibrate_hpi_pulse_based_on_ground(exp, transition="fh", plot=False)
 
     payload = result.data[f"{QUBIT}-fh"]
-    assert payload["duration"] == _core.DEFAULT_HPI_DURATION
-    assert payload["ramptime"] == _core.DEFAULT_HPI_RAMPTIME
+    assert payload["duration"] == _core.DEFAULT_DRAG_HPI_DURATION
+    assert payload["type"] == _core.DEFAULT_DRAG_TYPE
     assert payload["n_rotations"] == _core.DEFAULT_N_ROTATIONS
     assert payload["n_shots"] == _core.DEFAULT_N_SHOTS
     assert payload["shot_interval"] == _core.DEFAULT_SHOT_INTERVAL
@@ -678,9 +668,8 @@ def test_an_unusable_target_stops_the_batch_before_it_measures(
     """Given one uncalibrated qubit, when calibrated, then nothing is measured."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -695,7 +684,6 @@ def test_an_unusable_target_stops_the_batch_before_it_measures(
             targets=[QUBIT, QUBIT_2],
             transition="fh",
             duration=DURATION,
-            ramptime=RAMPTIME,
             n_rotations=3,
             amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
             n_shots=N_SHOTS,
@@ -750,9 +738,8 @@ def test_calibration_figures_are_plotted_against_the_amplitude_itself(
     """Given a calibration, when plotted, then the x axis is the amplitude, not the offset."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -763,7 +750,6 @@ def test_calibration_figures_are_plotted_against_the_amplitude_itself(
         targets=QUBIT,
         transition="fh",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -816,9 +802,8 @@ def test_a_failing_analysis_keeps_the_measurement_and_the_other_targets(
     """Given one qubit the fit cannot solve, when calibrated, then the rest still runs."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -835,7 +820,6 @@ def test_a_failing_analysis_keeps_the_measurement_and_the_other_targets(
         targets=[QUBIT, QUBIT_2, QUBIT_3],
         transition="fh",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -872,9 +856,8 @@ def test_a_failing_plot_keeps_the_stored_calibration(
     """Given a plotting failure, when calibrated, then the amplitude is still stored."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -894,7 +877,6 @@ def test_a_failing_plot_keeps_the_stored_calibration(
         targets=QUBIT,
         transition="fh",
         duration=DURATION,
-        ramptime=RAMPTIME,
         n_rotations=3,
         amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
         n_shots=N_SHOTS,
@@ -920,9 +902,8 @@ def test_a_failing_measurement_is_raised(
     """Given a measurement failure, when calibrated, then it is not swallowed."""
     exp = stub_experiment_factory(
         transition="fh",
-        envelope="flat_top",
+        envelope="drag",
         duration=DURATION,
-        ramptime=RAMPTIME,
         true_amplitude=0.3012,
         pulse_type="hpi",
         hpi_amplitude=0.30,
@@ -2072,3 +2053,348 @@ def test_an_unsupported_envelope_is_rejected_before_measuring(
         )
 
     assert exp.sweep_calls == []
+
+
+def test_the_plain_hpi_calibration_plays_and_stores_the_requested_envelope(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an envelope, when the half-pi is calibrated, then it is played and stored."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        type="Blackman",
+    )
+    target = f"{QUBIT}-hi"
+
+    payload = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_HPI_DURATION,
+        type="Blackman",
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[target]
+
+    assert payload["type"] == "Blackman"
+    stored = exp.calib_note.hpi[target]
+    assert stored["type"] == "Blackman"
+    # A null `tau` is what keeps `PulseService` from rebuilding this as a flat
+    # top, and it has to be written rather than omitted because entries merge.
+    assert stored["tau"] is None
+    assert stored["beta"] == 0.0
+    # The stub's Rabi rate comes from the area under a *Blackman* unit pulse,
+    # so converging on its true amplitude is only possible if that envelope was
+    # really played: a Gaussian of the same peak amplitude covers ~27 % more.
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+
+
+def test_the_plain_pi_calibration_stores_the_requested_envelope(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given an envelope, when the pi pulse is calibrated, then it is stored too."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+        type="RaisedCosine",
+    )
+    target = f"{QUBIT}-hi"
+
+    payload = calibrate_pi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_PI_DURATION,
+        type="RaisedCosine",
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[target]
+
+    assert payload["type"] == "RaisedCosine"
+    assert exp.calib_note.pi[target]["type"] == "RaisedCosine"
+    assert exp.calib_note.pi[target]["tau"] is None
+    assert payload["amplitude"] == pytest.approx(0.3012, rel=1e-3)
+
+
+def test_the_pi_calibration_tips_with_the_calibrated_envelope(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a stored envelope half-pi, when the pi runs, then it tips with it."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+        type="RaisedCosine",
+    )
+
+    payload = calibrate_pi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_PI_DURATION,
+        type="RaisedCosine",
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[f"{QUBIT}-hi"]
+
+    # The half-pi the fixture seeded is an envelope, so `get_hpi_pulse` has to
+    # hand back that family rather than a flat top.
+    assert isinstance(payload["tipping_pulse"], Drag)
+    assert payload["tipping_pulse"].type == "RaisedCosine"
+
+
+@pytest.mark.parametrize(
+    "calibrate",
+    [calibrate_hpi_pulse_based_on_ground, calibrate_pi_pulse_based_on_ground],
+)
+@pytest.mark.parametrize("type", ["Squad", "Gauss"])
+def test_the_plain_calibrations_reject_an_unsupported_envelope(
+    stub_experiment_factory: Callable[..., Any],
+    calibrate: Callable[..., Any],
+    type: str,
+) -> None:
+    """Given an envelope Drag cannot build, when calibrated, then nothing is measured."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+
+    with pytest.raises(ValueError, match="is not a supported DRAG envelope"):
+        calibrate(
+            exp,
+            targets=QUBIT,
+            transition="hi",
+            duration=DRAG_HPI_DURATION,
+            type=type,
+            plot=False,
+            plot_pulse_schedule=False,
+        )
+
+    assert exp.sweep_calls == []
+
+
+@pytest.mark.parametrize(
+    ("stored_type", "expected_source"),
+    [
+        pytest.param("Blackman", "calib_note", id="same-envelope"),
+        pytest.param("Gaussian", "rabi_estimate", id="other-envelope"),
+    ],
+)
+def test_a_stored_amplitude_seeds_the_plain_sweep_only_for_the_same_envelope(
+    stub_experiment_factory: Callable[..., Any],
+    stored_type: str,
+    expected_source: str,
+) -> None:
+    """Given a stored amplitude, when the envelope differs, then it is not reused."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        type="Blackman",
+        with_hpi=False,
+    )
+    target = f"{QUBIT}-hi"
+    exp.calib_note.update_hpi_param(
+        target,
+        {
+            "target": target,
+            "duration": DRAG_HPI_DURATION,
+            "amplitude": 0.30,
+            "tau": None,
+            "beta": 0.0,
+            "type": stored_type,
+        },
+    )
+
+    payload = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_HPI_DURATION,
+        type="Blackman",
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[target]
+
+    assert payload["initial_amplitude_source"] == expected_source
+
+
+def test_a_stored_flat_top_does_not_seed_the_plain_sweep(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a stored flat top, when an envelope is calibrated, then it is not reused."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_HPI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+        with_hpi=False,
+    )
+    target = f"{QUBIT}-hi"
+    exp.calib_note.update_hpi_param(
+        target,
+        {
+            "target": target,
+            "duration": DRAG_HPI_DURATION,
+            "amplitude": 0.30,
+            "tau": RAMPTIME,
+        },
+    )
+
+    payload = calibrate_hpi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_HPI_DURATION,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.003, 0.003, 11),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    ).data[target]
+
+    # The area under a flat top and under an envelope differ, so its amplitude
+    # is not a usable seed even when the duration matches.
+    assert payload["initial_amplitude_source"] == "rabi_estimate"
+
+
+def _capture_analyzers(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Record the analyzer handed to every beta pass."""
+    captured: list[Any] = []
+    original = _core.run_beta_pass
+
+    def _spy(exp: Any, **kwargs: Any) -> Any:
+        captured.append(kwargs["analyzer"])
+        return original(exp, **kwargs)
+
+    monkeypatch.setattr(_core, "run_beta_pass", _spy)
+    return captured
+
+
+def _run_drag_pi_beta_pass(exp: Any) -> Any:
+    """Run the DRAG pi calibration with the beta pass enabled."""
+    return calibrate_drag_pi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_PI_DURATION,
+        drag_coeff=DRAG_COEFF,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+        n_iterations=1,
+        calibrate_beta=True,
+        beta_range=np.linspace(-0.5, 0.5, 11),
+        n_turns=1,
+        degree=3,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+
+def test_the_beta_analyzer_prefers_a_calibrated_drag_half_pi(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a DRAG half-pi, when the beta pass runs, then it analyzes with that."""
+    exp = _drag_stub(stub_experiment_factory)
+    target = f"{QUBIT}-hi"
+    analyzers = _capture_analyzers(monkeypatch)
+
+    _run_drag_with_beta(exp, beta=0.2, calibrate_beta=True)
+
+    assert analyzers
+    # The uncorrected half-pi is the pulse with the largest possible beta error,
+    # and the analyzer's own axis error biases the root the fit reports.
+    expected = exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
+    np.testing.assert_allclose(analyzers[-1].values, expected.values)
+
+
+def test_the_beta_analyzer_falls_back_to_the_uncorrected_half_pi(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given no DRAG half-pi, when the beta pass runs, then the plain one analyzes."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+    )
+    target = f"{QUBIT}-hi"
+    assert exp.calib_note.get_drag_hpi_param(target) is None
+    analyzers = _capture_analyzers(monkeypatch)
+
+    _run_drag_pi_beta_pass(exp)
+
+    assert analyzers
+    expected = exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
+    np.testing.assert_allclose(analyzers[-1].values, expected.values)
+
+
+def test_a_drag_half_pi_alone_is_enough_for_the_beta_pass(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given only a DRAG half-pi, when the pi beta pass runs, then it is not refused."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+        with_hpi=False,
+    )
+    target = f"{QUBIT}-hi"
+    exp.calib_note.update_drag_hpi_param(
+        target,
+        {
+            "target": target,
+            "duration": DRAG_HPI_DURATION,
+            "amplitude": 0.30,
+            "beta": 0.1,
+        },
+    )
+    assert exp.calib_note.get_hpi_param(target) is None
+    analyzers = _capture_analyzers(monkeypatch)
+
+    _run_drag_pi_beta_pass(exp)
+
+    # It used to refuse here and tell the caller to run the uncorrected
+    # calibration first, even with a perfectly good DRAG half-pi in the note.
+    assert analyzers
+    expected = exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
+    np.testing.assert_allclose(analyzers[-1].values, expected.values)
