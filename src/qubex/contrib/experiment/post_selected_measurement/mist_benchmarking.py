@@ -697,11 +697,7 @@ def mist_benchmarking_experiment(
         exp.backend_controller.sampling_period_ns
         * exp.backend_controller.CAPTURE_DECIMATION_FACTOR
     )
-    block_duration = (
-        ge_readout_pulse.duration
-        + exp.readout_post_margin
-        + waittime_after_readout_pulse
-    )
+    block_duration = ge_readout_pulse.duration + waittime_after_readout_pulse
     run_result = run_mist_benchmarking(
         exp,
         target=target,
