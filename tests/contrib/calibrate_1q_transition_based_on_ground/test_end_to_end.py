@@ -1861,3 +1861,114 @@ def test_a_stored_flat_top_does_not_seed_the_plain_sweep(
     # The area under a flat top and under an envelope differ, so its amplitude
     # is not a usable seed even when the duration matches.
     assert payload["initial_amplitude_source"] == "rabi_estimate"
+
+
+def _capture_analyzers(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Record the analyzer handed to every beta pass."""
+    captured: list[Any] = []
+    original = _core.run_beta_pass
+
+    def _spy(exp: Any, **kwargs: Any) -> Any:
+        captured.append(kwargs["analyzer"])
+        return original(exp, **kwargs)
+
+    monkeypatch.setattr(_core, "run_beta_pass", _spy)
+    return captured
+
+
+def _run_drag_pi_beta_pass(exp: Any) -> Any:
+    """Run the DRAG pi calibration with the beta pass enabled."""
+    return calibrate_drag_pi_pulse_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="hi",
+        duration=DRAG_PI_DURATION,
+        drag_coeff=DRAG_COEFF,
+        n_rotations=3,
+        amplitude_diff_range=np.linspace(-0.004, 0.004, 11),
+        n_iterations=1,
+        calibrate_beta=True,
+        beta_range=np.linspace(-0.5, 0.5, 11),
+        n_turns=1,
+        degree=3,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+
+def test_the_beta_analyzer_prefers_a_calibrated_drag_half_pi(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a DRAG half-pi, when the beta pass runs, then it analyzes with that."""
+    exp = _drag_stub(stub_experiment_factory)
+    target = f"{QUBIT}-hi"
+    analyzers = _capture_analyzers(monkeypatch)
+
+    _run_drag_with_beta(exp, beta=0.2, calibrate_beta=True)
+
+    assert analyzers
+    # The uncorrected half-pi is the pulse with the largest possible beta error,
+    # and the analyzer's own axis error biases the root the fit reports.
+    expected = exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
+    np.testing.assert_allclose(analyzers[-1].values, expected.values)
+
+
+def test_the_beta_analyzer_falls_back_to_the_uncorrected_half_pi(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given no DRAG half-pi, when the beta pass runs, then the plain one analyzes."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+    )
+    target = f"{QUBIT}-hi"
+    assert exp.calib_note.get_drag_hpi_param(target) is None
+    analyzers = _capture_analyzers(monkeypatch)
+
+    _run_drag_pi_beta_pass(exp)
+
+    assert analyzers
+    expected = exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
+    np.testing.assert_allclose(analyzers[-1].values, expected.values)
+
+
+def test_a_drag_half_pi_alone_is_enough_for_the_beta_pass(
+    stub_experiment_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given only a DRAG half-pi, when the pi beta pass runs, then it is not refused."""
+    exp = stub_experiment_factory(
+        transition="hi",
+        envelope="drag",
+        duration=DRAG_PI_DURATION,
+        true_amplitude=0.3012,
+        pulse_type="pi",
+        with_hpi=False,
+    )
+    target = f"{QUBIT}-hi"
+    exp.calib_note.update_drag_hpi_param(
+        target,
+        {
+            "target": target,
+            "duration": DRAG_HPI_DURATION,
+            "amplitude": 0.30,
+            "beta": 0.1,
+        },
+    )
+    assert exp.calib_note.get_hpi_param(target) is None
+    analyzers = _capture_analyzers(monkeypatch)
+
+    _run_drag_pi_beta_pass(exp)
+
+    # It used to refuse here and tell the caller to run the uncorrected
+    # calibration first, even with a perfectly good DRAG half-pi in the note.
+    assert analyzers
+    expected = exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
+    np.testing.assert_allclose(analyzers[-1].values, expected.values)

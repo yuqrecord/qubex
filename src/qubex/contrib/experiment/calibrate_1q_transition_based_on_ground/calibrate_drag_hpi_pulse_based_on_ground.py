@@ -36,10 +36,25 @@ pulse and a branch-dependent *offset* is exactly what moves the crossing.
 
     X90+ , [X90- , X90+] * n_turns , Y90-
 
-The closing `Y90-` analyzer is the transition's stored *FlatTop* half-pi, so it
-does not depend on the beta being swept. The normalized signal is fitted with a
-polynomial and its root is the calibrated beta; a non-finite root, or one outside
-the swept range, raises rather than defaulting to zero.
+The closing `Y90-` analyzer is the transition's stored DRAG half-pi when there is
+one, and otherwise its uncorrected half-pi. It is resolved once per pass, before
+the sweep, so it does not depend on the beta being swept. The normalized signal
+is fitted with a polynomial and its root is the calibrated beta; a non-finite
+root, or one outside the swept range, raises rather than defaulting to zero.
+
+The analyzer's own axis error does not merely cost contrast: it offsets the
+signal, and the fit takes that signal's root, so to first order the beta comes
+back biased by `(phi - a) / ((2n + 1) k)` for an in-plane phase error `phi` and
+an out-of-plane tilt `a`. An uncorrected half-pi carries `beta = 0`, the largest
+beta error there is, which is why the corrected one is preferred.
+
+Here the analyzer is the very pulse under calibration, so each pass analyzes
+with the beta the previous one found. That is a contraction rather than a
+runaway: in the symmetric model the error obeys `e_(j+1) = -e_j / (2n + 1)`, so
+the default two passes at `n_turns = 1` leave a ninth of the seed error. Note
+that the first pass analyzes with the amplitude it has just measured but only
+the *seed* beta - the entry it reads was written moments earlier by the
+amplitude pass.
 
 Starting point
 --------------
@@ -57,8 +72,9 @@ value.
 Assumptions and caveats
 -----------------------
 - Every rung below the transition must have a calibrated pi pulse, and the
-  transition must have stored Rabi parameters and a stored FlatTop half-pi pulse
-  (the beta analyzer). Run `calibrate_hpi_pulse_based_on_ground` first.
+  transition must have stored Rabi parameters and some stored half-pi pulse,
+  corrected or not, to analyze the beta pass with. Run
+  `calibrate_hpi_pulse_based_on_ground` first.
 - `amplitude_diff_range` must stay inside `A0 / (4 n)`, beyond which the
   difference signal grows extra zero crossings. This is validated, not clipped.
 - `beta_range` is a set of offsets *from the current beta*, matching
@@ -187,14 +203,31 @@ def _resolve_initial_pulse(
 
 
 def _resolve_analyzer(exp: Experiment, *, target: str) -> Waveform:
-    """Return the fixed `Y90-` analyzer of the beta pass."""
-    if exp.calib_note.get_hpi_param(target) is None:
-        raise ValueError(
-            f"A FlatTop half-pi pulse is not calibrated for {target!r}, and the "
-            "DRAG beta calibration needs it as the closing Y90- analyzer. Run "
-            "`calibrate_hpi_pulse_based_on_ground` first."
-        )
-    return exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
+    """
+    Return the fixed `Y90-` analyzer of the beta pass.
+
+    The corrected half-pi is preferred where one is stored. The analyzer's own
+    axis error offsets the signal, and the fit takes the *root* of that signal,
+    so the offset lands in the calibrated beta rather than washing out: to first
+    order the half-pi sequence is biased by `(phi - a) / ((2n + 1) k)` for an
+    in-plane phase error `phi` and an out-of-plane tilt `a`. An uncorrected
+    half-pi carries `beta = 0`, which is the largest beta error available.
+
+    It is resolved once per pass, before the sweep, so it stays fixed while beta
+    is swept - which is what the amplification sequence needs of it.
+
+    The closing `raise` is defensive: the amplitude pass writes a DRAG entry
+    before this runs, so this flow never reaches it.
+    """
+    if exp.calib_note.get_drag_hpi_param(target) is not None:
+        return exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
+    if exp.calib_note.get_hpi_param(target) is not None:
+        return exp.pulse.get_hpi_pulse(target).shifted(-np.pi / 2)
+    raise ValueError(
+        f"No half-pi pulse is calibrated for {target!r}, and the DRAG beta "
+        "calibration needs one as the closing Y90- analyzer. Run "
+        "`calibrate_hpi_pulse_based_on_ground` first."
+    )
 
 
 def _make_pulse(
