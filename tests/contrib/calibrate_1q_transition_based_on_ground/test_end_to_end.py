@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import itertools
 from collections.abc import Callable
@@ -12,6 +13,7 @@ import pytest
 
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
+    analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
     apply_electrical_delay,
     apply_phase_shift,
     calibrate_drag_hpi_pulse_based_on_ground,
@@ -19,15 +21,19 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
     chevron_pattern_based_on_ground,
+    chevron_pattern_by_amplitude_sweep_based_on_ground,
     measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
+    obtain_rabi_params_by_amplitude_sweep_based_on_ground,
     ramsey_experiment_based_on_ground,
     run_chevron_pattern_based_on_ground,
+    run_chevron_pattern_by_amplitude_sweep_based_on_ground,
+    run_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
     run_ramsey_experiment_based_on_ground,
 )
+from qubex.experiment import experiment_constants as constants
 from qubex.experiment.models import Result
-from qubex.pulse import Waveform
-from qubex.pulse import Drag
+from qubex.pulse import Drag, Waveform
 from qubex.system.transition import TRANSITION_NAMES
 
 from .conftest import CONTROL_AMPLITUDE, DISPERSIVE_SHIFT, READOUT_FREQUENCY
@@ -2398,3 +2404,492 @@ def test_a_drag_half_pi_alone_is_enough_for_the_beta_pass(
     assert analyzers
     expected = exp.pulse.get_drag_hpi_pulse(target).shifted(-np.pi / 2)
     np.testing.assert_allclose(analyzers[-1].values, expected.values)
+
+
+def _amplitude_sweep_stub(
+    stub_experiment_factory: Callable[..., Any],
+    *,
+    transition: str = "fh",
+    true_amplitude: float = 0.4,
+    **kwargs: Any,
+) -> Any:
+    """Return a stub whose transition has a known Rabi rate per unit amplitude."""
+    return stub_experiment_factory(
+        transition=transition,
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=true_amplitude,
+        pulse_type="pi",
+        **kwargs,
+    )
+
+
+def test_amplitude_sweep_recovers_the_simulated_rate_per_amplitude(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a simulated sweep, when run, then the rate per amplitude is recovered."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    target = f"{QUBIT}-fh"
+    # The stub rotates by 2*pi*rate*area, so its rate *is* the slope dOmega/dA.
+    expected_rate = exp.rabi_rate_per_amplitude
+
+    result = obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        amplitude_range=np.linspace(0.0, 0.4, 51),
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    payload = result.data[target]
+    assert "error" not in payload
+    assert payload["rabi_rate_per_amplitude"] == pytest.approx(expected_rate, rel=1e-4)
+    # Stored under the transition label, at the configured control amplitude.
+    control_amplitude = payload["control_amplitude"]
+    assert control_amplitude == pytest.approx(CONTROL_AMPLITUDE / np.sqrt(3))
+    assert exp.ctx.stored_rabi_params[target].frequency == pytest.approx(
+        expected_rate * control_amplitude, rel=1e-4
+    )
+
+
+def test_amplitude_sweep_holds_the_drive_fixed_and_scales_only_its_amplitude(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a swept amplitude, when run, then only the drive amplitude changes."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    amplitudes = np.linspace(0.0, 0.4, 11)
+
+    run_result = run_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        amplitude_range=amplitudes,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot_pulse_schedule=False,
+    )
+
+    call = exp.sweep_calls[-1]
+    assert len(call["schedules"]) == amplitudes.size
+    # A fixed duration is the whole point: every point must cost the same time.
+    lengths = set()
+    for amplitude, schedule in zip(amplitudes, call["schedules"], strict=True):
+        assert set(schedule.labels) == {QUBIT, f"{QUBIT}-ef", f"{QUBIT}-fh"}
+        sequences = schedule.get_sampled_sequences()
+        lengths.add(len(sequences[f"{QUBIT}-fh"]))
+        peak = float(np.abs(sequences[f"{QUBIT}-fh"]).max())
+        assert peak == pytest.approx(amplitude, abs=1e-12)
+    assert len(lengths) == 1
+    assert (
+        run_result["played_duration"]
+        == run_result["duration"] + 2 * (run_result["ramptime"])
+    )
+    assert run_result["effective_duration"] == pytest.approx(
+        run_result["duration"] + run_result["ramptime"]
+    )
+
+
+def test_amplitude_sweep_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when run, then the payload records the defaults."""
+    module = _module("obtain_rabi_params_by_amplitude_sweep_based_on_ground")
+    # On ge the nominal prior and the stub agree exactly, so the default range
+    # covers the two turns it is designed for.
+    exp = _amplitude_sweep_stub(
+        stub_experiment_factory,
+        transition="ge",
+        calibrated_qubits=[],
+    )
+
+    run_result = run_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="ge",
+        plot_pulse_schedule=False,
+    )
+
+    assert run_result["duration"] == module.DEFAULT_DURATION
+    assert run_result["ramptime"] == _core.DEFAULT_RABI_RAMPTIME
+    assert run_result["n_shots"] == _core.DEFAULT_N_SHOTS
+    assert run_result["shot_interval"] == _core.DEFAULT_SHOT_INTERVAL
+    assert run_result["effective_duration"] == pytest.approx(
+        1 / constants.DEFAULT_RABI_FREQUENCY
+    )
+    # No stored Rabi parameters, so the range falls back to the nominal rate.
+    assert run_result["amplitude_range_source"] == "nominal_rabi_rate"
+    assert run_result["amplitude_range_capped"] is False
+    amplitudes = run_result["amplitude_range"]
+    assert amplitudes.size == module.DEFAULT_N_POINTS
+    assert amplitudes[0] == 0.0
+    # At the default duration the nominal range is n_turns * A_cfg.
+    assert amplitudes[-1] == pytest.approx(module.DEFAULT_N_TURNS * CONTROL_AMPLITUDE)
+
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=run_result
+    )
+    assert payload["swept_turns"] == pytest.approx(module.DEFAULT_N_TURNS, rel=1e-3)
+
+
+def test_amplitude_sweep_derives_its_range_from_a_stored_rabi_param(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given stored Rabi parameters, when run, then they size the default range."""
+    module = _module("obtain_rabi_params_by_amplitude_sweep_based_on_ground")
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    stored = exp.ctx.stored_rabi_params[f"{QUBIT}-fh"]
+
+    run_result = run_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        plot_pulse_schedule=False,
+    )
+
+    assert run_result["amplitude_range_source"] == "calib_note"
+    control_amplitude = run_result["control_amplitude"]
+    rate_prior = stored.frequency / control_amplitude
+    expected_max = module.DEFAULT_N_TURNS / (
+        rate_prior * run_result["effective_duration"]
+    )
+    assert run_result["amplitude_range"][-1] == pytest.approx(expected_max)
+
+
+def test_amplitude_sweep_caps_a_derived_range_at_the_amplitude_ceiling(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a very slow prior, when run, then the derived range stops at one."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    target = f"{QUBIT}-fh"
+    # A tiny stored rate asks for far more amplitude than the hardware allows.
+    exp.ctx.stored_rabi_params[target] = dataclasses.replace(
+        exp.ctx.stored_rabi_params[target],
+        frequency=1e-5,
+    )
+
+    run_result = run_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        plot_pulse_schedule=False,
+    )
+
+    assert run_result["amplitude_range"][-1] == pytest.approx(1.0)
+    assert run_result["amplitude_range_capped"] is True
+
+
+@pytest.mark.parametrize(
+    ("amplitude_range", "match"),
+    [
+        pytest.param(np.array([0.0, 0.1, 1.4]), "must lie in", id="above-ceiling"),
+        pytest.param(np.array([0.0, 0.1]), "at least", id="too-few-points"),
+        pytest.param(np.array([0.0, 0.2, 0.1, 0.3]), "increasing", id="not-monotonic"),
+        pytest.param(
+            np.array([0.0, 0.1, 0.3, 0.4, 0.5]), "evenly spaced", id="not-uniform"
+        ),
+    ],
+)
+def test_amplitude_sweep_rejects_an_unusable_amplitude_range(
+    stub_experiment_factory: Callable[..., Any],
+    amplitude_range: np.ndarray,
+    match: str,
+) -> None:
+    """Given an unusable range, when run, then it raises before measuring."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match=match):
+        run_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            amplitude_range=amplitude_range,
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+@pytest.mark.parametrize("duration", [0.0, -8.0, 61.0])
+def test_amplitude_sweep_rejects_an_unusable_duration(
+    stub_experiment_factory: Callable[..., Any],
+    duration: float,
+) -> None:
+    """Given an unusable duration, when run, then it raises before measuring."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match="`duration`"):
+        run_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            duration=duration,
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_amplitude_sweep_does_not_store_below_the_fit_threshold(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a threshold the fit cannot clear, when run, then nothing is stored."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    target = f"{QUBIT}-fh"
+    seeded = exp.ctx.stored_rabi_params[target]
+
+    result = obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        amplitude_range=np.linspace(0.0, 0.4, 51),
+        fit_threshold=1.5,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    assert not np.isfinite(result.data[target]["rabi_param"].frequency)
+    assert exp.ctx.stored_rabi_params[target] is seeded
+
+
+def test_amplitude_sweep_measures_two_targets_one_after_another(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two qubits, when run, then each is swept and stored on its own."""
+    true_amplitudes = {QUBIT: 0.4, QUBIT_2: 0.5}
+    exp = _amplitude_sweep_stub(
+        stub_experiment_factory,
+        qubits=[QUBIT, QUBIT_2],
+        true_amplitudes=true_amplitudes,
+    )
+
+    result = obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        amplitude_range=np.linspace(0.0, 0.4, 51),
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    targets = [f"{QUBIT}-fh", f"{QUBIT_2}-fh"]
+    figures = dict(result.figures or {})
+    assert list(result.data) == targets
+    assert len(exp.sweep_calls) == 2
+    for target in targets:
+        qubit = target.split("-")[0]
+        payload = result.data[target]
+        assert "error" not in payload
+        assert payload["rabi_rate_per_amplitude"] == pytest.approx(
+            exp.rabi_rates[qubit], rel=1e-4
+        )
+        assert f"{target}:rabi" in figures
+        assert f"{target}:residuals" in figures
+        assert f"{target}:iq" in figures
+
+
+def test_amplitude_chevron_run_visits_every_grid_point_inside_the_ladder(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a detuning x amplitude grid, when run, then each point keeps the ladder."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    detunings = np.linspace(-0.01, 0.01, 5)
+    amplitudes = np.linspace(0.0, 0.4, 7)
+
+    run_result = run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        detuning_range=detunings,
+        amplitude_range=amplitudes,
+        frequency=7.5,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot_pulse_schedule=False,
+    )
+
+    call = exp.sweep_calls[-1]
+    # The carrier is set once; the detuning rides on the waveform.
+    assert call["frequencies"] == {f"{QUBIT}-fh": 7.5}
+    assert len(call["schedules"]) == detunings.size * amplitudes.size
+    assert run_result["raw"].size == detunings.size * amplitudes.size
+    lengths = set()
+    for schedule in call["schedules"]:
+        assert set(schedule.labels) == {QUBIT, f"{QUBIT}-ef", f"{QUBIT}-fh"}
+        lengths.add(len(schedule.get_sampled_sequences()[f"{QUBIT}-fh"]))
+    # A fixed duration is the point: every grid point costs the same time.
+    assert len(lengths) == 1
+
+
+def test_amplitude_chevron_run_is_detuning_major_and_scales_the_amplitude(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given the flattened grid, when run, then it reshapes back to (detuning, amplitude)."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    detunings = np.linspace(-0.01, 0.01, 5)
+    amplitudes = np.linspace(0.1, 0.4, 4)
+
+    run_obtain = run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        detuning_range=detunings,
+        amplitude_range=amplitudes,
+        frequency=7.5,
+        plot_pulse_schedule=False,
+    )
+
+    schedules = exp.sweep_calls[-1]["schedules"]
+    peaks = np.array(
+        [
+            float(np.abs(s.get_sampled_sequences()[f"{QUBIT}-fh"]).max())
+            for s in schedules
+        ]
+    ).reshape(detunings.size, amplitudes.size)
+    # Detuning-major flattening: every row must repeat the same amplitude ramp.
+    for row in peaks:
+        np.testing.assert_allclose(row, amplitudes, atol=1e-12)
+    assert run_obtain["detuning_range"].size == detunings.size
+    assert run_obtain["amplitude_range"].size == amplitudes.size
+
+
+def test_amplitude_chevron_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when run, then the payload records the defaults."""
+    module = _module("chevron_pattern_by_amplitude_sweep_based_on_ground")
+    exp = _amplitude_sweep_stub(
+        stub_experiment_factory, transition="ge", calibrated_qubits=[]
+    )
+
+    run_result = run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="ge",
+        plot_pulse_schedule=False,
+    )
+
+    assert run_result["duration"] == module.DEFAULT_DURATION
+    assert run_result["ramptime"] == _core.DEFAULT_RABI_RAMPTIME
+    assert run_result["effective_duration"] == pytest.approx(
+        1 / constants.DEFAULT_RABI_FREQUENCY
+    )
+    assert run_result["amplitude_range"].size == module.DEFAULT_N_AMPLITUDES
+    assert run_result["detuning_range"].size == module.DEFAULT_N_DETUNINGS
+    assert run_result["amplitude_range_source"] == "nominal_rabi_rate"
+    # One nominal turn at the configured amplitude, so A_max is A_cfg itself.
+    assert run_result["amplitude_range"][-1] == pytest.approx(
+        module.DEFAULT_N_TURNS * CONTROL_AMPLITUDE
+    )
+    # Half span = factor * max(1/T_eff, kappa * A_max); both are 1/T_eff here.
+    assert run_result["detuning_range"][-1] == pytest.approx(
+        module.DEFAULT_DETUNING_SPAN_FACTOR / run_result["effective_duration"]
+    )
+    assert run_result["detuning_range"][0] == pytest.approx(
+        -run_result["detuning_range"][-1]
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        pytest.param(
+            {"amplitude_range": np.array([0.0, 0.1, 1.4])},
+            "must lie in",
+            id="amplitude-above-ceiling",
+        ),
+        pytest.param(
+            {"amplitude_range": np.array([0.0, 0.1, 0.3, 0.4, 0.5])},
+            "evenly spaced",
+            id="amplitude-not-uniform",
+        ),
+        pytest.param(
+            {"detuning_range": np.array([-0.01, 0.0, 0.004, 0.01])},
+            "evenly spaced",
+            id="detuning-not-uniform",
+        ),
+        pytest.param(
+            {"detuning_range": np.array([0.0, -0.01, 0.01, 0.02])},
+            "increasing",
+            id="detuning-not-monotonic",
+        ),
+        pytest.param({"duration": 61.0}, "`duration`", id="duration-off-grid"),
+    ],
+)
+def test_amplitude_chevron_rejects_unusable_axes(
+    stub_experiment_factory: Callable[..., Any],
+    kwargs: dict[str, Any],
+    match: str,
+) -> None:
+    """Given an unusable axis, when run, then it raises before measuring."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match=match):
+        run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            frequency=7.5,
+            plot_pulse_schedule=False,
+            **kwargs,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_amplitude_chevron_finds_the_carrier_on_a_symmetric_stub_response(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a response even in the detuning, when run, then the carrier is found."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    target = f"{QUBIT}-fh"
+
+    result = chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        detuning_range=np.linspace(-0.01, 0.01, 21),
+        amplitude_range=np.linspace(0.0, 0.4, 9),
+        frequencies=7.5,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    # The stub integrates the real part of a detuned envelope, so its area is an
+    # even function of the detuning. It is not a physical chevron, but it is
+    # genuinely symmetric about the carrier, which is what the estimator claims to
+    # find -- and it exercises the flattening, the reshape and the projection.
+    payload = result.data[target]
+    assert "error" not in payload
+    assert payload["raw"].size == 21 * 9
+    assert payload["raw_grid"].shape == (21, 9)
+    assert payload["resonant_frequency"] == pytest.approx(7.5, abs=2e-4)
+    assert payload["chevron_data"].shape == (9, 21)
+
+
+def test_amplitude_chevron_measures_two_targets_one_after_another(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two qubits, when run, then each gets its own grid and nothing is stored."""
+    exp = _amplitude_sweep_stub(
+        stub_experiment_factory,
+        qubits=[QUBIT, QUBIT_2],
+    )
+    seeded = dict(exp.ctx.stored_rabi_params)
+
+    result = chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        detuning_range=np.linspace(-0.01, 0.01, 5),
+        amplitude_range=np.linspace(0.0, 0.4, 5),
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    targets = [f"{QUBIT}-fh", f"{QUBIT_2}-fh"]
+    assert list(result.data) == targets
+    assert len(exp.sweep_calls) == 2
+    # The transition frequency belongs to the registered target, so nothing is saved.
+    assert exp.ctx.stored_rabi_params == seeded
+    assert exp.calib_note.rabi == {}

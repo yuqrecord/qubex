@@ -12,8 +12,10 @@ ENTRY_POINTS = (
     "calibrate_hpi_pulse_based_on_ground",
     "calibrate_pi_pulse_based_on_ground",
     "chevron_pattern_based_on_ground",
+    "chevron_pattern_by_amplitude_sweep_based_on_ground",
     "measure_dispersive_shift_extended",
     "obtain_rabi_params_based_on_ground",
+    "obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "ramsey_experiment_based_on_ground",
 )
 
