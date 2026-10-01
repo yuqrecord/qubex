@@ -10,9 +10,11 @@ from .experiment.calibrate_1q_transition_based_on_ground import (
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
     chevron_pattern_based_on_ground,
+    chevron_pattern_by_amplitude_sweep_based_on_ground,
     measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
     ramsey_experiment_based_on_ground,
+    obtain_rabi_params_by_amplitude_sweep_based_on_ground,
 )
 from .experiment.chevron_matched_transform import (
     analyze_chevron_matched_transform,
@@ -160,6 +162,7 @@ __all__ = [
     "characterize_coarse_readout_parameters",
     "characterize_readout_parameters",
     "chevron_pattern_based_on_ground",
+    "chevron_pattern_by_amplitude_sweep_based_on_ground",
     "ckp_measurement_v2",
     "cpmg_noise_spectroscopy",
     "cr_crosstalk_hamiltonian_tomography",
@@ -211,6 +214,7 @@ __all__ = [
     "obtain_anharmonicity_with_cr",
     "obtain_gf_rabi_params",
     "obtain_rabi_params_based_on_ground",
+    "obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "parity_oscillation",
     "partial_transpose",
     "pb_experiment_1q",
