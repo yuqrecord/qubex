@@ -9,6 +9,7 @@ from .calibrate_1q_transition_based_on_ground import (
     chevron_pattern_based_on_ground,
     measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
+    obtain_rabi_params_by_amplitude_sweep_based_on_ground,
 )
 from .chevron_matched_transform import (
     analyze_chevron_matched_transform,
@@ -173,6 +174,7 @@ __all__ = [
     "obtain_anharmonicity_with_cr",
     "obtain_gf_rabi_params",
     "obtain_rabi_params_based_on_ground",
+    "obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "parity_oscillation",
     "partial_transpose",
     "pb_experiment_1q",

@@ -13,6 +13,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
     analyze_measure_dispersive_shift_extended,
+    analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
 from qubex.pulse import Drag, FlatTop, RampType
@@ -1146,3 +1147,165 @@ def test_readout_scan_requires_the_electrical_delay_to_be_present() -> None:
 
     with pytest.raises(KeyError, match="electrical_delay"):
         analyze_measure_dispersive_shift_extended(run_result=run_result)
+
+
+#: Rabi rate per unit drive amplitude of the synthetic sweeps, in GHz.
+SWEEP_RATE_PER_AMPLITUDE = 0.0625
+
+#: Effective duration of the synthetic sweeps, in ns.
+SWEEP_EFFECTIVE_DURATION = 80.0
+
+#: Configured control amplitude of the synthetic sweeps.
+SWEEP_CONTROL_AMPLITUDE = 0.2
+
+# IQ geometry of the synthetic arc, chosen so the normalization is not an identity.
+SWEEP_ANGLE = 0.7
+SWEEP_ARC_AMPLITUDE = 0.8
+SWEEP_ARC_OFFSET = 0.1
+SWEEP_ARC_DISTANCE = 0.3
+
+
+def _sweep_iq(z: np.ndarray | float) -> Any:
+    """Place a normalized signal onto the synthetic IQ arc."""
+    rotated = SWEEP_ARC_DISTANCE + 1j * (
+        np.asarray(z) * SWEEP_ARC_AMPLITUDE + SWEEP_ARC_OFFSET
+    )
+    return np.asarray(rotated * np.exp(1j * SWEEP_ANGLE), dtype=np.complex128)
+
+
+def _amplitude_sweep_run_result(
+    *,
+    amplitude_max: float = 0.32,
+    n_points: int = 51,
+    rate_per_amplitude: float = SWEEP_RATE_PER_AMPLITUDE,
+    contrast: float = 1.0,
+) -> dict[str, Any]:
+    """Return a run payload carrying an ideal fixed-duration amplitude sweep."""
+    amplitudes = np.linspace(0.0, amplitude_max, n_points)
+    turns_per_amplitude = rate_per_amplitude * SWEEP_EFFECTIVE_DURATION
+    normalized = contrast * np.cos(2 * np.pi * turns_per_amplitude * amplitudes)
+    return {
+        "qubit": QUBIT,
+        "transition": "fh",
+        "target": f"{QUBIT}-fh",
+        "lower_labels": (QUBIT, f"{QUBIT}-ef"),
+        "amplitude_range": amplitudes,
+        "duration": 60.0,
+        "ramptime": 20.0,
+        "played_duration": 100.0,
+        "effective_duration": SWEEP_EFFECTIVE_DURATION,
+        "control_amplitude": SWEEP_CONTROL_AMPLITUDE,
+        "amplitude_range_source": "nominal_rabi_rate",
+        "amplitude_range_capped": False,
+        "reference_point": complex(_sweep_iq(1.0)),
+        "raw": _sweep_iq(normalized),
+    }
+
+
+def test_amplitude_sweep_recovers_the_rate_per_unit_amplitude() -> None:
+    """Given an ideal amplitude sweep, when analyzed, then the slope is recovered."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result()
+    )
+
+    assert payload["rabi_rate_per_amplitude"] == pytest.approx(
+        SWEEP_RATE_PER_AMPLITUDE, rel=1e-6
+    )
+    assert payload["turns_per_amplitude"] == pytest.approx(
+        SWEEP_RATE_PER_AMPLITUDE * SWEEP_EFFECTIVE_DURATION, rel=1e-6
+    )
+    assert payload["r2"] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_amplitude_sweep_reports_the_rate_at_the_configured_amplitude() -> None:
+    """Given a fitted slope, when analyzed, then RabiParam holds the rate at A_cfg."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result()
+    )
+
+    # `PulseService.calc_control_amplitude` divides `frequency` by the configured
+    # control amplitude, so this is the only self-consistent thing to store.
+    assert payload["rabi_param"].frequency == pytest.approx(
+        SWEEP_RATE_PER_AMPLITUDE * SWEEP_CONTROL_AMPLITUDE, rel=1e-6
+    )
+
+
+@pytest.mark.parametrize("amplitude_max", [0.2, 0.32, 0.5])
+def test_amplitude_sweep_rate_is_independent_of_the_swept_range(
+    amplitude_max: float,
+) -> None:
+    """Given any swept range, when analyzed, then the stored rate is unchanged."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result(amplitude_max=amplitude_max)
+    )
+
+    # The fit measures a slope, so where the sweep stops cannot move the answer.
+    assert payload["rabi_param"].frequency == pytest.approx(
+        SWEEP_RATE_PER_AMPLITUDE * SWEEP_CONTROL_AMPLITUDE, rel=1e-6
+    )
+
+
+def test_amplitude_sweep_reports_the_amplitudes_of_a_pi_and_a_half_pi() -> None:
+    """Given a fitted sweep, when analyzed, then the pi amplitudes follow from it."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result()
+    )
+
+    turns = payload["turns_per_amplitude"]
+    assert payload["pi_amplitude"] * turns == pytest.approx(0.5, rel=1e-9)
+    assert payload["hpi_amplitude"] * turns == pytest.approx(0.25, rel=1e-9)
+
+
+def test_amplitude_sweep_reports_the_coverage_of_the_sweep() -> None:
+    """Given a fitted sweep, when analyzed, then its turns and sampling are reported."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result(amplitude_max=0.32, n_points=51)
+    )
+
+    expected_turns = SWEEP_RATE_PER_AMPLITUDE * SWEEP_EFFECTIVE_DURATION * 0.32
+    assert payload["swept_turns"] == pytest.approx(expected_turns, rel=1e-6)
+    assert payload["points_per_turn"] == pytest.approx(51 / expected_turns, rel=1e-6)
+
+
+@pytest.mark.parametrize("contrast", [1.0, 0.6, 0.4])
+def test_amplitude_sweep_measures_the_ladder_contrast_against_the_reference(
+    contrast: float,
+) -> None:
+    """Given a lossy ladder, when analyzed, then the reference point rises above one."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result(contrast=contrast)
+    )
+
+    # The arc shrinks by `contrast` while the |g> reference does not move, so on
+    # the normalized axis the reference sits at 1 / contrast.
+    assert payload["reference_signal"] == pytest.approx(1 / contrast, rel=1e-6)
+
+
+def test_amplitude_sweep_does_not_use_the_zero_amplitude_point_as_the_contrast() -> (
+    None
+):
+    """Given a lossy ladder, when analyzed, then the swept signal still normalizes to one."""
+    ideal = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result()
+    )
+    degraded = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result(contrast=0.6)
+    )
+
+    # This is why the signal at zero amplitude is not the diagnostic: the fit
+    # divides by its own arc amplitude, so both normalize to 1 at zero.
+    assert ideal["normalized"][0] == pytest.approx(1.0, abs=1e-6)
+    assert degraded["normalized"][0] == pytest.approx(1.0, abs=1e-6)
+    assert degraded["fit"]["amplitude"] < ideal["fit"]["amplitude"]
+    assert degraded["reference_signal"] > ideal["reference_signal"]
+
+
+def test_amplitude_sweep_returns_nan_parameters_below_the_fit_threshold() -> None:
+    """Given a threshold above the fit quality, when analyzed, then params are NaN."""
+    payload = analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground(
+        run_result=_amplitude_sweep_run_result(),
+        fit_threshold=1.5,
+    )
+
+    assert not np.isfinite(payload["rabi_param"].frequency)
+    assert not np.isfinite(payload["rabi_rate_per_amplitude"])

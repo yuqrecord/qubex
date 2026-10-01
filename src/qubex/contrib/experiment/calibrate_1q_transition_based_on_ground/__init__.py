@@ -20,6 +20,9 @@ against the ground state at every rung of the ladder.
 
 - `obtain_rabi_params_based_on_ground`: Rabi oscillation, referenced to a
   measured |g> point, stored under the transition label.
+- `obtain_rabi_params_by_amplitude_sweep_based_on_ground`: the same parameters
+  from a fixed short drive whose amplitude is swept, for a transition whose
+  coherence is too short for the duration sweep to resolve.
 - `chevron_pattern_based_on_ground`: `detuning x duration` grid and the
   resonance it implies.
 - `calibrate_hpi_pulse_based_on_ground`: half-pi amplitude, no correction.
@@ -93,6 +96,8 @@ Bootstrap order for a new rung::
     # calibrate the pi pulse of every lower rung first
     chevron_pattern_based_on_ground(exp, transition="fh")     # -> resonance
     obtain_rabi_params_based_on_ground(exp, transition="fh")  # -> RabiParam
+    # or, when the coherence is too short for the duration sweep:
+    #   obtain_rabi_params_by_amplitude_sweep_based_on_ground(exp, transition="fh")
     calibrate_hpi_pulse_based_on_ground(exp, transition="fh")
     # then amplify: larger n_rotations over a narrower sweep
     calibrate_hpi_pulse_based_on_ground(exp, transition="fh", n_rotations=4)
@@ -200,6 +205,13 @@ from .obtain_rabi_params_based_on_ground import (
     plot_obtain_rabi_params_based_on_ground,
     run_obtain_rabi_params_based_on_ground,
 )
+from .obtain_rabi_params_by_amplitude_sweep_based_on_ground import (
+    analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
+    display_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
+    obtain_rabi_params_by_amplitude_sweep_based_on_ground,
+    plot_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
+    run_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
+)
 
 __all__ = [
     "analyze_calibrate_drag_hpi_pulse_based_on_ground",
@@ -209,6 +221,7 @@ __all__ = [
     "analyze_chevron_pattern_based_on_ground",
     "analyze_measure_dispersive_shift_extended",
     "analyze_obtain_rabi_params_based_on_ground",
+    "analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "apply_electrical_delay",
     "calibrate_drag_hpi_pulse_based_on_ground",
     "calibrate_drag_pi_pulse_based_on_ground",
@@ -222,8 +235,10 @@ __all__ = [
     "display_chevron_pattern_based_on_ground",
     "display_measure_dispersive_shift_extended",
     "display_obtain_rabi_params_based_on_ground",
+    "display_obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "measure_dispersive_shift_extended",
     "obtain_rabi_params_based_on_ground",
+    "obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "plot_calibrate_drag_hpi_pulse_based_on_ground",
     "plot_calibrate_drag_pi_pulse_based_on_ground",
     "plot_calibrate_hpi_pulse_based_on_ground",
@@ -231,6 +246,7 @@ __all__ = [
     "plot_chevron_pattern_based_on_ground",
     "plot_measure_dispersive_shift_extended",
     "plot_obtain_rabi_params_based_on_ground",
+    "plot_obtain_rabi_params_by_amplitude_sweep_based_on_ground",
     "run_calibrate_drag_hpi_pulse_based_on_ground",
     "run_calibrate_drag_pi_pulse_based_on_ground",
     "run_calibrate_hpi_pulse_based_on_ground",
@@ -238,4 +254,5 @@ __all__ = [
     "run_chevron_pattern_based_on_ground",
     "run_measure_dispersive_shift_extended",
     "run_obtain_rabi_params_based_on_ground",
+    "run_obtain_rabi_params_by_amplitude_sweep_based_on_ground",
 ]
