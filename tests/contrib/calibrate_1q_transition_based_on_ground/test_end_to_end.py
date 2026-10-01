@@ -20,10 +20,12 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     calibrate_hpi_pulse_based_on_ground,
     calibrate_pi_pulse_based_on_ground,
     chevron_pattern_based_on_ground,
+    chevron_pattern_by_amplitude_sweep_based_on_ground,
     measure_dispersive_shift_extended,
     obtain_rabi_params_based_on_ground,
     obtain_rabi_params_by_amplitude_sweep_based_on_ground,
     run_chevron_pattern_based_on_ground,
+    run_chevron_pattern_by_amplitude_sweep_based_on_ground,
     run_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
@@ -2260,3 +2262,209 @@ def test_amplitude_sweep_measures_two_targets_one_after_another(
         assert f"{target}:rabi" in figures
         assert f"{target}:residuals" in figures
         assert f"{target}:iq" in figures
+
+
+def test_amplitude_chevron_run_visits_every_grid_point_inside_the_ladder(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a detuning x amplitude grid, when run, then each point keeps the ladder."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    detunings = np.linspace(-0.01, 0.01, 5)
+    amplitudes = np.linspace(0.0, 0.4, 7)
+
+    run_result = run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        detuning_range=detunings,
+        amplitude_range=amplitudes,
+        frequency=7.5,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot_pulse_schedule=False,
+    )
+
+    call = exp.sweep_calls[-1]
+    # The carrier is set once; the detuning rides on the waveform.
+    assert call["frequencies"] == {f"{QUBIT}-fh": 7.5}
+    assert len(call["schedules"]) == detunings.size * amplitudes.size
+    assert run_result["raw"].size == detunings.size * amplitudes.size
+    lengths = set()
+    for schedule in call["schedules"]:
+        assert set(schedule.labels) == {QUBIT, f"{QUBIT}-ef", f"{QUBIT}-fh"}
+        lengths.add(len(schedule.get_sampled_sequences()[f"{QUBIT}-fh"]))
+    # A fixed duration is the point: every grid point costs the same time.
+    assert len(lengths) == 1
+
+
+def test_amplitude_chevron_run_is_detuning_major_and_scales_the_amplitude(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given the flattened grid, when run, then it reshapes back to (detuning, amplitude)."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    detunings = np.linspace(-0.01, 0.01, 5)
+    amplitudes = np.linspace(0.1, 0.4, 4)
+
+    run_obtain = run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        detuning_range=detunings,
+        amplitude_range=amplitudes,
+        frequency=7.5,
+        plot_pulse_schedule=False,
+    )
+
+    schedules = exp.sweep_calls[-1]["schedules"]
+    peaks = np.array(
+        [
+            float(np.abs(s.get_sampled_sequences()[f"{QUBIT}-fh"]).max())
+            for s in schedules
+        ]
+    ).reshape(detunings.size, amplitudes.size)
+    # Detuning-major flattening: every row must repeat the same amplitude ramp.
+    for row in peaks:
+        np.testing.assert_allclose(row, amplitudes, atol=1e-12)
+    assert run_obtain["detuning_range"].size == detunings.size
+    assert run_obtain["amplitude_range"].size == amplitudes.size
+
+
+def test_amplitude_chevron_defaults_are_resolved_when_every_argument_is_omitted(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given only a transition, when run, then the payload records the defaults."""
+    module = _module("chevron_pattern_by_amplitude_sweep_based_on_ground")
+    exp = _amplitude_sweep_stub(
+        stub_experiment_factory, transition="ge", calibrated_qubits=[]
+    )
+
+    run_result = run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="ge",
+        plot_pulse_schedule=False,
+    )
+
+    assert run_result["duration"] == module.DEFAULT_DURATION
+    assert run_result["ramptime"] == _core.DEFAULT_RABI_RAMPTIME
+    assert run_result["effective_duration"] == pytest.approx(
+        1 / constants.DEFAULT_RABI_FREQUENCY
+    )
+    assert run_result["amplitude_range"].size == module.DEFAULT_N_AMPLITUDES
+    assert run_result["detuning_range"].size == module.DEFAULT_N_DETUNINGS
+    assert run_result["amplitude_range_source"] == "nominal_rabi_rate"
+    # One nominal turn at the configured amplitude, so A_max is A_cfg itself.
+    assert run_result["amplitude_range"][-1] == pytest.approx(
+        module.DEFAULT_N_TURNS * CONTROL_AMPLITUDE
+    )
+    # Half span = factor * max(1/T_eff, kappa * A_max); both are 1/T_eff here.
+    assert run_result["detuning_range"][-1] == pytest.approx(
+        module.DEFAULT_DETUNING_SPAN_FACTOR / run_result["effective_duration"]
+    )
+    assert run_result["detuning_range"][0] == pytest.approx(
+        -run_result["detuning_range"][-1]
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        pytest.param(
+            {"amplitude_range": np.array([0.0, 0.1, 1.4])},
+            "must lie in",
+            id="amplitude-above-ceiling",
+        ),
+        pytest.param(
+            {"amplitude_range": np.array([0.0, 0.1, 0.3, 0.4, 0.5])},
+            "evenly spaced",
+            id="amplitude-not-uniform",
+        ),
+        pytest.param(
+            {"detuning_range": np.array([-0.01, 0.0, 0.004, 0.01])},
+            "evenly spaced",
+            id="detuning-not-uniform",
+        ),
+        pytest.param(
+            {"detuning_range": np.array([0.0, -0.01, 0.01, 0.02])},
+            "increasing",
+            id="detuning-not-monotonic",
+        ),
+        pytest.param({"duration": 61.0}, "`duration`", id="duration-off-grid"),
+    ],
+)
+def test_amplitude_chevron_rejects_unusable_axes(
+    stub_experiment_factory: Callable[..., Any],
+    kwargs: dict[str, Any],
+    match: str,
+) -> None:
+    """Given an unusable axis, when run, then it raises before measuring."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+
+    with pytest.raises(ValueError, match=match):
+        run_chevron_pattern_by_amplitude_sweep_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            frequency=7.5,
+            plot_pulse_schedule=False,
+            **kwargs,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_amplitude_chevron_finds_the_carrier_on_a_symmetric_stub_response(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given a response even in the detuning, when run, then the carrier is found."""
+    exp = _amplitude_sweep_stub(stub_experiment_factory)
+    target = f"{QUBIT}-fh"
+
+    result = chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        detuning_range=np.linspace(-0.01, 0.01, 21),
+        amplitude_range=np.linspace(0.0, 0.4, 9),
+        frequencies=7.5,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    # The stub integrates the real part of a detuned envelope, so its area is an
+    # even function of the detuning. It is not a physical chevron, but it is
+    # genuinely symmetric about the carrier, which is what the estimator claims to
+    # find -- and it exercises the flattening, the reshape and the projection.
+    payload = result.data[target]
+    assert "error" not in payload
+    assert payload["raw"].size == 21 * 9
+    assert payload["raw_grid"].shape == (21, 9)
+    assert payload["resonant_frequency"] == pytest.approx(7.5, abs=2e-4)
+    assert payload["chevron_data"].shape == (9, 21)
+
+
+def test_amplitude_chevron_measures_two_targets_one_after_another(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given two qubits, when run, then each gets its own grid and nothing is stored."""
+    exp = _amplitude_sweep_stub(
+        stub_experiment_factory,
+        qubits=[QUBIT, QUBIT_2],
+    )
+    seeded = dict(exp.ctx.stored_rabi_params)
+
+    result = chevron_pattern_by_amplitude_sweep_based_on_ground(
+        exp,
+        targets=[QUBIT, QUBIT_2],
+        transition="fh",
+        detuning_range=np.linspace(-0.01, 0.01, 5),
+        amplitude_range=np.linspace(0.0, 0.4, 5),
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    targets = [f"{QUBIT}-fh", f"{QUBIT_2}-fh"]
+    assert list(result.data) == targets
+    assert len(exp.sweep_calls) == 2
+    # The transition frequency belongs to the registered target, so nothing is saved.
+    assert exp.ctx.stored_rabi_params == seeded
+    assert exp.calib_note.rabi == {}

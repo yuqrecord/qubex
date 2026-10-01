@@ -12,10 +12,13 @@ import pytest
 from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     _core,
     analyze_chevron_pattern_based_on_ground,
+    analyze_chevron_pattern_by_amplitude_sweep_based_on_ground,
     analyze_measure_dispersive_shift_extended,
     analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
+    display_chevron_pattern_by_amplitude_sweep_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
+from qubex.experiment.models import Result
 from qubex.pulse import Drag, FlatTop, RampType
 from qubex.system.transition import (
     LEVEL_NAMES,
@@ -1309,3 +1312,285 @@ def test_amplitude_sweep_returns_nan_parameters_below_the_fit_threshold() -> Non
 
     assert not np.isfinite(payload["rabi_param"].frequency)
     assert not np.isfinite(payload["rabi_rate_per_amplitude"])
+
+
+#: Rabi rate per unit amplitude of the synthetic chevron grids, in GHz.
+CHEVRON_RATE_PER_AMPLITUDE = 0.0625
+
+#: Effective duration of the synthetic chevron grids, in ns.
+CHEVRON_EFFECTIVE_DURATION = 80.0
+
+#: Carrier of the synthetic chevron grids, in GHz.
+CHEVRON_CARRIER = 7.5
+
+
+def _detuned_signal(
+    amplitudes: np.ndarray,
+    detunings: np.ndarray,
+    *,
+    rate_per_amplitude: float = CHEVRON_RATE_PER_AMPLITUDE,
+    duration: float = CHEVRON_EFFECTIVE_DURATION,
+) -> np.ndarray:
+    """Return the exact two-level response on a `detuning x amplitude` grid."""
+    omega = rate_per_amplitude * amplitudes[None, :]
+    delta = detunings[:, None]
+    generalized = np.sqrt(omega**2 + delta**2)
+    contrast = np.divide(
+        omega**2,
+        omega**2 + delta**2,
+        out=np.zeros_like(omega * delta),
+        where=(omega**2 + delta**2) > 0,
+    )
+    return 1 - 2 * contrast * np.sin(np.pi * duration * generalized) ** 2
+
+
+def _chevron_sweep_run_result(
+    *,
+    resonance_offset: float = 0.0,
+    amplitude_bounds: tuple[float, float] = (0.0, 0.16),
+    n_amplitudes: int = 51,
+    detuning_half_span: float = 25e-3,
+    n_detunings: int = 51,
+    noise: float = 0.0,
+    flat: bool = False,
+    seed: int = 11,
+) -> dict[str, Any]:
+    """Return a run payload carrying a synthetic amplitude-domain chevron."""
+    rng = np.random.default_rng(seed)
+    detunings = np.linspace(-detuning_half_span, detuning_half_span, n_detunings)
+    amplitudes = np.linspace(*amplitude_bounds, n_amplitudes)
+    if flat:
+        signal = np.zeros((n_detunings, n_amplitudes))
+    else:
+        signal = _detuned_signal(amplitudes, detunings - resonance_offset)
+    if noise:
+        signal = signal + rng.normal(0, noise, signal.shape)
+    # Place the scalar signal on an IQ arc, as `_project_grid` expects to undo.
+    raw = (0.3 + 1j * (0.8 * signal + 0.1)) * np.exp(1j * 0.7)
+    return {
+        "qubit": QUBIT,
+        "transition": "fh",
+        "target": f"{QUBIT}-fh",
+        "lower_labels": (QUBIT, f"{QUBIT}-ef"),
+        "detuning_range": detunings,
+        "amplitude_range": amplitudes,
+        "control_frequencies": CHEVRON_CARRIER + detunings,
+        "frequency": CHEVRON_CARRIER,
+        "duration": 60.0,
+        "ramptime": 20.0,
+        "played_duration": 100.0,
+        "effective_duration": CHEVRON_EFFECTIVE_DURATION,
+        "control_amplitude": 0.2,
+        "amplitude_range_source": "nominal_rabi_rate",
+        "amplitude_range_capped": False,
+        "detuning_range_source": "nominal_rabi_rate",
+        "raw": np.asarray(raw, dtype=np.complex128).ravel(),
+    }
+
+
+@pytest.mark.parametrize("offset_mhz", [0.0, 3.7, -5.2])
+def test_amplitude_chevron_locates_the_resonance_by_symmetry(
+    offset_mhz: float,
+) -> None:
+    """Given a shifted resonance, when analyzed, then the symmetry axis finds it."""
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result(resonance_offset=offset_mhz * 1e-3)
+    )
+
+    assert payload["resonant_frequency"] == pytest.approx(
+        CHEVRON_CARRIER + offset_mhz * 1e-3, abs=1e-4
+    )
+    assert payload["detuning_from_carrier"] == pytest.approx(
+        offset_mhz * 1e-3, abs=1e-4
+    )
+
+
+@pytest.mark.parametrize("offset_mhz", [0.0, 3.7, -5.2])
+def test_amplitude_chevron_survives_a_window_where_row_power_misleads(
+    offset_mhz: float,
+) -> None:
+    """Given a narrow amplitude window, when analyzed, then the centre is still right."""
+    # Over [0.18, 0.22] the per-row oscillation power peaks near +-8.5 MHz, 14 times
+    # its value on resonance, so a peak-fitting estimator would be badly wrong here.
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result(
+            resonance_offset=offset_mhz * 1e-3,
+            amplitude_bounds=(0.18, 0.22),
+        )
+    )
+
+    assert payload["resonant_frequency"] == pytest.approx(
+        CHEVRON_CARRIER + offset_mhz * 1e-3, abs=1e-3
+    )
+    # Pin the trap itself, so the reason this test exists stays visible: the row
+    # power at the true resonance is far below its maximum.
+    row_power = payload["row_power"]
+    detunings = payload["detuning_range"]
+    on_resonance = int(np.argmin(np.abs(detunings - offset_mhz * 1e-3)))
+    assert row_power.max() > 5 * row_power[on_resonance]
+
+
+def test_amplitude_chevron_survives_a_grid_containing_a_full_turn() -> None:
+    """Given a grid spanning a whole turn, when analyzed, then symmetry still holds."""
+    # kappa * A * T_eff == 1 at A = 0.2: the signal returns to |g> on resonance, which
+    # is where a per-amplitude lineshape fit mislocates the centre by ~12 MHz.
+    one_turn = 1.0 / (CHEVRON_RATE_PER_AMPLITUDE * CHEVRON_EFFECTIVE_DURATION)
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result(
+            resonance_offset=3.7e-3,
+            amplitude_bounds=(one_turn / 2, one_turn * 1.5),
+        )
+    )
+
+    assert payload["resonant_frequency"] == pytest.approx(
+        CHEVRON_CARRIER + 3.7e-3, abs=1e-3
+    )
+
+
+def test_amplitude_chevron_handles_a_single_amplitude_column() -> None:
+    """Given one amplitude, when analyzed, then the row-mean removal is skipped."""
+    # Subtracting a row's mean over a single amplitude would zero the whole field.
+    one_turn = 1.0 / (CHEVRON_RATE_PER_AMPLITUDE * CHEVRON_EFFECTIVE_DURATION)
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result(
+            resonance_offset=3.7e-3,
+            amplitude_bounds=(one_turn, one_turn),
+            n_amplitudes=1,
+        )
+    )
+
+    assert payload["resonant_frequency"] == pytest.approx(
+        CHEVRON_CARRIER + 3.7e-3, abs=1e-3
+    )
+    # Too few amplitudes for a Rabi fit, so the slope is honestly not reported.
+    assert not np.isfinite(payload["rabi_rate_per_amplitude"])
+
+
+def test_amplitude_chevron_tolerates_noise() -> None:
+    """Given a noisy grid, when analyzed, then the centre is still close."""
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result(resonance_offset=3.7e-3, noise=0.05)
+    )
+
+    assert payload["resonant_frequency"] == pytest.approx(
+        CHEVRON_CARRIER + 3.7e-3, abs=5e-4
+    )
+    assert payload["resonant_frequency_err"] > 0
+
+
+def test_amplitude_chevron_rejects_a_grid_with_no_axis_of_symmetry() -> None:
+    """Given a featureless grid, when analyzed, then it refuses to name a resonance."""
+    with pytest.raises(ValueError, match="no line of symmetry"):
+        analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+            run_result=_chevron_sweep_run_result(flat=True, noise=0.05)
+        )
+
+
+def test_amplitude_chevron_rejects_a_resonance_outside_the_searchable_range() -> None:
+    """Given a resonance near the edge, when analyzed, then it asks for a re-centre."""
+    # The reflection needs a fixed number of offsets on both sides, so only the inner
+    # part of the swept range can hold the centre.
+    with pytest.raises(ValueError, match="edge of the searchable"):
+        analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+            run_result=_chevron_sweep_run_result(resonance_offset=23e-3)
+        )
+
+
+def test_amplitude_chevron_recovers_the_rate_from_the_resonant_row() -> None:
+    """Given a located resonance, when analyzed, then its row gives the Rabi slope."""
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result()
+    )
+
+    # Only the delta ~ 0 row is a true cosine in amplitude, which is why the slope is
+    # read off the row nearest the located resonance.
+    assert payload["rabi_rate_per_amplitude"] == pytest.approx(
+        CHEVRON_RATE_PER_AMPLITUDE, rel=5e-3
+    )
+
+
+def test_amplitude_chevron_reports_the_centre_of_nested_amplitude_ranges() -> None:
+    """Given a clean grid, when analyzed, then nested centres agree and drift is small."""
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_chevron_sweep_run_result(resonance_offset=3.7e-3)
+    )
+
+    # No AC-Stark in the synthetic model, so the nested centres must coincide.
+    assert payload["nested_centres"]["lower_half"] == pytest.approx(
+        payload["nested_centres"]["full"], abs=1e-3
+    )
+    assert abs(payload["centre_drift"]) < 1e-3
+
+
+def _stark_shifted_run_result(stark_coefficient: float) -> dict[str, Any]:
+    """Return a grid whose resonance is pulled by `coefficient * amplitude^2`."""
+    run_result = _chevron_sweep_run_result(amplitude_bounds=(0.0, 0.21))
+    detunings = run_result["detuning_range"]
+    amplitudes = run_result["amplitude_range"]
+    omega = CHEVRON_RATE_PER_AMPLITUDE * amplitudes[None, :]
+    delta = detunings[:, None] - 3.7e-3 - stark_coefficient * amplitudes[None, :] ** 2
+    generalized = np.sqrt(omega**2 + delta**2)
+    contrast = np.divide(
+        omega**2,
+        omega**2 + delta**2,
+        out=np.zeros_like(omega * delta),
+        where=(omega**2 + delta**2) > 0,
+    )
+    signal = (
+        1 - 2 * contrast * np.sin(np.pi * CHEVRON_EFFECTIVE_DURATION * generalized) ** 2
+    )
+    raw = (0.3 + 1j * (0.8 * signal + 0.1)) * np.exp(1j * 0.7)
+    run_result["raw"] = np.asarray(raw, dtype=np.complex128).ravel()
+    return run_result
+
+
+def test_amplitude_chevron_centre_drift_grows_with_an_amplitude_dependent_shift() -> (
+    None
+):
+    """Given a Stark-pulled resonance, when analyzed, then the drift reports it."""
+    drifts = [
+        abs(
+            analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+                run_result=_stark_shifted_run_result(coefficient)
+            )["centre_drift"]
+        )
+        for coefficient in (0.0, 0.034, 0.068)
+    ]
+
+    # The reported centre is a drive-weighted average once the resonance moves
+    # with amplitude; the drift between nested ranges is what exposes that.
+    assert drifts[0] < 1e-4
+    assert drifts[0] < drifts[1] < drifts[2]
+
+
+def test_amplitude_chevron_refuses_when_a_shift_destroys_the_common_axis() -> None:
+    """Given a strongly pulled resonance, when analyzed, then no centre is claimed."""
+    # By about 13 MHz of pull across the sweep there is no single line of symmetry
+    # left, and inventing one would be worse than failing. The threshold depends
+    # on the sweep, so this is deliberately well past it rather than at the edge.
+    with pytest.raises(ValueError, match="symmetry axis"):
+        analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+            run_result=_stark_shifted_run_result(0.3)
+        )
+
+
+def test_amplitude_chevron_display_calls_out_an_amplitude_dependent_centre(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Given a drifting centre, when displayed, then it is named as a Stark shift."""
+    payload = analyze_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        run_result=_stark_shifted_run_result(0.068)
+    )
+
+    display_chevron_pattern_by_amplitude_sweep_based_on_ground(
+        Result(data=payload, figures={}),
+        plot=False,
+    )
+
+    printed = capsys.readouterr().out
+    # The quoted precision is far tighter than the actual bias, so the drift is
+    # the only thing standing between the reader and a wrong frequency.
+    assert abs(payload["centre_drift"]) > 3 * payload["resonant_frequency_err"]
+    assert "amplitude dependent" in printed
+    assert "Stark shift" in printed
+    assert "drive-weighted average" in printed
