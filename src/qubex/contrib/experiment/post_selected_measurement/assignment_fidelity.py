@@ -51,6 +51,7 @@ def _validate_readout_pulse_start_position(
             f"is not aligned with the capture sampling period ({capture_sampling_period} ns)."
         )
 
+
 __all__ = [
     "post_selected_assignment_fidelity_experiment",
     "run_post_selected_assignment_fidelity",
@@ -139,12 +140,12 @@ class Classifier:
         self, iq_data_g, iq_data_e, integration_start_idx=0, integration_end_idx=None
     ):
         self.weight = np.conj(iq_data_e.mean(axis=0) - iq_data_g.mean(axis=0))
-        norm = np.linalg.norm(self.weight)
-        if norm == 0:
-            raise ValueError(
-                "Mean IQ data of |g> and |e> are identical. Cannot compute the weight."
-            )
-        self.weight = self.weight / norm
+        # norm = np.linalg.norm(self.weight)
+        # if norm == 0:
+        #     raise ValueError(
+        #         "Mean IQ data of |g> and |e> are identical. Cannot compute the weight."
+        #     )
+        # self.weight = self.weight / norm
         self.weight[:integration_start_idx] = 0
         self.integration_start_idx = integration_start_idx
         self.integration_end_idx = integration_end_idx
