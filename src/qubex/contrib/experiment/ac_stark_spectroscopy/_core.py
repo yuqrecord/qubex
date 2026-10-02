@@ -302,7 +302,7 @@ def build_sequence(
     qubit_drive_pulse = pi_pulse.detuned(qubit_drive_detuning)
 
     with PulseSchedule() as ps:
-        buffer = 8 - (resonator_delay // 8)
+        buffer = 8 - (resonator_delay % 8)
         ps.add(qubit, Blank(buffer))
         if qubit_initial_state == "e":
             ps.add(qubit, pi_pulse)
