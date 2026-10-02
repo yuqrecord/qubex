@@ -140,6 +140,8 @@ def run_mist_benchmarking(
     target: str,
     ge_readout_pulse: Waveform,
     ge_readout_post_margin: float,
+    heralding_readout_pulse: Waveform | None = None,
+    heralding_readout_post_margin: float | None = None,
     leakage_sensitive_readout_pulse: Waveform,
     leakage_sensitive_readout_post_margin: float,
     leakage_sensitive_readout_detuning: float,
@@ -157,6 +159,14 @@ def run_mist_benchmarking(
     resonator = exp.ctx.resonators[target].label
     mux = exp.quantum_system.chip_graph.get_mux_of_qubit(qubit)
     drag_pi_pulse = exp.drag_pi_pulse[qubit]
+    # The herald gets its own pulse so that it can be optimised for g/e discrimination
+    # independently of the repeated blocks. Its classifier has to travel with it:
+    # `Classifier.weight` holds one complex sample per capture sample, so a classifier
+    # trained on one window length cannot be applied to the other at all.
+    if heralding_readout_pulse is None:
+        heralding_readout_pulse = ge_readout_pulse
+    if heralding_readout_post_margin is None:
+        heralding_readout_post_margin = ge_readout_post_margin
     padded_leakage_sensitive_readout_pulse = leakage_sensitive_readout_pulse.detuned(
         leakage_sensitive_readout_detuning
     ).padded(
@@ -177,8 +187,8 @@ def run_mist_benchmarking(
         result[n_repeats] = dict()
         pump_duration = (
             2 * pump_buffer_time
-            + ge_readout_pulse.duration
-            + ge_readout_post_margin
+            + heralding_readout_pulse.duration
+            + heralding_readout_post_margin
             + waittime_after_readout_pulse
             + drag_pi_pulse.duration
             + waittime_after_ctrl_pulse
@@ -200,11 +210,15 @@ def run_mist_benchmarking(
                     )
                     s.add(resonator, qx.pulse.Blank(pump_buffer_time))
                     s.barrier(labels=barrier_labels)
-                    s.add(resonator, ge_readout_pulse)
+                    # The herald. It has to stay a single capture-producing pulse:
+                    # a `PulseArray` holding several non-Blank pulses would open extra
+                    # windows and shift the capture indices selected below.
+                    s.add(resonator, heralding_readout_pulse)
                     s.add(
                         qubit,
                         qx.pulse.Blank(
-                            ge_readout_pulse.duration + waittime_after_readout_pulse
+                            heralding_readout_pulse.duration
+                            + waittime_after_readout_pulse
                         ),
                     )
                     if state == "e":
@@ -247,12 +261,14 @@ def run_mist_benchmarking(
                     real_captures[1],  # First repeated readout
                     real_captures[-1],  # Final readout
                 ]
-                for i in [1, 2]:
-                    selected_captures[i]
+                for i, post_margin in [
+                    (1, heralding_readout_post_margin),
+                    (2, ge_readout_post_margin),
+                ]:
                     selected_captures[i] = Capture(
                         channels=[resonator],
                         start_time=selected_captures[i].start_time,
-                        duration=selected_captures[i].duration + ge_readout_post_margin,
+                        duration=selected_captures[i].duration + post_margin,
                         is_workaround=False,
                     )
                 capture_schedule = CaptureSchedule(
@@ -295,12 +311,15 @@ def analyze_mist_benchmarking(
     target,
     run_result,
     ge_classifier,
+    heralding_classifier=None,
     leakage_sensitive_classifier,
     leakage_sensitive_readout_detuning,
     capture_sampling_period,
     block_duration,
     n_bins=100,
 ):
+    if heralding_classifier is None:
+        heralding_classifier = ge_classifier
     n_repeats_list = sorted(run_result.keys())
     counts = dict()
     populations = dict()
@@ -330,7 +349,7 @@ def analyze_mist_benchmarking(
                 herald = readouts[0].data
                 assignment = readouts[1].data
                 leakage_sensitive = readouts[-1].data
-                selected = ge_classifier.predict(herald) == 0
+                selected = heralding_classifier.predict(herald) == 0
                 if sequence == ASSIGNMENT_SEQUENCE:
                     # The first repeated readout sits at the same position in every
                     # schedule, so its shots pool across the whole `n_repeats_list`.
@@ -736,6 +755,7 @@ def mist_benchmarking_experiment(
     leakage_sensitive_readout_classifier: dict,
     leakage_sensitive_readout_frequency: float | None = None,
     ge_readout_classifier: dict,
+    heralding_readout_classifier: dict | None = None,
     waittime_after_readout_pulse: float,
     waittime_after_ctrl_pulse: float,
     n_repeats_list,
@@ -760,12 +780,27 @@ def mist_benchmarking_experiment(
     )
     if missing_keys:
         raise ValueError(
-            "`readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin', and "
+            "`ge_readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin', and "
+            f"'classifier' (missing: {sorted(missing_keys)})."
+        )
+    # Omitting the heralding one reproduces the previous behaviour exactly: one pulse,
+    # margin and classifier then serve both the herald and the repeated blocks.
+    if heralding_readout_classifier is None:
+        heralding_readout_classifier = ge_readout_classifier
+    missing_keys = {"readout_pulse", "readout_post_margin", "classifier"} - set(
+        heralding_readout_classifier
+    )
+    if missing_keys:
+        raise ValueError(
+            "`heralding_readout_classifier` must contain the keys 'readout_pulse', 'readout_post_margin', and "
             f"'classifier' (missing: {sorted(missing_keys)})."
         )
     ge_readout_pulse = ge_readout_classifier["readout_pulse"]
     ge_readout_post_margin = ge_readout_classifier["readout_post_margin"]
     ge_classifier = ge_readout_classifier["classifier"]
+    heralding_readout_pulse = heralding_readout_classifier["readout_pulse"]
+    heralding_readout_post_margin = heralding_readout_classifier["readout_post_margin"]
+    heralding_classifier = heralding_readout_classifier["classifier"]
     leakage_sensitive_readout_pulse = leakage_sensitive_readout_classifier[
         "readout_pulse"
     ]
@@ -790,6 +825,8 @@ def mist_benchmarking_experiment(
         target=target,
         ge_readout_pulse=ge_readout_pulse,
         ge_readout_post_margin=ge_readout_post_margin,
+        heralding_readout_pulse=heralding_readout_pulse,
+        heralding_readout_post_margin=heralding_readout_post_margin,
         leakage_sensitive_readout_pulse=leakage_sensitive_readout_pulse,
         leakage_sensitive_readout_post_margin=leakage_sensitive_readout_post_margin,
         leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
@@ -807,6 +844,7 @@ def mist_benchmarking_experiment(
         target=target,
         run_result=run_result,
         ge_classifier=ge_classifier,
+        heralding_classifier=heralding_classifier,
         leakage_sensitive_classifier=leakage_sensitive_classifier,
         leakage_sensitive_readout_detuning=leakage_sensitive_readout_detuning,
         capture_sampling_period=capture_sampling_period,
@@ -830,6 +868,9 @@ def mist_benchmarking_experiment(
             "ge_readout_pulse": ge_readout_pulse,
             "ge_readout_post_margin": ge_readout_post_margin,
             "ge_classifier": ge_classifier,
+            "heralding_readout_pulse": heralding_readout_pulse,
+            "heralding_readout_post_margin": heralding_readout_post_margin,
+            "heralding_classifier": heralding_classifier,
             "leakage_sensitive_readout_pulse": leakage_sensitive_readout_pulse,
             "leakage_sensitive_readout_post_margin": leakage_sensitive_readout_post_margin,
             "leakage_sensitive_classifier": leakage_sensitive_classifier,
