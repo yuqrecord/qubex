@@ -1669,8 +1669,8 @@ def _ramsey_stub(
         pulse_type="hpi",
         **kwargs,
     )
-    # The factory only seeds the FlatTop half-pi, and a Ramsey sequence is built
-    # from the DRAG one, so that is added here on top of it.
+    # The factory only seeds the uncorrected half-pi, and a Ramsey sequence
+    # prefers the DRAG one, so that is added here on top of it.
     if with_drag_hpi:
         for target in exp.ctx.stored_rabi_params:
             exp.calib_note.update_drag_hpi_param(
@@ -1722,6 +1722,8 @@ def test_ramsey_run_brackets_every_wait_with_a_half_pi_and_its_negation(
     assert call["frequencies"] == {f"{QUBIT}-fh": 7.502}
     assert run_result["drive_frequency"] == pytest.approx(7.502)
     assert len(call["schedules"]) == times.size
+    # Both half-pi pulses are stored, and the DRAG one wins.
+    assert run_result["hpi_source"] == "drag_hpi"
 
     for wait, schedule in zip(times, call["schedules"], strict=True):
         values = schedule.get_sampled_sequences()[f"{QUBIT}-fh"]
@@ -1733,8 +1735,8 @@ def test_ramsey_run_brackets_every_wait_with_a_half_pi_and_its_negation(
         assert gap.size == round(wait / Waveform.SAMPLING_PERIOD)
         assert not np.any(gap)
         assert not np.any(tail)
-        # The DRAG half-pi is played, not the FlatTop one: only DRAG carries a
-        # quadrature component, and the FlatTop envelope is purely real.
+        # The DRAG half-pi is played, not the uncorrected one: only DRAG carries
+        # a quadrature component, and the uncorrected envelope is purely real.
         assert np.abs(first.imag).max() > 0
         # `-X90` is the half-pi shifted by pi, so it is the exact negation of
         # both components.
@@ -1775,21 +1777,98 @@ def test_ramsey_run_keeps_the_fringe_inside_a_symmetric_ladder(
         )
 
 
-def test_ramsey_requires_a_calibrated_drag_half_pi_pulse(
+@pytest.mark.parametrize(
+    "stored_hpi",
+    [
+        # The factory seeds a `Drag` envelope at beta = 0, marked by a null `tau`.
+        pytest.param(None, id="uncorrected_envelope"),
+        pytest.param(
+            {"duration": DURATION, "amplitude": 0.28, "tau": RAMPTIME},
+            id="legacy_flat_top",
+        ),
+    ],
+)
+def test_ramsey_falls_back_to_the_uncorrected_half_pi_without_a_drag_one(
+    stub_experiment_factory: Callable[..., Any],
+    stored_hpi: dict[str, Any] | None,
+) -> None:
+    """Given no stored DRAG half-pi, when run, then the uncorrected one is played."""
+    exp = _ramsey_stub(stub_experiment_factory, with_drag_hpi=False)
+    target = f"{QUBIT}-fh"
+    if stored_hpi is not None:
+        exp.calib_note.update_hpi_param(target, {"target": target, **stored_hpi})
+    expected = exp.pulse.get_hpi_pulse(target)
+    times = np.arange(0, 41, 8, dtype=np.float64)
+
+    run_result = run_ramsey_experiment_based_on_ground(
+        exp,
+        target=QUBIT,
+        transition="fh",
+        time_range=times,
+        detuning=0.002,
+        frequency=7.5,
+        n_shots=N_SHOTS,
+        shot_interval=SHOT_INTERVAL,
+        plot_pulse_schedule=False,
+    )
+
+    assert run_result["hpi_source"] == "hpi"
+    assert run_result["hpi_duration"] == expected.duration
+    call = exp.sweep_calls[-1]
+    # Only the transition target is retuned, whichever half-pi is played.
+    assert call["frequencies"] == {target: 7.502}
+    for wait, schedule in zip(times, call["schedules"], strict=True):
+        values = schedule.get_sampled_sequences()[target]
+        first, gap, second, tail = _ramsey_body(
+            values,
+            hpi_duration=expected.duration,
+            wait=float(wait),
+        )
+        np.testing.assert_allclose(first, expected.values, atol=1e-12)
+        np.testing.assert_allclose(second, -expected.values, atol=1e-12)
+        assert not np.any(gap)
+        assert not np.any(tail)
+
+
+def test_ramsey_requires_some_calibrated_half_pi_pulse(
     stub_experiment_factory: Callable[..., Any],
 ) -> None:
-    """Given no stored DRAG half-pi, when run, then it names the calibration to run."""
-    exp = _ramsey_stub(stub_experiment_factory, with_drag_hpi=False)
-    # The FlatTop half-pi is there and must not be silently substituted for it.
-    assert exp.calib_note.get_hpi_param(f"{QUBIT}-fh") is not None
+    """Given a target with no half-pi at all, when run, then no target is measured."""
+    exp = _ramsey_stub(stub_experiment_factory, qubits=[QUBIT, QUBIT_2])
+    missing = f"{QUBIT_2}-fh"
+    del exp.calib_note.hpi[missing]
+    del exp.calib_note.drag_hpi[missing]
 
-    with pytest.raises(ValueError, match="calibrate_drag_hpi_pulse_based_on_ground"):
+    # `get_hpi_pulse` would still hand back a nominal pulse for it, which must
+    # not be played in place of a calibrated one.
+    with pytest.raises(
+        ValueError,
+        match=rf"'{missing}'.*calibrate_hpi_pulse_based_on_ground",
+    ):
         ramsey_experiment_based_on_ground(
             exp,
-            targets=QUBIT,
+            targets=[QUBIT, QUBIT_2],
             transition="fh",
             time_range=np.array([16.0]),
             plot=False,
+            plot_pulse_schedule=False,
+        )
+    assert exp.sweep_calls == []
+
+
+def test_ramsey_run_requires_some_calibrated_half_pi_pulse(
+    stub_experiment_factory: Callable[..., Any],
+) -> None:
+    """Given neither half-pi stored, when run directly, then it raises before measuring."""
+    exp = _ramsey_stub(stub_experiment_factory, with_drag_hpi=False, with_hpi=False)
+
+    with pytest.raises(ValueError, match="calibrate_hpi_pulse_based_on_ground"):
+        run_ramsey_experiment_based_on_ground(
+            exp,
+            target=QUBIT,
+            transition="fh",
+            time_range=np.array([16.0]),
+            frequency=7.5,
             plot_pulse_schedule=False,
         )
     assert exp.sweep_calls == []
@@ -1904,6 +1983,7 @@ def test_ramsey_entry_point_keys_by_transition_label_and_stores_nothing(
         # The stub cannot free-evolve, so the fringe itself is not meaningful
         # here; what is pinned is that every stage ran and kept its payload.
         assert "error" not in result.data[target]
+        assert result.data[target]["hpi_source"] == "drag_hpi"
         assert f"{target}:ramsey" in result.figures
         assert f"{target}:iq" in result.figures
     assert exp.calib_note.hpi == seeded

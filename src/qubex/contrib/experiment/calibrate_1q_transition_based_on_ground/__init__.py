@@ -30,7 +30,8 @@ against the ground state at every rung of the ladder.
   mirror symmetry of the pattern rather than from a rate-versus-detuning fit.
 - `ramsey_experiment_based_on_ground`: Ramsey fringe against a deliberate
   carrier detuning, for T2* and a sharper resonance. Built from the
-  transition's DRAG half-pi, so it comes after that calibration.
+  transition's DRAG half-pi, or from its uncorrected half-pi when no DRAG one
+  is stored, so it comes after either calibration.
 - `calibrate_hpi_pulse_based_on_ground`: half-pi amplitude, no correction.
 - `calibrate_pi_pulse_based_on_ground`: pi amplitude, no correction, using a
   fixed `+-pi/2` tipping pulse whose own error cancels exactly.
@@ -115,6 +116,8 @@ Bootstrap order for a new rung::
     calibrate_drag_hpi_pulse_based_on_ground(exp, transition="fh")
     calibrate_drag_pi_pulse_based_on_ground(exp, transition="fh")
     ramsey_experiment_based_on_ground(exp, transition="fh")   # -> T2*, resonance
+    # it also runs right after calibrate_hpi_pulse_based_on_ground, on the
+    # uncorrected half-pi, and says so in its summary
     exp.save_calib_note()
 
 The DRAG calibrations default to `n_rotations = 4`, as the core

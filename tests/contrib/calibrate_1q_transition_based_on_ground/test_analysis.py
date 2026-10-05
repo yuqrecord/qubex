@@ -19,6 +19,7 @@ from qubex.contrib.experiment.calibrate_1q_transition_based_on_ground import (
     analyze_obtain_rabi_params_by_amplitude_sweep_based_on_ground,
     analyze_ramsey_experiment_based_on_ground,
     display_chevron_pattern_by_amplitude_sweep_based_on_ground,
+    display_ramsey_experiment_based_on_ground,
 )
 from qubex.experiment import experiment_constants as constants
 from qubex.experiment.models import Result
@@ -1352,6 +1353,7 @@ def _ramsey_run_result(
     fringe: float = RAMSEY_FRINGE,
     t2: float = RAMSEY_T2,
     times: np.ndarray | None = None,
+    hpi_source: str = "drag_hpi",
 ) -> dict[str, Any]:
     """Return a run payload carrying an ideal `-X90` Ramsey trace."""
     if times is None:
@@ -1368,6 +1370,8 @@ def _ramsey_run_result(
         "detuning": detuning,
         "frequency": RAMSEY_CARRIER,
         "drive_frequency": RAMSEY_CARRIER + detuning,
+        "hpi_duration": 16.0,
+        "hpi_source": hpi_source,
         "raw": normalized.astype(np.complex128),
         "normalized": normalized,
     }
@@ -1489,6 +1493,34 @@ def test_ramsey_rejects_a_decay_guess_that_cannot_seed_the_fit(
             run_result=_ramsey_run_result(),
             t2_estimation=t2_estimation,
         )
+
+
+@pytest.mark.parametrize(
+    ("hpi_source", "expected"),
+    [
+        pytest.param("drag_hpi", "DRAG", id="drag"),
+        pytest.param("hpi", "uncorrected", id="uncorrected"),
+    ],
+)
+def test_ramsey_display_names_the_half_pi_it_played(
+    capsys: pytest.CaptureFixture[str],
+    hpi_source: str,
+    expected: str,
+) -> None:
+    """Given the half-pi a run played, when displayed, then it is named."""
+    payload = analyze_ramsey_experiment_based_on_ground(
+        run_result=_ramsey_run_result(hpi_source=hpi_source)
+    )
+
+    display_ramsey_experiment_based_on_ground(
+        Result(data=payload, figures={}),
+        plot=False,
+    )
+
+    printed = capsys.readouterr().out
+    line = next(line for line in printed.splitlines() if "half-pi pulse" in line)
+    # The uncorrected label mentions DRAG too, so the value has to lead with it.
+    assert line.split(":", 1)[1].strip().startswith(expected)
 
 
 #: Rabi rate per unit drive amplitude of the synthetic sweeps, in GHz.

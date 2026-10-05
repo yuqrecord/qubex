@@ -16,11 +16,13 @@ out::
 
     X_ge -> X_ef -> ... -> [X90 -> wait(T) -> -X90] -> ... -> X_ef -> X_ge
 
-Both half-pi pulses are the transition's calibrated *DRAG* half-pi. Driving
-`k <-> k+1` leaks into `k-1` and `k+2`, and the two pulses sit on either side
-of a wait that can run into microseconds, so the leakage they seed is what
-the whole fringe decays from. The FlatTop half-pi is not accepted as a
-substitute: it would quietly change what T2* is being measured on.
+Both half-pi pulses are the transition's calibrated *DRAG* half-pi when one is
+stored. Driving `k <-> k+1` leaks into `k-1` and `k+2`, and the two pulses sit
+on either side of a wait that can run into microseconds, so the leakage they
+seed decays along with the fringe. When no DRAG half-pi is stored, the
+uncorrected half-pi is played instead. It seeds more of that leakage and can
+shift the fitted T2*, so the payload records which of the two was played under
+`"hpi_source"` and the summary prints it.
 
 Ideal un-preparation maps `|k> -> |g>` and leaves `|k+1>` alone, so the readout
 separates |g> from the transition's *upper* level and the normalized signal is
@@ -39,9 +41,10 @@ their own carriers.
 Assumptions and caveats
 -----------------------
 - Every rung below the transition must have a calibrated pi pulse, the
-  transition must have a calibrated DRAG half-pi pulse, and it must have
-  stored Rabi parameters to normalize against. Run
-  `calibrate_drag_hpi_pulse_based_on_ground` before this experiment.
+  transition must have a calibrated half-pi pulse, DRAG or uncorrected, and it
+  must have stored Rabi parameters to normalize against. Run
+  `calibrate_drag_hpi_pulse_based_on_ground` before this experiment, or at
+  least `calibrate_hpi_pulse_based_on_ground`.
 - The sequence closes with `-X90` rather than `Y90`, so the fringe is a pure
   cosine and its phase cannot say which side of the drive the resonance sits on.
   The resonance is reported as `drive - sign(detuning) * f_ramsey`, which is
@@ -104,17 +107,38 @@ RELIABLE_RAMSEY_R2 = 0.5
 SIGN_RULE_FRINGE_LIMIT = 2.0
 
 
-def _resolve_drag_hpi_pulse(exp: Experiment, *, target: str) -> Waveform:
-    """Return the stored DRAG half-pi pulse of the transition, or raise."""
-    if exp.calib_note.get_drag_hpi_param(target) is None:
-        raise ValueError(
-            f"A DRAG half-pi pulse is not calibrated for {target!r}, and a "
-            "Ramsey sequence is built from two of them. Run "
-            "`calibrate_drag_hpi_pulse_based_on_ground` first. The FlatTop "
-            "half-pi is deliberately not used instead: it leaks more into the "
-            "neighbouring levels, which is exactly what the fringe decays from."
-        )
-    return exp.pulse.get_drag_hpi_pulse(target)
+def _resolve_hpi_pulse(exp: Experiment, *, target: str) -> tuple[Waveform, str]:
+    """
+    Return the half-pi pulse of the transition and which entry it came from.
+
+    The stored DRAG half-pi is preferred, and the uncorrected one is used only
+    when no DRAG half-pi is stored. The note is checked explicitly before
+    `get_hpi_pulse` is called, because that getter silently hands back a nominal
+    pulse when nothing is stored, which must never stand in for a calibration.
+
+    Parameters
+    ----------
+    exp : Experiment
+        Experiment holding the calibration note.
+    target : str
+        Transition label.
+
+    Returns
+    -------
+    tuple[Waveform, str]
+        The half-pi pulse, and `"drag_hpi"` or `"hpi"` for the entry it was
+        rebuilt from.
+    """
+    if exp.calib_note.get_drag_hpi_param(target) is not None:
+        return exp.pulse.get_drag_hpi_pulse(target), "drag_hpi"
+    if exp.calib_note.get_hpi_param(target) is not None:
+        return exp.pulse.get_hpi_pulse(target), "hpi"
+    raise ValueError(
+        f"No half-pi pulse is calibrated for {target!r}, and a Ramsey sequence "
+        "is built from two of them. Run "
+        "`calibrate_drag_hpi_pulse_based_on_ground` (preferred) or "
+        "`calibrate_hpi_pulse_based_on_ground` first."
+    )
 
 
 def _validate_wait_times(time_range: NDArray[np.float64]) -> None:
@@ -163,6 +187,9 @@ def run_ramsey_experiment_based_on_ground(
     """
     Measure the ground-referenced Ramsey fringe of one transition.
 
+    The half-pi pulses are the transition's stored DRAG half-pi, or its
+    uncorrected half-pi when no DRAG one is stored.
+
     Parameters
     ----------
     exp : Experiment
@@ -192,6 +219,8 @@ def run_ramsey_experiment_based_on_ground(
     -------
     dict[str, Any]
         Raw payload consumed by `analyze_ramsey_experiment_based_on_ground`.
+        `"hpi_source"` is `"drag_hpi"` or `"hpi"`, naming the half-pi entry
+        that was played.
     """
     if time_range is None:
         time_range = DEFAULT_TIME_RANGE
@@ -207,7 +236,7 @@ def run_ramsey_experiment_based_on_ground(
     ladder = _core.resolve_ladder(exp, target=target, transition=transition)
     _core.validate_ladder_calibrations(exp, ladder)
     rabi_param = _core.get_transition_rabi_param(exp, ladder)
-    hpi_pulse = _resolve_drag_hpi_pulse(exp, target=ladder.target)
+    hpi_pulse, hpi_source = _resolve_hpi_pulse(exp, target=ladder.target)
     if frequency is None:
         frequency = _core.resolve_frequencies(
             exp,
@@ -267,6 +296,7 @@ def run_ramsey_experiment_based_on_ground(
         "frequency": frequency,
         "drive_frequency": drive_frequency,
         "hpi_duration": hpi_pulse.duration,
+        "hpi_source": hpi_source,
         "raw": raw,
         "normalized": normalized,
         "n_shots": n_shots,
@@ -389,7 +419,12 @@ def display_ramsey_experiment_based_on_ground(
             dict(result.figures),
             prefix=f"ramsey_experiment_based_on_ground_{data['target']}",
         )
+    hpi_label = {
+        "drag_hpi": "DRAG",
+        "hpi": "uncorrected (no DRAG half-pi stored)",
+    }[data["hpi_source"]]
     _core.print_ladder(data)
+    print(f"  half-pi pulse       : {hpi_label}, {data['hpi_duration']} ns")
     print(f"  carrier frequency   : {data['frequency']:.6f} GHz")
     print(f"  applied detuning    : {data['detuning'] * 1e3:+.3f} MHz")
     print(f"  drive frequency     : {data['drive_frequency']:.6f} GHz")
@@ -441,9 +476,10 @@ def ramsey_experiment_based_on_ground(
     Measure the ground-referenced Ramsey fringe of one transition.
 
     Every requested target is checked before the first acquisition, so an
-    unregistered target, an uncalibrated lower rung, a missing DRAG half-pi
-    pulse or missing Rabi parameters stop the whole batch. The targets are then
-    measured one after another.
+    unregistered target, an uncalibrated lower rung, a missing half-pi pulse
+    or missing Rabi parameters stop the whole batch. A target without a DRAG
+    half-pi falls back to its uncorrected one. The targets are then measured
+    one after another.
 
     Parameters
     ----------
@@ -482,7 +518,8 @@ def ramsey_experiment_based_on_ground(
     Result
         Payload keyed by transition label, and figures keyed by
         `"{target}:{name}"`. Each payload is the single-target payload, so T2*
-        of one target is at `result.data[target]["t2"]`.
+        of one target is at `result.data[target]["t2"]`, and the half-pi it
+        was measured with at `result.data[target]["hpi_source"]`.
         Nothing is written to `exp.calib_note`.
         A target whose analysis, plotting or display failed still appears,
         carrying whatever the pipeline reached and the exception under
@@ -499,7 +536,7 @@ def ramsey_experiment_based_on_ground(
         require_rabi_param=True,
     )
     for ladder in ladders:
-        _resolve_drag_hpi_pulse(exp, target=ladder.target)
+        _resolve_hpi_pulse(exp, target=ladder.target)
     resolved_frequencies = _core.resolve_frequencies(
         exp,
         ladders=ladders,
