@@ -1642,6 +1642,7 @@ class CharacterizationService:
         time_range: ArrayLike | None = None,
         shots: int | None = None,
         interval: float | None = None,
+        readout_amplification: bool | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
         xaxis_type: Literal["linear", "log"] | None = None,
@@ -1655,6 +1656,8 @@ class CharacterizationService:
             Target qubits to measure.
         time_range
             Delay times for the decay measurement.
+        readout_amplification
+            Whether to insert readout amplification pulses. Defaults to False.
         plot
             Whether to plot the fitted decay.
         """
@@ -1720,6 +1723,7 @@ class CharacterizationService:
                 sweep_range=time_range,
                 shots=shots,
                 interval=interval,
+                readout_amplification=readout_amplification,
                 plot=plot,
                 title="T1 decay",
                 xlabel="Time (μs)",
@@ -1771,6 +1775,7 @@ class CharacterizationService:
         pi_cpmg: Waveform | None = None,
         shots: int | None = None,
         interval: float | None = None,
+        readout_amplification: bool | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
         xaxis_type: Literal["linear", "log"] | None = None,
@@ -1786,6 +1791,8 @@ class CharacterizationService:
             Delay times for the echo measurement.
         n_cpmg
             Number of CPMG pulses to use.
+        readout_amplification
+            Whether to insert readout amplification pulses. Defaults to False.
         """
         if targets is None:
             targets = self.ctx.qubit_labels
@@ -1890,6 +1897,7 @@ class CharacterizationService:
                 sweep_range=time_range,
                 shots=shots,
                 interval=interval,
+                readout_amplification=readout_amplification,
                 plot=plot,
                 xaxis_type=xaxis_type,
             )

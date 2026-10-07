@@ -46,6 +46,14 @@ class _CharacterizationServiceStub:
         self.calls.append(("find_optimal_readout_frequency", kwargs))
         return "find_optimal_readout_frequency_result"
 
+    def t1_experiment(self, **kwargs: Any) -> str:
+        self.calls.append(("t1_experiment", kwargs))
+        return "t1_experiment_result"
+
+    def t2_experiment(self, **kwargs: Any) -> str:
+        self.calls.append(("t2_experiment", kwargs))
+        return "t2_experiment_result"
+
 
 class _MeasurementServiceStub:
     def __init__(self) -> None:
@@ -971,6 +979,7 @@ def test_sweep_parameter_delegates_legacy_shot_arguments_to_measurement_service(
                 "readout_duration": None,
                 "readout_pre_margin": None,
                 "readout_post_margin": None,
+                "readout_amplification": None,
                 "plot": None,
                 "enable_tqdm": None,
                 "title": None,
@@ -980,6 +989,94 @@ def test_sweep_parameter_delegates_legacy_shot_arguments_to_measurement_service(
                 "yaxis_type": None,
                 "shots": 32,
                 "interval": 44.0,
+            },
+        )
+    ]
+
+
+def test_sweep_parameter_delegates_readout_amplification_to_measurement_service() -> (
+    None
+):
+    """Given readout amplification, when sweep_parameter is called, then it is delegated unchanged."""
+    exp = object.__new__(Experiment)
+    measurement_stub = _MeasurementServiceStub()
+    exp.__dict__["_measurement_service"] = measurement_stub
+    sequence = cast(Any, lambda value: {"Q00": [value + 0.0j]})
+
+    _ = exp.sweep_parameter(
+        sequence=sequence,
+        sweep_range=[0.1, 0.2],
+        readout_amplification=True,
+    )
+
+    assert measurement_stub.calls[0][0] == "sweep_parameter"
+    assert measurement_stub.calls[0][1]["readout_amplification"] is True
+
+
+def test_t1_experiment_delegates_readout_amplification_to_characterization_service() -> (
+    None
+):
+    """Given readout amplification, when t1_experiment is called, then it is delegated unchanged."""
+    exp = object.__new__(Experiment)
+    characterization_stub = _CharacterizationServiceStub()
+    exp.__dict__["_characterization_service"] = characterization_stub
+
+    result = exp.t1_experiment(
+        targets="Q00",
+        n_shots=512,
+        shot_interval=240.0,
+        readout_amplification=True,
+    )
+
+    assert result == "t1_experiment_result"
+    assert characterization_stub.calls == [
+        (
+            "t1_experiment",
+            {
+                "targets": "Q00",
+                "time_range": None,
+                "shots": 512,
+                "interval": 240.0,
+                "readout_amplification": True,
+                "plot": None,
+                "save_image": None,
+                "xaxis_type": None,
+            },
+        )
+    ]
+
+
+def test_t2_experiment_delegates_readout_amplification_to_characterization_service() -> (
+    None
+):
+    """Given readout amplification, when t2_experiment is called, then it is delegated unchanged."""
+    exp = object.__new__(Experiment)
+    characterization_stub = _CharacterizationServiceStub()
+    exp.__dict__["_characterization_service"] = characterization_stub
+
+    result = exp.t2_experiment(
+        targets="Q00",
+        n_cpmg=2,
+        n_shots=512,
+        shot_interval=240.0,
+        readout_amplification=False,
+    )
+
+    assert result == "t2_experiment_result"
+    assert characterization_stub.calls == [
+        (
+            "t2_experiment",
+            {
+                "targets": "Q00",
+                "time_range": None,
+                "n_cpmg": 2,
+                "pi_cpmg": None,
+                "shots": 512,
+                "interval": 240.0,
+                "readout_amplification": False,
+                "plot": None,
+                "save_image": None,
+                "xaxis_type": None,
             },
         )
     ]

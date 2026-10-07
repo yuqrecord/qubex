@@ -72,6 +72,7 @@ def run_obtain_rabi_params_based_on_ground(
     ramptime: float | None = None,
     n_shots: int | None = None,
     shot_interval: float | None = None,
+    readout_amplification: bool | None = None,
     plot_pulse_schedule: bool | None = None,
 ) -> dict[str, Any]:
     """
@@ -99,6 +100,11 @@ def run_obtain_rabi_params_based_on_ground(
     shot_interval : float | None, optional
         Interval between shots in ns. Defaults to
         `_core.DEFAULT_SHOT_INTERVAL`.
+    readout_amplification : bool | None, optional
+        Whether to insert readout amplification pulses into both the |g>
+        reference measurement and the sweep, so the reference point shares the
+        readout of the arc it anchors. `None` is passed on as is, so
+        `MeasurementService.measure` resolves it to False.
     plot_pulse_schedule : bool | None, optional
         Whether to draw the schedule of the longest duration. Defaults to True.
 
@@ -162,6 +168,7 @@ def run_obtain_rabi_params_based_on_ground(
         [ladder.qubit],
         n_shots=n_shots,
         shot_interval=shot_interval,
+        readout_amplification=readout_amplification,
     )["iq"]
     reference_point = reference_points[ladder.qubit]
 
@@ -173,6 +180,7 @@ def run_obtain_rabi_params_based_on_ground(
         sweep_range=times,
         n_shots=n_shots,
         shot_interval=shot_interval,
+        readout_amplification=readout_amplification,
     )
 
     return {
@@ -188,6 +196,7 @@ def run_obtain_rabi_params_based_on_ground(
         "raw": raw,
         "n_shots": n_shots,
         "shot_interval": shot_interval,
+        "readout_amplification": readout_amplification,
     }
 
 
@@ -329,6 +338,7 @@ def obtain_rabi_params_based_on_ground(
     fit_threshold: float | None = None,
     n_shots: int | None = None,
     shot_interval: float | None = None,
+    readout_amplification: bool | None = None,
     plot: bool | None = None,
     plot_pulse_schedule: bool | None = None,
 ) -> Result:
@@ -368,6 +378,9 @@ def obtain_rabi_params_based_on_ground(
     shot_interval : float | None, optional
         Interval between shots in ns. Defaults to
         `_core.DEFAULT_SHOT_INTERVAL`.
+    readout_amplification : bool | None, optional
+        Whether to insert readout amplification pulses into every acquisition.
+        Defaults to False.
     plot : bool | None, optional
         Whether to show the figures. Defaults to True.
     plot_pulse_schedule : bool | None, optional
@@ -430,6 +443,7 @@ def obtain_rabi_params_based_on_ground(
             ramptime=ramptime,
             n_shots=n_shots,
             shot_interval=shot_interval,
+            readout_amplification=readout_amplification,
             plot_pulse_schedule=plot_pulse_schedule,
         )
         payload, target_figures = _core.run_analysis_stages(

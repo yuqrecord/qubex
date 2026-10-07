@@ -182,6 +182,7 @@ def run_ramsey_experiment_based_on_ground(
     frequency: float | None = None,
     n_shots: int | None = None,
     shot_interval: float | None = None,
+    readout_amplification: bool | None = None,
     plot_pulse_schedule: bool | None = None,
 ) -> dict[str, Any]:
     """
@@ -212,6 +213,11 @@ def run_ramsey_experiment_based_on_ground(
     shot_interval : float | None, optional
         Interval between shots in ns. Defaults to
         `_core.DEFAULT_SHOT_INTERVAL`.
+    readout_amplification : bool | None, optional
+        Whether to insert readout amplification pulses into the sweep. The
+        signal is normalized with the stored Rabi parameters, so they should
+        have been measured with the same setting. `None` is passed on as is,
+        so `MeasurementService.measure` resolves it to False.
     plot_pulse_schedule : bool | None, optional
         Whether to draw the schedule of the longest wait. Defaults to True.
 
@@ -284,6 +290,7 @@ def run_ramsey_experiment_based_on_ground(
         frequencies={ladder.target: drive_frequency},
         n_shots=n_shots,
         shot_interval=shot_interval,
+        readout_amplification=readout_amplification,
     )
 
     return {
@@ -301,6 +308,7 @@ def run_ramsey_experiment_based_on_ground(
         "normalized": normalized,
         "n_shots": n_shots,
         "shot_interval": shot_interval,
+        "readout_amplification": readout_amplification,
     }
 
 
@@ -469,6 +477,7 @@ def ramsey_experiment_based_on_ground(
     t2_estimation: float | None = None,
     n_shots: int | None = None,
     shot_interval: float | None = None,
+    readout_amplification: bool | None = None,
     plot: bool | None = None,
     plot_pulse_schedule: bool | None = None,
 ) -> Result:
@@ -508,6 +517,10 @@ def ramsey_experiment_based_on_ground(
     shot_interval : float | None, optional
         Interval between shots in ns. Defaults to
         `_core.DEFAULT_SHOT_INTERVAL`.
+    readout_amplification : bool | None, optional
+        Whether to insert readout amplification pulses into the sweep. The
+        stored Rabi parameters should have been measured with the same
+        setting. Defaults to False.
     plot : bool | None, optional
         Whether to show the figures. Defaults to True.
     plot_pulse_schedule : bool | None, optional
@@ -564,6 +577,7 @@ def ramsey_experiment_based_on_ground(
             frequency=resolved_frequencies[ladder.target],
             n_shots=n_shots,
             shot_interval=shot_interval,
+            readout_amplification=readout_amplification,
             plot_pulse_schedule=plot_pulse_schedule,
         )
         payload, target_figures = _core.run_analysis_stages(

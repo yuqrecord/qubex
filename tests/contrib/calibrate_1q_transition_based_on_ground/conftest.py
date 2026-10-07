@@ -300,6 +300,7 @@ class _MeasurementService:
         *,
         n_shots: int,
         shot_interval: float,
+        readout_amplification: bool | None = None,
     ) -> dict[str, dict[str, complex]]:
         """Return the |g> IQ point of every target."""
         self._experiment.reference_calls.append(
@@ -307,6 +308,7 @@ class _MeasurementService:
                 "targets": list(targets),
                 "n_shots": n_shots,
                 "shot_interval": shot_interval,
+                "readout_amplification": readout_amplification,
             }
         )
         return {"iq": dict.fromkeys(targets, iq_from_z(1.0))}
@@ -319,6 +321,7 @@ class _MeasurementService:
         frequencies: dict[str, float] | None = None,
         n_shots: int,
         shot_interval: float,
+        readout_amplification: bool | None = None,
         plot: bool,
     ) -> _SweepResult:
         """Simulate one sweep by integrating each emitted waveform."""
@@ -330,6 +333,7 @@ class _MeasurementService:
                 "frequencies": frequencies,
                 "n_shots": n_shots,
                 "shot_interval": shot_interval,
+                "readout_amplification": readout_amplification,
                 "plot": plot,
                 "schedules": schedules,
             }

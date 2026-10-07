@@ -1000,6 +1000,7 @@ def sweep_ground_referenced(
     frequencies: dict[str, float] | None = None,
     n_shots: int,
     shot_interval: float,
+    readout_amplification: bool | None = None,
 ) -> tuple[NDArray[np.complex128], NDArray[np.float64] | None]:
     """
     Run a ground-referenced sweep and return the raw and normalized signals.
@@ -1027,6 +1028,9 @@ def sweep_ground_referenced(
         Shots per acquisition.
     shot_interval : float
         Interval between shots in ns.
+    readout_amplification : bool | None, optional
+        Whether to insert readout amplification pulses. `None` is passed on
+        as is, so `MeasurementService.measure` resolves it to False.
 
     Returns
     -------
@@ -1039,6 +1043,7 @@ def sweep_ground_referenced(
         frequencies=frequencies,
         n_shots=n_shots,
         shot_interval=shot_interval,
+        readout_amplification=readout_amplification,
         plot=False,
     ).data[ladder.qubit]
     raw = np.asarray(sweep_data.data, dtype=np.complex128)

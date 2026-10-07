@@ -1009,6 +1009,7 @@ class MeasurementService:
         *,
         n_shots: int | None = None,
         shot_interval: float | None = None,
+        readout_amplification: bool | None = None,
         store_reference_points: bool | None = None,
         **deprecated_options: Any,
     ) -> Result:
@@ -1036,6 +1037,7 @@ class MeasurementService:
             mode="avg",
             n_shots=n_shots,
             shot_interval=shot_interval,
+            readout_amplification=readout_amplification,
             **deprecated_options,
         )
 
@@ -1072,6 +1074,7 @@ class MeasurementService:
         readout_duration: float | None = None,
         readout_pre_margin: float | None = None,
         readout_post_margin: float | None = None,
+        readout_amplification: bool | None = None,
         plot: bool | None = None,
         enable_tqdm: bool | None = None,
         title: str | None = None,
@@ -1095,6 +1098,8 @@ class MeasurementService:
             Values to sweep over.
         repetitions
             Number of repetitions for each sweep point.
+        readout_amplification
+            Whether to insert readout amplification pulses. Defaults to False.
         """
         if repetitions is None:
             repetitions = 1
@@ -1190,6 +1195,7 @@ class MeasurementService:
                     readout_duration=readout_duration,
                     readout_pre_margin=readout_pre_margin,
                     readout_post_margin=readout_post_margin,
+                    readout_amplification=readout_amplification,
                     reset_awg_and_capunits=False,
                     plot_pulse_schedule=plot_pulse_schedule,
                     plot_pulse_schedule_title=plot_pulse_schedule_title,

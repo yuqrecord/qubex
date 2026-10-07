@@ -2351,6 +2351,7 @@ class Experiment:
         readout_duration: float | None = None,
         readout_pre_margin: float | None = None,
         readout_post_margin: float | None = None,
+        readout_amplification: bool | None = None,
         plot: bool | None = None,
         enable_tqdm: bool | None = None,
         title: str | None = None,
@@ -2389,6 +2390,8 @@ class Experiment:
             Readout pre-margin in ns.
         readout_post_margin : float, optional
             Readout post-margin in ns.
+        readout_amplification : bool, optional
+            Whether to insert readout amplification pulses. Defaults to False.
         plot : bool, optional
             Whether to plot the measured signals. Defaults to True.
         enable_tqdm : bool, optional
@@ -2432,6 +2435,7 @@ class Experiment:
             readout_duration=readout_duration,
             readout_pre_margin=readout_pre_margin,
             readout_post_margin=readout_post_margin,
+            readout_amplification=readout_amplification,
             plot=plot,
             enable_tqdm=enable_tqdm,
             title=title,
@@ -4599,6 +4603,7 @@ class Experiment:
         time_range: ArrayLike | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
+        readout_amplification: bool | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
         xaxis_type: Literal["linear", "log"] | None = None,
@@ -4609,6 +4614,7 @@ class Experiment:
             time_range=time_range,
             shots=n_shots,
             interval=shot_interval,
+            readout_amplification=readout_amplification,
             plot=plot,
             save_image=save_image,
             xaxis_type=xaxis_type,
@@ -4623,6 +4629,7 @@ class Experiment:
         pi_cpmg: Waveform | None = None,
         n_shots: int | None = None,
         shot_interval: float | None = None,
+        readout_amplification: bool | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
         xaxis_type: Literal["linear", "log"] | None = None,
@@ -4635,6 +4642,7 @@ class Experiment:
             pi_cpmg=pi_cpmg,
             shots=n_shots,
             interval=shot_interval,
+            readout_amplification=readout_amplification,
             plot=plot,
             save_image=save_image,
             xaxis_type=xaxis_type,

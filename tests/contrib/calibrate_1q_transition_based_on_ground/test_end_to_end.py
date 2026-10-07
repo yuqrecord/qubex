@@ -566,6 +566,42 @@ def test_rabi_defaults_are_resolved_when_every_argument_is_omitted(
     )
     # `transition_index("fh") == 2`, so the accessor divides by sqrt(3).
     assert payload["amplitude"] == pytest.approx(CONTROL_AMPLITUDE / np.sqrt(3))
+    # Readout amplification is left for `MeasurementService.measure` to resolve.
+    assert payload["readout_amplification"] is None
+    assert exp.reference_calls[-1]["readout_amplification"] is None
+    assert exp.sweep_calls[-1]["readout_amplification"] is None
+
+
+@pytest.mark.parametrize("readout_amplification", [True, False])
+def test_rabi_forwards_readout_amplification_to_every_acquisition(
+    stub_experiment_factory: Callable[..., Any],
+    readout_amplification: bool,
+) -> None:
+    """Given readout amplification, when the Rabi runs, then the reference and the sweep use it."""
+    exp = stub_experiment_factory(
+        transition="fh",
+        envelope="flat_top",
+        duration=DURATION,
+        ramptime=RAMPTIME,
+        true_amplitude=0.3012,
+        pulse_type="hpi",
+    )
+
+    result = obtain_rabi_params_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        time_range=np.arange(0, 401, 8),
+        is_damped=False,
+        readout_amplification=readout_amplification,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    assert exp.reference_calls[-1]["readout_amplification"] is readout_amplification
+    assert exp.sweep_calls[-1]["readout_amplification"] is readout_amplification
+    payload = result.data[f"{QUBIT}-fh"]
+    assert payload["readout_amplification"] is readout_amplification
 
 
 def test_chevron_defaults_are_resolved_when_every_argument_is_omitted(
@@ -1955,6 +1991,32 @@ def test_ramsey_defaults_are_resolved_when_every_argument_is_omitted(
     assert payload["drive_frequency"] == pytest.approx(
         payload["frequency"] + module.DEFAULT_DETUNING
     )
+    # Readout amplification is left for `MeasurementService.measure` to resolve.
+    assert payload["readout_amplification"] is None
+    assert exp.sweep_calls[-1]["readout_amplification"] is None
+
+
+@pytest.mark.parametrize("readout_amplification", [True, False])
+def test_ramsey_forwards_readout_amplification_to_the_sweep(
+    stub_experiment_factory: Callable[..., Any],
+    readout_amplification: bool,
+) -> None:
+    """Given readout amplification, when the Ramsey runs, then the sweep uses it."""
+    exp = _ramsey_stub(stub_experiment_factory)
+
+    result = ramsey_experiment_based_on_ground(
+        exp,
+        targets=QUBIT,
+        transition="fh",
+        time_range=np.arange(0, 401, 8),
+        readout_amplification=readout_amplification,
+        plot=False,
+        plot_pulse_schedule=False,
+    )
+
+    assert exp.sweep_calls[-1]["readout_amplification"] is readout_amplification
+    payload = result.data[f"{QUBIT}-fh"]
+    assert payload["readout_amplification"] is readout_amplification
 
 
 def test_ramsey_entry_point_keys_by_transition_label_and_stores_nothing(
