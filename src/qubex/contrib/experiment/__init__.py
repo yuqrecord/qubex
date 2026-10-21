@@ -152,6 +152,9 @@ from .impa_calibration.impa_voltage_calibration import (
 from .impa_calibration.impa_pump_pulse_calibration import (
     impa_pump_pulse_calibration,
 )
+from .paired_interleaved_randomized_benchmarking import (
+    paired_interleaved_randomized_benchmarking,
+)
 
 __all__ = [
     "analyze_chevron_matched_transform",
@@ -218,6 +221,7 @@ __all__ = [
     "measurement_induced_dephasing_experiment",
     "mqc_experiment",
     "obtain_anharmonicity_with_cr",
+    "paired_interleaved_randomized_benchmarking",
     "obtain_gf_rabi_params",
     "obtain_rabi_params_based_on_ground",
     "obtain_rabi_params_by_amplitude_sweep_based_on_ground",
