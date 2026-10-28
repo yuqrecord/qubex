@@ -2962,10 +2962,11 @@ class CharacterizationService:
             )
 
         result = []
+        signals = []
         for power in tqdm(power_range):
             power_linear = 10 ** (power / 10)
             amplitude = np.sqrt(power_linear)
-            phases_diff = self.scan_resonator_frequencies(
+            scan_result = self.scan_resonator_frequencies(
                 target,
                 frequency_range=frequency_range,
                 electrical_delay=electrical_delay,
@@ -2974,10 +2975,12 @@ class CharacterizationService:
                 interval=interval,
                 plot=False,
                 save_image=False,
-            )["phases_diff"]
+            )
+            phases_diff = scan_result["phases_diff"]
             abs_phases_diff = np.abs(phases_diff)
             abs_phases_diff = np.append(abs_phases_diff, abs_phases_diff[-1])
             result.append(abs_phases_diff)
+            signals.append(scan_result["signals"])
 
         fig = viz.make_figure()
         fig.add_trace(
@@ -3016,6 +3019,7 @@ class CharacterizationService:
                 "frequency_range": frequency_range,
                 "power_range": power_range,
                 "data": np.array(result),
+                "signals": np.array(signals),
                 # TODO: Remove this legacy payload key after callers migrate to .figure.
                 "fig": fig,
             },
@@ -3170,6 +3174,7 @@ class CharacterizationService:
         interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        duration_factor_of_control_pulse: float | None = None,
         plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """
@@ -3222,6 +3227,9 @@ class CharacterizationService:
         if interval is None:
             interval = DEFAULT_QUBIT_FREQUENCY_SCAN_INTERVAL
 
+        if duration_factor_of_control_pulse is None:
+            duration_factor_of_control_pulse = 1.0
+
         bounds = [
             subranges[0][0],
         ] + [subrange[-1] for subrange in subranges]
@@ -3268,9 +3276,11 @@ class CharacterizationService:
                             ps.add(
                                 qubit,
                                 Gaussian(
-                                    duration=DEFAULT_QUBIT_FREQUENCY_SCAN_GAUSSIAN_DURATION,
+                                    duration=duration_factor_of_control_pulse
+                                    * DEFAULT_QUBIT_FREQUENCY_SCAN_GAUSSIAN_DURATION,
                                     amplitude=control_amplitude,
-                                    sigma=DEFAULT_QUBIT_FREQUENCY_SCAN_GAUSSIAN_SIGMA,
+                                    sigma=duration_factor_of_control_pulse
+                                    * DEFAULT_QUBIT_FREQUENCY_SCAN_GAUSSIAN_SIGMA,
                                 ),
                             )
                             if not simultaneous_drive:
@@ -3711,6 +3721,7 @@ class CharacterizationService:
         interval: float | None = None,
         plot: bool | None = None,
         save_image: bool | None = None,
+        duration_factor_of_control_pulse: float | None = None,
         plot_pulse_schedule: bool | None = None,
     ) -> Result:
         """
@@ -3737,10 +3748,13 @@ class CharacterizationService:
             )
         if plot_pulse_schedule is None:
             plot_pulse_schedule = False
+        if duration_factor_of_control_pulse is None:
+            duration_factor_of_control_pulse = 1.0
 
         pulse_schedule_is_plotted = False
 
         power_range = np.array(power_range)
+        signals = []
         result2d = []
         for power in tqdm(power_range, desc=f"control power sweep for {target}"):
             power_linear = 10 ** (power / 10)
@@ -3755,11 +3769,14 @@ class CharacterizationService:
                 shots=shots,
                 interval=interval,
                 plot=False,
-                plot_pulse_schedule=plot_pulse_schedule and not pulse_schedule_is_plotted,
+                duration_factor_of_control_pulse=duration_factor_of_control_pulse,
+                plot_pulse_schedule=plot_pulse_schedule
+                and not pulse_schedule_is_plotted,
             )
             pulse_schedule_is_plotted = True
             phases = result1d["phases"]
             result2d.append(phases)
+            signals.append(result1d["signals"])
 
         fig = viz.make_figure()
         fig.add_trace(
@@ -3809,6 +3826,7 @@ class CharacterizationService:
                 "frequency_range": result1d["frequency_range"],
                 "power_range": power_range,
                 "data": np.array(result2d),
+                "signals": np.array(signals),
                 # TODO: Remove this legacy payload key after callers migrate to .figure.
                 "fig": fig,
             },
